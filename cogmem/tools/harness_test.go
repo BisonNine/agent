@@ -9,9 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/toolspec"
 )
 
 // harness is a set of handlers bound to a temp workspace, with the memory

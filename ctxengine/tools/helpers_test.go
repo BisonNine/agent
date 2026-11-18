@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/toolspec"
 )
 
 // handler returns the bound handler for the named tool from Definitions(h).

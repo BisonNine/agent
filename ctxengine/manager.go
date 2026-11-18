@@ -15,11 +15,10 @@ import (
 	"sync"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // Manager implements ContextManager over a SessionStore. The system prompt is

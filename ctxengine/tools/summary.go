@@ -9,11 +9,10 @@ import (
 	"fmt"
 	"strings"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/ctxengine"
 	"go.bison9.com/agent/ctxengine/internal/iox"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/toolspec"
 )
 
 const summaryListDescription = "List the context-summary checkpoints recorded for the current session. " +

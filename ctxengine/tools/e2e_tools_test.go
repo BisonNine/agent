@@ -19,10 +19,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/spawnllm"
 )
 
 const (

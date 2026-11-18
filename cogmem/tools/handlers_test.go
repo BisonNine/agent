@@ -12,9 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/cogmem/portable"
+	"go.bison9.com/agent/toolspec"
 )
 
 const testSession = "chan:123"

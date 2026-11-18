@@ -13,10 +13,9 @@ import (
 	"strconv"
 	"strings"
 
-	"go.bison9.com/agent/spawnllm"
-
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // EvictionPolicy controls the per-turn, LLM-free eviction sweep that collapses

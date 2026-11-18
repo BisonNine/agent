@@ -6,9 +6,8 @@
 package session
 
 import (
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // SessionStore defines the persistence operations the engine uses.

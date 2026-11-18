@@ -11,10 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // The real store commits a compaction atomically.

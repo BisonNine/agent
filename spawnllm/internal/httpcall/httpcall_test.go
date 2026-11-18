@@ -15,8 +15,8 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm/common"
 )
 
 type captureLog struct {

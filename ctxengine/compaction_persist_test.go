@@ -9,9 +9,8 @@ import (
 	"context"
 	"testing"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // persistentMockStore wraps mockStore and adds CompactionStateStore support,

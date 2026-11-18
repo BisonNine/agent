@@ -13,9 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
 )
 
 func writeFixture(t *testing.T, dir, name, content string) {

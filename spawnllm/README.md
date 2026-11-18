@@ -8,7 +8,7 @@ It calls an LLM and drives it to completion:
 
 ## Boundaries
 
-spawnllm imports only [`toolspec`](https://go.bison9.com/agent/toolspec) and the
+spawnllm imports only [`toolspec`](../toolspec) and the
 standard library (plus provider SDKs). It **never imports a host**. Policy —
 model selection, fallback, cooldown, config, results handling — stays in the host
 application. The host resolves a `ProviderSpec`, injects tools, and calls

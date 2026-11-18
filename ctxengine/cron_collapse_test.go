@@ -9,10 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.bison9.com/agent/spawnllm"
-
 	cronmsg "go.bison9.com/agent/ctxengine/internal/testcron"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // testCronPrefix mirrors the cron-wrapper header for building test fixtures.

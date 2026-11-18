@@ -12,9 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // agedCompressStore is compressTestStore with per-message ages. Ages are keyed

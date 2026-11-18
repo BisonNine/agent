@@ -33,7 +33,7 @@ and subsquently separated into it's own clearly-defined module.
   durable summary checkpoints.
 - **Tools.** `session_messages`, `session_search`, `session_summary_list`,
   `session_summary_get`, `session_info`, `session_compact`, `session_clear`,
-  as [toolspec](https://go.bison9.com/agent/toolspec) definitions over a `Host`
+  as [toolspec](../toolspec) definitions over a `Host`
   struct.
 
 ## Storage
@@ -100,7 +100,7 @@ own: the archive imports it into `summaries` the first time it is opened.
   transport errors and cooldowns, and honours `Exclude`. The engine owns its
   output: it classifies refusals, remembers refusing models per session, and
   calls again with a longer `Exclude`. The same shape serves
-  [cogmem](https://go.bison9.com/agent/cogmem), so one host client and one
+  [cogmem](../cogmem), so one host client and one
   test fake serve both.
 - **The system prompt.** The host passes it as ordered layers; the engine
   only inserts its summary between the layers marked before and after it.

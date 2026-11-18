@@ -13,10 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // newResetStore returns a mockStore pre-populated with a few messages and a

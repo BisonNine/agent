@@ -28,11 +28,10 @@ import (
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
 	cronmsg "go.bison9.com/agent/ctxengine/internal/testcron"
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // e2eKey carries a ':' so the on-disk sanitisation is exercised too.

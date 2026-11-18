@@ -17,10 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/internal/iox"
 	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // SessionState is the per-session record that used to live in <key>.meta.json.

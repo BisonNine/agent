@@ -10,9 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/ctxengine/internal/iox"
+	"go.bison9.com/agent/toolspec"
 )
 
 const searchDescription = "Search archived session messages using FTS5 full-text search. " +

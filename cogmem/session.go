@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	"go.bison9.com/agent/cogmem/consolidate"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/logger"
 )
 
 // Placement says where a recalled block belongs in the model request.

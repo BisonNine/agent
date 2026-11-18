@@ -17,8 +17,8 @@ import (
 	"time"
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/logger"
 )
 
 // maxLegacyLineSize is the largest JSON line the JSONL layout could hold; tool

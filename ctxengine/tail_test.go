@@ -11,11 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-	"go.bison9.com/agent/spawnllm/protocoltypes"
-
 	cronmsg "go.bison9.com/agent/ctxengine/internal/testcron"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
+	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // testNow is the fixed clock every age-sensitive tail test measures against, so

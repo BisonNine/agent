@@ -11,9 +11,8 @@ import (
 	"fmt"
 	"strings"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/ctxengine"
+	"go.bison9.com/agent/toolspec"
 )
 
 // The lifecycle tools (compact, info, clear) act on the host's live agent loop

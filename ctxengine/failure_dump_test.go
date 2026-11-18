@@ -13,9 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // captureBackend collects the engine's log events for assertions.

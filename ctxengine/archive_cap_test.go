@@ -10,10 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // TestArchive_StoresLargeToolResultWhole drives a 100 KB tool result through

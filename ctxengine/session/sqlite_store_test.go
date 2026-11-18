@@ -14,10 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
 	cronmsg "go.bison9.com/agent/ctxengine/internal/testcron"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // Compile-time interface satisfaction check.

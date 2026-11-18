@@ -17,9 +17,8 @@ package tools
 import (
 	"errors"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/toolspec"
 )
 
 // Host is what a tool needs from the application embedding cognitive memory.

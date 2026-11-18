@@ -11,9 +11,8 @@ import (
 	"fmt"
 	"time"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/ctxengine/internal/iox"
+	"go.bison9.com/agent/toolspec"
 )
 
 const messagesDescription = "Retrieve historical messages from the current session archive by sequence number. " +

@@ -24,9 +24,8 @@ import (
 	"fmt"
 	"time"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/toolspec"
 )
 
 // SessionInfo holds the structured data returned by the session_info tool.

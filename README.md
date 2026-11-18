@@ -1,5 +1,37 @@
 # Bison9 Agent SDK
 
+`go.bison9.com/agent` is one Go module holding the building blocks of an LLM
+agent. A host application supplies the policy, the configuration and the tools;
+the SDK never imports a host.
+
+## Packages
+
+| Package | What it is |
+| --- | --- |
+| [`toolspec`](toolspec) | The transport-neutral tool contract between tool packages and the hosts that run them. |
+| [`spawnllm`](spawnllm) | LLM dispatch: calls a CLI or API provider and drives the tool-call loop to completion. |
+| [`ctxengine`](ctxengine) | The context engine: keeps the transcript, assembles each request, evicts and summarises as the window fills. |
+| [`cogmem`](cogmem) | Cognitive memory: durable, typed memories organised into domains and refined by background consolidation. |
+| [`logger`](logger) | The logging seam shared by the packages above; silent until the host installs a backend. |
+
+Each package has its own README.
+
+## Layering
+
+Each package imports only the ones below it, and a guard test in each package
+enforces that:
+
+- `toolspec` imports only the standard library.
+- `spawnllm` imports `toolspec`.
+- `ctxengine` imports `spawnllm` and `toolspec`, never `cogmem`.
+- `cogmem` imports `toolspec`, never `spawnllm` or `ctxengine`.
+
+## Development
+
+`make test` is the one gate: format check, `go vet`, vulnerability scan, lint
+and the race-enabled test suite. It needs `golangci-lint` and `govulncheck` on
+the PATH.
+
 ## Copyright and license
 
 Copyright (c) 2026 Bison9 Software, a division of Tenebris Technologies Inc.

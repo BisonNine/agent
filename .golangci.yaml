@@ -1,0 +1,155 @@
+# golangci-lint configuration for the Bison9 Agent SDK.
+#
+# One configuration for the whole module, merged from the three the packages
+# had as separate repositories. Where they differed, the stricter setting is
+# the default and the package that was looser keeps its exemption by path
+# (see exclusions), so each package is held to what it was held to before.
+# Run through `make lint`, and as part of the gate (`make test`).
+
+version: "2"
+
+linters:
+  default: all
+  disable:
+    # Off in the house style: style opinions the project does not hold.
+    - containedctx
+    - cyclop
+    - depguard
+    - dupword
+    - gomodguard
+    - err113
+    - exhaustruct
+    - exhaustruct_v5
+    - funcorder
+    - gochecknoglobals
+    - godot
+    - intrange
+    - ireturn
+    - nlreturn
+    - noctx
+    - noinlineerr
+    - nonamedreturns
+    - tagliatelle
+    - testpackage
+    - varnamelen
+    - wrapcheck
+    - wsl
+    - wsl_v5
+
+    # Not adopted (house decision, 2026-09-19): high-volume style opinions, or
+    # (revive with every rule) not a useful signal without a curated rule set.
+    - forbidigo
+    - gochecknoinits
+    - goconst
+    - godox
+    - lll
+    - mnd
+    - paralleltest
+    - revive
+    - tagalign
+
+    # Deferred (house decision): complexity limits, and checks whose fixes
+    # change signatures or restructure functions rather than fix a line.
+    - funlen
+    - gocognit
+    - gocyclo
+    - maintidx
+    - nestif
+    - unparam
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    exhaustive:
+      default-signifies-exhaustive: true
+    gocritic:
+      disabled-checks:
+        # Style-only, and Go's own stdlib uses if/else chains freely; the
+        # checks that find real problems stay on.
+        - ifElseChain
+        - elseif
+    gosec:
+      excludes:
+        # G104 (unhandled errors) is the same check as errcheck; one linter
+        # is enough for it.
+        - G104
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment
+    modernize:
+      # omitzero would change what the JSON encoders emit: provider request
+      # bodies, the summary and session state persisted in archives, and the
+      # consolidation and export formats all keep omitempty semantics.
+      disable:
+        - omitzero
+    misspell:
+      # No locale. Canadian English takes British -our/-re ("behaviour",
+      # "centre") but American -ize ("synthesized"), so neither US nor UK fits.
+      # Unset, misspell reports only unambiguous typos, which is what we want.
+      locale: ""
+    nakedret:
+      max-func-lines: 3
+  exclusions:
+    generated: lax
+    rules:
+      # Tests read their own fixtures, run fixed commands and use fake keys;
+      # gosec on them is noise that would need a directive per line.
+      - linters:
+          - gosec
+        path: _test\.go$
+      # G301/G302/G306 want 0750/0600 on every directory and file. In spawnllm
+      # file modes are a deliberate choice rather than a lint rule: the only
+      # hit is openai_compat's optional request/response log (0640), a
+      # host-configured log file like the host's own logs.
+      - linters:
+          - gosec
+        path: ^spawnllm/
+        text: ^G30[126]
+      # newexpr rewrites toolspec.Allow(true) to new(true). Allow is the
+      # toolspec API's documented way to set DefaultAllow and says what the
+      # pointer means; new(true) does not. The same holds for the small
+      # pointer helpers in ctxengine and cogmem.
+      - linters:
+          - modernize
+        path: ^(toolspec|ctxengine|cogmem)/
+        text: ^newexpr
+      # Deferred in ctxengine and cogmem (house decision): each fix is an API
+      # change or its own mechanical pass. spawnllm and logger have no
+      # findings, so the checks stay on for them.
+      - linters:
+          - embeddedstructfieldcheck
+          - nilnil
+          - testifylint
+        path: ^(ctxengine|cogmem)/
+      # In cogmem `_ = f()` is an explicit decision to ignore the error and is
+      # allowed; everywhere else a blank error needs a reason.
+      - linters:
+          - errcheck
+        path: ^cogmem/
+        source: (^|[\s(,])_\s*(,\s*[\w.]+\s*)*:?=\s
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - localmodule
+      custom-order: true
+    gofmt:
+      simplify: true
+      rewrite-rules:
+        - pattern: "interface{}"
+          replacement: "any"
+        - pattern: "a[b:len(a)]"
+          replacement: "a[b:]"

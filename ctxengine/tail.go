@@ -8,9 +8,8 @@ package ctxengine
 import (
 	"time"
 
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // selectTail returns the suffix of history to retain in the context window,

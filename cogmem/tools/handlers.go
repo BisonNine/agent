@@ -15,9 +15,8 @@ import (
 	"sort"
 	"strings"
 
-	"go.bison9.com/agent/toolspec"
-
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/toolspec"
 )
 
 // fileSuffix tags a rendered memory with the markdown file attached to it, so a

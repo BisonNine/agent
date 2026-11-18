@@ -6,9 +6,8 @@
 package ctxengine
 
 import (
-	"go.bison9.com/agent/spawnllm"
-
 	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // interruptedToolResult is the content of the result the sanitiser synthesises

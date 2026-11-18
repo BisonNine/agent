@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"go.bison9.com/agent/toolspec"
-
 	anthropicmessages "go.bison9.com/agent/spawnllm/anthropic_messages"
 	"go.bison9.com/agent/spawnllm/azure"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/openai_compat"
 	"go.bison9.com/agent/spawnllm/openai_responses"
+	"go.bison9.com/agent/toolspec"
 )
 
 // ProviderSpec is a host-resolved description of one LLM endpoint. The host
