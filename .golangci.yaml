@@ -98,14 +98,6 @@ linters:
       - linters:
           - gosec
         path: _test\.go$
-      # G301/G302/G306 want 0750/0600 on every directory and file. In spawnllm
-      # file modes are a deliberate choice rather than a lint rule: the only
-      # hit is openai_compat's optional request/response log (0640), a
-      # host-configured log file like the host's own logs.
-      - linters:
-          - gosec
-        path: ^spawnllm/
-        text: ^G30[126]
       # newexpr rewrites toolspec.Allow(true) to new(true). Allow is the
       # toolspec API's documented way to set DefaultAllow and says what the
       # pointer means; new(true) does not. The same holds for the small

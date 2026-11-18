@@ -1,7 +1,7 @@
 // Package toolspec defines the shared, transport-neutral tool contract between
 // tool packages and the hosts that run them. It is deliberately dependency-free
 // (standard library only) so it can be imported by every tool package, by a
-// host's registry/bridge, and by external hosts (e.g. Maestro) as a standalone module without import cycles.
+// host's registry/bridge, and by external hosts (e.g. Maestro) without import cycles.
 //
 // A tool package implements ToolProvider and returns ToolDefinitions with BARE
 // names (e.g. "read"). The aggregator that pulls a provider in supplies the

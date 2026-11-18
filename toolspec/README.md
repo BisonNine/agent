@@ -3,7 +3,7 @@
 `go.bison9.com/agent/toolspec` is the shared, transport-neutral **tool contract**
 between tool packages and the hosts that run them. It is deliberately
 dependency-free (standard library only) so it can be imported by tool packages,
-by a host's registry/bridge, and by external software such as Maestro as a standalone module without import cycles.
+by a host's registry/bridge, and by external software such as Maestro without import cycles.
 
 ## Model
 
@@ -27,5 +27,5 @@ type ToolProvider interface {
 
 ## Stability
 
-This module is the contract that drop-in tool packages compile against, so it is
+This package is the contract that drop-in tool packages compile against, so it is
 intended to be small and stable. Breaking changes are versioned.

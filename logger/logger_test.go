@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 )
@@ -41,29 +42,22 @@ func TestBackend_RoutesEachLevel(t *testing.T) {
 	SetBackend(c)
 	defer SetBackend(nil)
 
-	DebugCF("prov", "d", map[string]any{"a": 1})
-	InfoCF("prov", "i", nil)
-	WarnCF("prov", "w", nil)
-	ErrorCF("prov", "e", nil)
-	InfoC("prov", "ic")
+	fields := map[string]any{"a": 1, "ok": true}
+	DebugCF("prov", "d", fields)
+	InfoCF("engine", "i", fields)
+	WarnCF("store", "w", fields)
+	ErrorCF("tools", "e", fields)
+	InfoC("composer", "ic")
 
-	if len(c.events) != 5 {
-		t.Fatalf("expected 5 events, got %d", len(c.events))
+	want := []event{
+		{"debug", "prov", "d", fields},
+		{"info", "engine", "i", fields},
+		{"warn", "store", "w", fields},
+		{"error", "tools", "e", fields},
+		{"info", "composer", "ic", nil},
 	}
-	if c.events[4].message != "ic" || c.events[4].fields != nil {
-		t.Errorf("InfoC event = %+v, want message ic and nil fields", c.events[4])
-	}
-	wantLevels := []string{"debug", "info", "warn", "error", "info"}
-	for i, want := range wantLevels {
-		if c.events[i].level != want {
-			t.Errorf("event %d level = %q, want %q", i, c.events[i].level, want)
-		}
-		if c.events[i].component != "prov" {
-			t.Errorf("event %d component = %q, want prov", i, c.events[i].component)
-		}
-	}
-	if c.events[0].fields["a"] != 1 {
-		t.Errorf("fields not passed through: %+v", c.events[0].fields)
+	if !reflect.DeepEqual(c.events, want) {
+		t.Errorf("events = %+v, want %+v", c.events, want)
 	}
 	if !GetLogMessageContent() {
 		t.Error("GetLogMessageContent should reflect the backend (true)")

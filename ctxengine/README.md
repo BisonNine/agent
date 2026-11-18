@@ -130,18 +130,8 @@ own: the archive imports it into `summaries` the first time it is opened.
 
 ## Building and testing
 
-```
-make         # make test, then make build (only if the tests pass)
-make test    # the one gate: format check, go vet, golangci-lint, go test -race; prints a summary
-make build   # compile every package (a library: nothing is produced)
-make clean   # drop the Go test cache
-make fmt     # rewrite formatting (the gate only verifies it)
-```
-
-`make test` runs `./test.sh` and exits non-zero if any stage fails. It needs
-[golangci-lint](https://golangci-lint.run) v2 on `PATH` or in `$(go env GOPATH)/bin`
-and says how to install it when it is missing; it never installs anything. It
-does not modify the working tree; `./test.sh --keep` preserves its logs.
+Run `make test` at the root of the repository. It is the one gate for the
+whole module; see the root README.
 
 The suite covers each part on its own and the engine as a whole: `e2e_test.go`
 drives conversations through the real SQLite store and archive, compacts them

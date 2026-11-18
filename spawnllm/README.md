@@ -61,16 +61,5 @@ handles it as it does a chat provider's error.
 
 ## Building and testing
 
-`make test` is the gate. It runs `./test.sh`, which verifies formatting
-(`golangci-lint fmt --diff`), then runs `go vet`, `golangci-lint run` and
-`go test -race -count=1 ./...`, prints a summary, and exits non-zero on any
-failure. It never modifies the working tree. A plain `make` runs the gate and
-then `make build` (compile only: this is a library with no binaries).
-
-Other targets: `make fmt` rewrites formatting, `make lint` and `make vet` run
-those checks on their own, and `make clean` drops the Go test cache.
-
-The gate needs [golangci-lint](https://golangci-lint.run) v2. If it is missing,
-the gate fails and prints the install command:
-
-    go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+Run `make test` at the root of the repository. It is the one gate for the
+whole module; see the root README.

@@ -16,15 +16,18 @@ The packages used to be separate modules, and the module boundaries enforced
 these rules. Now the `imports_test.go` guard in each package does. Keep them:
 
 - `toolspec` imports only the standard library.
-- `spawnllm` imports only `toolspec`, the standard library and provider SDKs.
-- `cogmem` imports only `toolspec`, the standard library and SQLite. It never
-  imports `spawnllm` or `ctxengine`.
+- `spawnllm` imports only `toolspec`, the standard library, `google/uuid` and
+  provider SDKs.
+- `cogmem` imports only `toolspec`, the standard library, SQLite,
+  `google/uuid` and `yaml.v3`. It never imports `spawnllm` or `ctxengine`.
 - `ctxengine` imports only `spawnllm`, `toolspec`, the standard library and
   SQLite. It never imports `cogmem`.
 - `logger` imports only the standard library; `spawnllm`, `ctxengine` and
   `cogmem` may all import it.
 - `internal/` directories stay inside their package (`spawnllm/internal`,
   `ctxengine/internal`); do not hoist them to the module root.
+- Each guard lists the third-party modules its package may import. Adding a
+  dependency means adding it to that list on purpose.
 - The SDK never imports a host (ClawEh, Maestro, MCPFusion). Tools reach it by
   injection as `toolspec` definitions.
 
