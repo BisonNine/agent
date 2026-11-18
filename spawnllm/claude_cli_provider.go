@@ -1,0 +1,371 @@
+package spawnllm
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"slices"
+	"strings"
+	"time"
+
+	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/logger"
+)
+
+// ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
+type ClaudeCliProvider struct {
+	command   string
+	workspace string
+	timeout   time.Duration
+	extraArgs []string
+	env       map[string]string
+	baseEnv   []string
+}
+
+// SetBaseEnv implements BaseEnvSetter.
+func (p *ClaudeCliProvider) SetBaseEnv(env []string) { p.baseEnv = env }
+
+// NewClaudeCliProvider creates a new Claude CLI provider.
+// When command is empty, it defaults to "claude".
+func NewClaudeCliProvider(command, workspace string, extraArgs []string, env map[string]string) *ClaudeCliProvider {
+	if command == "" {
+		command = "claude"
+	}
+	return &ClaudeCliProvider{
+		command:   command,
+		workspace: workspace,
+		extraArgs: extraArgs,
+		env:       env,
+	}
+}
+
+// NewClaudeCliProviderWithTimeout creates a new Claude CLI provider with a request timeout.
+// When command is empty, it defaults to "claude".
+func NewClaudeCliProviderWithTimeout(command, workspace string, timeout time.Duration, extraArgs []string, env map[string]string) *ClaudeCliProvider {
+	if command == "" {
+		command = "claude"
+	}
+	return &ClaudeCliProvider{
+		command:   command,
+		workspace: workspace,
+		timeout:   timeout,
+		extraArgs: extraArgs,
+		env:       env,
+	}
+}
+
+// Chat implements LLMProvider.Chat by executing the claude CLI.
+func (p *ClaudeCliProvider) Chat(
+	ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]any,
+) (*LLMResponse, error) {
+	// CLI providers run their own internal agentic loop and return one final
+	// answer per invocation. The `tools` parameter is intentionally ignored:
+	// the CLI cannot use the host's tools by writing JSON in its prose
+	// (that pattern caused infinite outer loops). The host exposes its tools to
+	// the CLI natively over MCP instead.
+	_ = tools
+	// Fortify the stdin payload at the tail so JSON-only directives are the
+	// last thing the CLI reads before generating its reply.
+	prompt := applyCLIOptions("claude-cli", p.buildStdinPrompt(messages), options)
+
+	args := ClaudeCliBaseArgs()
+	args = append(args, p.extraArgs...)
+	if model != "" && model != "claude-code" && model != "claude-cli" {
+		args = append(args, "--model", model)
+	}
+	args = append(args, StdinArg) // read from stdin
+
+	return runJSONCLI(ctx, &jsonCLICall{
+		label:     "claude",
+		command:   p.command,
+		workspace: p.workspace,
+		timeout:   p.timeout,
+		args:      args,
+		prompt:    prompt,
+		baseEnv:   p.baseEnv,
+		env:       p.env,
+		model:     model,
+		parse:     p.parseClaudeCliResponse,
+	})
+}
+
+// cliErrorResponse builds an LLMResponse whose Status records a failed CLI dispatch
+// with best-effort byte counts and elapsed time.
+func cliErrorResponse(model, stopReason string, elapsed time.Duration, bytesSent, bytesReceived int64) *LLMResponse {
+	return &LLMResponse{
+		Status: &DispatchStatus{
+			Success:       false,
+			Model:         model,
+			StopReason:    stopReason,
+			DurationMs:    elapsed.Milliseconds(),
+			BytesSent:     bytesSent,
+			BytesReceived: bytesReceived,
+		},
+	}
+}
+
+// GetDefaultModel returns the default model identifier.
+func (p *ClaudeCliProvider) GetDefaultModel() string {
+	return "claude-code"
+}
+
+// IsCLI implements CLIProvider. CLI providers invoke a subprocess and do not
+// accept HTTP request parameters such as temperature.
+func (p *ClaudeCliProvider) IsCLI() bool { return true }
+
+// buildStdinPrompt combines the system context and conversation into a single stdin payload.
+// Passing system instructions via stdin avoids exposing them in the process argument list and
+// sidesteps operating-system ARG_MAX limits when many tools are registered.
+func (p *ClaudeCliProvider) buildStdinPrompt(messages []Message) string {
+	system := p.buildSystemPrompt(messages)
+	conversation := p.messagesToPrompt(messages)
+	if system == "" {
+		return conversation
+	}
+	return system + "\n\n---\n\n" + conversation
+}
+
+// messagesToPrompt converts non-system messages to a CLI-compatible prompt string.
+func (p *ClaudeCliProvider) messagesToPrompt(messages []Message) string {
+	var parts []string
+
+	for _, msg := range messages {
+		switch msg.Role {
+		case "system":
+			// included in system context block; see buildStdinPrompt
+		case "user":
+			parts = append(parts, "User: "+escapeConvMarkers(msg.Content))
+		case "assistant":
+			parts = append(parts, "Assistant: "+escapeConvMarkers(msg.Content))
+		case "tool":
+			parts = append(parts, fmt.Sprintf("[Tool Result for %s]: %s", msg.ToolCallID, common.ToolResultText(msg)))
+		}
+	}
+
+	// Simplify single user message
+	if len(parts) == 1 && strings.HasPrefix(parts[0], "User: ") {
+		return strings.TrimPrefix(parts[0], "User: ")
+	}
+
+	return strings.Join(parts, "\n")
+}
+
+// buildSystemPrompt concatenates system messages.
+// Tool definitions are intentionally not included — see Chat().
+func (p *ClaudeCliProvider) buildSystemPrompt(messages []Message) string {
+	var parts []string
+
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			parts = append(parts, msg.Content)
+		}
+	}
+
+	return strings.Join(parts, "\n\n")
+}
+
+// escapeConvMarkers replaces conversation-format delimiters inside message
+// content so they cannot be misinterpreted as new turns when the text is
+// re-embedded in a future prompt.
+func escapeConvMarkers(s string) string {
+	s = strings.ReplaceAll(s, "\nUser: ", "\n[User]: ")
+	s = strings.ReplaceAll(s, "\nAssistant: ", "\n[Assistant]: ")
+	return s
+}
+
+// parseClaudeCliResponse parses the JSON output from the claude CLI.
+func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse, error) {
+	var resp claudeCliJSONResponse
+	if err := json.Unmarshal([]byte(output), &resp); err != nil {
+		return nil, fmt.Errorf("failed to parse claude cli response: %w", err)
+	}
+
+	status := buildClaudeCliStatus(&resp)
+
+	if resp.IsError {
+		return &LLMResponse{Status: status}, fmt.Errorf("claude cli returned error: %s", resp.Result)
+	}
+
+	// CLI is itself agentic — its `result` is the final assistant text.
+	// We do NOT extract tool calls from this text: the agent loop must
+	// treat each CLI invocation as one complete round.
+	content := resp.Result
+	finishReason := "stop"
+
+	var usage *UsageInfo
+	if resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0 {
+		usage = &UsageInfo{
+			PromptTokens:     resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.CacheReadInputTokens,
+			CompletionTokens: resp.Usage.OutputTokens,
+			TotalTokens:      resp.Usage.InputTokens + resp.Usage.CacheCreationInputTokens + resp.Usage.CacheReadInputTokens + resp.Usage.OutputTokens,
+		}
+	}
+
+	result := &LLMResponse{
+		Content:      strings.TrimSpace(content),
+		FinishReason: finishReason,
+		Normal:       true,
+		Usage:        usage,
+		Status:       status,
+	}
+
+	logger.DebugCF("provider", "claude-cli response",
+		map[string]any{
+			"subtype":       resp.Subtype,
+			"num_turns":     resp.NumTurns,
+			"cost_usd":      costForLog(resp.TotalCostUSD),
+			"duration_ms":   resp.DurationMS,
+			"content_chars": len(strings.TrimSpace(content)),
+			"denied_tools":  len(resp.PermissionDenials),
+		})
+
+	return result, nil
+}
+
+// costForLog renders a reported cost for a log line: the number, or "unknown"
+// when none was reported.
+func costForLog(cost *float64) any {
+	if cost == nil {
+		return "unknown"
+	}
+	return *cost
+}
+
+// claudeCliDeniedTools returns the distinct tool names in the envelope's
+// permission_denials, in order of first refusal. Blank names are dropped.
+func claudeCliDeniedTools(resp *claudeCliJSONResponse) []string {
+	var out []string
+	for _, d := range resp.PermissionDenials {
+		name := strings.TrimSpace(d.ToolName)
+		if name == "" || slices.Contains(out, name) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// buildClaudeCliStatus constructs a DispatchStatus from the parsed claude CLI response.
+// BytesSent / BytesReceived are filled in by Chat().
+//
+// The Model field is resolved from the envelope's per-model usage breakdown:
+// the CLI's top-level `model` is the *last* model it spoke to (often a helper
+// tier such as a haiku) and is misleading when a higher-tier model did the
+// bulk of the work. resolveClaudeCliPrimaryModel picks the modelUsage entry
+// with the largest token total instead, and falls back to the headline
+// `model` field when that breakdown is missing or unusable.
+func buildClaudeCliStatus(resp *claudeCliJSONResponse) *DispatchStatus {
+	stopReason := resp.StopReason
+	if resp.IsError && stopReason == "" {
+		stopReason = "error"
+	}
+	return &DispatchStatus{
+		Success:             !resp.IsError,
+		Model:               resolveClaudeCliPrimaryModel(resp),
+		DeniedTools:         claudeCliDeniedTools(resp),
+		NumTurns:            resp.NumTurns,
+		InputTokens:         resp.Usage.InputTokens,
+		OutputTokens:        resp.Usage.OutputTokens,
+		CacheReadTokens:     resp.Usage.CacheReadInputTokens,
+		CacheCreationTokens: resp.Usage.CacheCreationInputTokens,
+		StopReason:          stopReason,
+		CostUSD:             resp.TotalCostUSD,
+		DurationMs:          int64(resp.DurationMS),
+	}
+}
+
+// resolveClaudeCliPrimaryModel picks the "primary" model for a claude CLI
+// response envelope.
+//
+// Rule: among the entries in modelUsage, choose the one whose total token
+// count (input + output + cache_read + cache_creation) is largest. Ties are
+// broken by lexicographically smallest key so the result is deterministic.
+// Any trailing context-window suffix (e.g. "[1m]") is stripped so the
+// reported value is a bare model id.
+//
+// Fallback: if modelUsage is missing, empty, or every entry sums to zero
+// tokens, return the envelope's headline `model` field unchanged. A blank
+// fallback is preserved as blank rather than substituted.
+func resolveClaudeCliPrimaryModel(resp *claudeCliJSONResponse) string {
+	bestKey := ""
+	bestTotal := 0
+	for k, row := range resp.ModelUsage {
+		total := row.InputTokens + row.OutputTokens +
+			row.CacheReadInputTokens + row.CacheCreationInputTokens
+		if total <= 0 {
+			continue
+		}
+		if bestKey == "" || total > bestTotal || (total == bestTotal && k < bestKey) {
+			bestKey = k
+			bestTotal = total
+		}
+	}
+	if bestKey == "" {
+		return resp.Model
+	}
+	return stripModelContextSuffix(bestKey)
+}
+
+// stripModelContextSuffix removes a trailing context-window marker like
+// "[1m]" (or any "[...]" run at the end) from a model id so DispatchStatus
+// records a bare model identifier. Whitespace between the id and the suffix
+// is also trimmed.
+func stripModelContextSuffix(model string) string {
+	model = strings.TrimSpace(model)
+	if !strings.HasSuffix(model, "]") {
+		return model
+	}
+	if i := strings.LastIndex(model, "["); i > 0 {
+		return strings.TrimSpace(model[:i])
+	}
+	return model
+}
+
+// claudeCliJSONResponse represents the JSON output from the claude CLI.
+// Matches the real claude CLI v2.x output format.
+type claudeCliJSONResponse struct {
+	Type         string                            `json:"type"`
+	Subtype      string                            `json:"subtype"`
+	IsError      bool                              `json:"is_error"`
+	Result       string                            `json:"result"`
+	SessionID    string                            `json:"session_id"`
+	TotalCostUSD *float64                          `json:"total_cost_usd"` // nil when the envelope has none
+	DurationMS   int                               `json:"duration_ms"`
+	DurationAPI  int                               `json:"duration_api_ms"`
+	NumTurns     int                               `json:"num_turns"`
+	StopReason   string                            `json:"stop_reason"`
+	Model        string                            `json:"model"`
+	Usage        claudeCliUsageInfo                `json:"usage"`
+	ModelUsage   map[string]claudeCliModelUsageRow `json:"modelUsage"`
+	// PermissionDenials lists the tool calls the CLI's permission system
+	// refused during the run (print mode cannot prompt, so a call outside the
+	// allow rules, or one the auto-mode classifier could not judge, ends here).
+	PermissionDenials []claudeCliPermissionDenial `json:"permission_denials"`
+}
+
+// claudeCliPermissionDenial is one refused tool call in permission_denials.
+type claudeCliPermissionDenial struct {
+	ToolName  string `json:"tool_name"`
+	ToolUseID string `json:"tool_use_id"`
+}
+
+// claudeCliModelUsageRow captures one entry of the modelUsage map.
+type claudeCliModelUsageRow struct {
+	InputTokens              int     `json:"inputTokens"`
+	OutputTokens             int     `json:"outputTokens"`
+	CacheReadInputTokens     int     `json:"cacheReadInputTokens"`
+	CacheCreationInputTokens int     `json:"cacheCreationInputTokens"`
+	CostUSD                  float64 `json:"costUSD"`
+}
+
+// claudeCliUsageInfo represents token usage from the claude CLI response.
+type claudeCliUsageInfo struct {
+	InputTokens              int `json:"input_tokens"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+}
+
+// Workspace returns the working directory the CLI runs in. Exposed so hosts can
+// verify provider construction.
+func (p *ClaudeCliProvider) Workspace() string { return p.workspace }

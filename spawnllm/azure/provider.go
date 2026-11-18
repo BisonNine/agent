@@ -1,0 +1,265 @@
+package azure
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm/protocoltypes"
+)
+
+type (
+	LLMResponse    = protocoltypes.LLMResponse
+	Message        = protocoltypes.Message
+	ToolDefinition = protocoltypes.ToolDefinition
+	DispatchStatus = protocoltypes.DispatchStatus
+)
+
+const (
+	// azureAPIVersion is the Azure OpenAI API version used for all requests.
+	azureAPIVersion       = "2024-10-21"
+	defaultRequestTimeout = common.DefaultRequestTimeout
+)
+
+// Provider implements the LLM provider interface for Azure OpenAI endpoints.
+// It handles Azure-specific authentication (api-key header), URL construction
+// (deployment-based), and request body formatting (max_completion_tokens, no model field).
+type Provider struct {
+	apiKey     string
+	apiBase    string
+	httpClient *http.Client
+}
+
+// Option configures the Azure Provider.
+type Option func(*Provider)
+
+// WithRequestTimeout sets the HTTP request timeout.
+func WithRequestTimeout(timeout time.Duration) Option {
+	return func(p *Provider) {
+		if timeout > 0 {
+			p.httpClient.Timeout = timeout
+		}
+	}
+}
+
+// NewProvider creates a new Azure OpenAI provider.
+func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
+	p := &Provider{
+		apiKey:     apiKey,
+		apiBase:    strings.TrimRight(apiBase, "/"),
+		httpClient: common.NewHTTPClient(proxy),
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+
+	return p
+}
+
+// NewProviderWithTimeout creates a new Azure OpenAI provider with a custom request timeout in seconds.
+func NewProviderWithTimeout(apiKey, apiBase, proxy string, requestTimeoutSeconds int) *Provider {
+	return NewProvider(
+		apiKey, apiBase, proxy,
+		WithRequestTimeout(time.Duration(requestTimeoutSeconds)*time.Second),
+	)
+}
+
+// Chat sends a chat completion request to the Azure OpenAI endpoint.
+// The model parameter is used as the Azure deployment name in the URL.
+func (p *Provider) Chat(
+	ctx context.Context,
+	messages []Message,
+	tools []ToolDefinition,
+	model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	if p.apiBase == "" {
+		return nil, errors.New("azure: API base not configured")
+	}
+
+	// Deferred tools are not loaded natively here: only those a tool result
+	// has referenced are sent, as ordinary tools (common.RequestTools).
+	tools = common.RequestTools(tools, messages)
+
+	// model is the deployment name for Azure OpenAI
+	deployment := model
+
+	// Build Azure-specific URL safely using url.JoinPath and query encoding
+	// to prevent path traversal or query injection via deployment names.
+	base, err := url.JoinPath(p.apiBase, "openai/deployments", deployment, "chat/completions")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Azure request URL: %w", err)
+	}
+	requestURL := base + "?api-version=" + azureAPIVersion
+
+	// Build request body — no "model" field (Azure infers from deployment URL)
+	requestBody := map[string]any{
+		"messages": common.SerializeMessages(messages),
+	}
+
+	// Streaming is opt-in: only when the caller supplied a non-nil delta
+	// callback. Absent it, every field below and the response handling stay on
+	// the unchanged single-shot path.
+	streamCB, streaming := options[common.TextDeltaOption].(common.TextDeltaFunc)
+	streaming = streaming && streamCB != nil
+	if streaming {
+		requestBody["stream"] = true
+		// include_usage makes the final SSE chunk carry the usage object, which
+		// the non-streaming shape (and DispatchStatus) needs.
+		requestBody["stream_options"] = map[string]any{"include_usage": true}
+	}
+
+	if len(tools) > 0 {
+		requestBody["tools"] = tools
+		requestBody["tool_choice"] = common.ToolChoice(options)
+	}
+
+	// Azure OpenAI always uses max_completion_tokens
+	if maxTokens, ok := common.AsInt(options["max_tokens"]); ok {
+		requestBody["max_completion_tokens"] = maxTokens
+	}
+
+	if temperature, ok := common.AsFloat(options["temperature"]); ok {
+		requestBody["temperature"] = temperature
+	}
+
+	jsonData, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(jsonData))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Azure uses api-key header instead of Authorization: Bearer
+	req.Header.Set("Content-Type", "application/json")
+	if p.apiKey != "" {
+		req.Header.Set("Api-Key", p.apiKey)
+	}
+
+	bytesSent := int64(len(jsonData))
+	start := time.Now()
+	resp, err := p.httpClient.Do(req)
+	if err != nil {
+		return azureErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0),
+			fmt.Errorf("failed to send request: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.DebugCF("azure", "closing response body", map[string]any{"error": closeErr.Error()})
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		respErr := common.HandleErrorResponse(resp, p.apiBase)
+		return azureErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0), respErr
+	}
+
+	if streaming {
+		return p.readStream(resp, streamCB, tools, model, bytesSent, start)
+	}
+
+	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase, common.ToolNameSet(tools))
+	durationMs := time.Since(start).Milliseconds()
+	if err != nil {
+		return azureErrorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err
+	}
+	if out.Status != nil {
+		out.Status.Success = true
+		out.Status.DurationMs = durationMs
+		out.Status.BytesSent = bytesSent
+		out.Status.BytesReceived = bytesReceived
+		if out.Status.Model == "" {
+			out.Status.Model = model
+		}
+	}
+	return out, nil
+}
+
+// readStream consumes an SSE chat/completions response (Azure's streaming shape
+// is identical to OpenAI's), firing cb for each content delta, then reconstructs
+// the equivalent non-streaming body and runs it through the SAME parser the
+// single-shot path uses via common.AccumulateChatStream so no parsing is
+// duplicated. Status fields are set exactly as the single-shot path sets them.
+// An in-band error chunk is mapped to the HTTP-error status shape (partial
+// content may already have been emitted via cb).
+func (p *Provider) readStream(
+	resp *http.Response,
+	cb common.TextDeltaFunc,
+	tools []ToolDefinition,
+	model string,
+	bytesSent int64,
+	start time.Time,
+) (*LLMResponse, error) {
+	counter := &countingReader{r: resp.Body}
+	out, _, err := common.AccumulateChatStream(counter, cb, common.ToolNameSet(tools))
+	durationMs := time.Since(start).Milliseconds()
+
+	if err != nil {
+		if streamErr, ok := errors.AsType[*common.StreamChatError](err); ok {
+			return azureErrorStatus(model, "error", durationMs, bytesSent, counter.n),
+				&common.HTTPStatusError{
+					StatusCode:  http.StatusOK,
+					APIBase:     p.apiBase,
+					BodyPreview: streamErr.Message,
+				}
+		}
+		return azureErrorStatus(model, "parse_error", durationMs, bytesSent, counter.n), err
+	}
+
+	if out.Status != nil {
+		out.Status.Success = true
+		out.Status.DurationMs = durationMs
+		out.Status.BytesSent = bytesSent
+		out.Status.BytesReceived = counter.n
+		if out.Status.Model == "" {
+			out.Status.Model = model
+		}
+	}
+	return out, nil
+}
+
+// countingReader tracks bytes read so streaming can report BytesReceived.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// azureErrorStatus builds an LLMResponse whose Status records a failed HTTP dispatch.
+func azureErrorStatus(model, stopReason string, durationMs, bytesSent, bytesReceived int64) *LLMResponse {
+	return &LLMResponse{
+		Status: &DispatchStatus{
+			Success:       false,
+			Model:         model,
+			StopReason:    stopReason,
+			DurationMs:    durationMs,
+			BytesSent:     bytesSent,
+			BytesReceived: bytesReceived,
+		},
+	}
+}
+
+// GetDefaultModel returns an empty string as Azure deployments are user-configured.
+func (p *Provider) GetDefaultModel() string {
+	return ""
+}
