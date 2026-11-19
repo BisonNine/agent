@@ -40,7 +40,7 @@ func TestProviderChat_StreamingPlainText(t *testing.T) {
 
 	var deltas []string
 	p := NewProvider("key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o",
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o",
 		map[string]any{common.TextDeltaOption: func(d string) { deltas = append(deltas, d) }})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -85,7 +85,7 @@ func TestProviderChat_NonStreamingWhenNoCallback(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o",
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o",
 		map[string]any{common.TextDeltaOption: common.TextDeltaFunc(nil)})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
@@ -107,7 +107,7 @@ func TestProviderChat_StreamingInBandError(t *testing.T) {
 
 	var deltas []string
 	p := NewProvider("key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o",
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o",
 		map[string]any{common.TextDeltaOption: func(d string) { deltas = append(deltas, d) }})
 	if err == nil {
 		t.Fatalf("expected error from in-band error chunk")

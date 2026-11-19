@@ -55,7 +55,7 @@ func TestChat_TextResponse(t *testing.T) {
 		{Role: "system", Content: "be brief"},
 		{Role: "user", Content: "hi"},
 	}
-	out, err := p.Chat(context.Background(), msgs, nil, "gpt-5", map[string]any{"max_tokens": 256})
+	out, err := p.Chat(context.Background(), testID, msgs, nil, "gpt-5", map[string]any{"max_tokens": 256})
 	if err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestChat_ToolCallResponse(t *testing.T) {
 			Parameters:  map[string]any{"type": "object"},
 		},
 	}}
-	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "weather?"}}, tools, "gpt-5", nil)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "weather?"}}, tools, "gpt-5", nil)
 	if err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestChat_ToolHistoryReplay(t *testing.T) {
 		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Type: "function", Function: &FunctionCall{Name: "get_weather", Arguments: `{"city":"NYC"}`}}}},
 		{Role: "tool", ToolCallID: "call_1", Content: "sunny"},
 	}
-	if _, err := p.Chat(context.Background(), msgs, nil, "gpt-5", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, msgs, nil, "gpt-5", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 
@@ -163,7 +163,7 @@ func TestChat_JSONObjectFormat(t *testing.T) {
 	// protocol "openai-responses" is JSON-capable by default.
 	p, body := captureServer(t, reply, WithProtocol("openai-responses"))
 
-	_, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}, nil, "gpt-5",
+	_, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5",
 		map[string]any{ResponseFormatJSONObjectOption: true})
 	if err != nil {
 		t.Fatalf("Chat error: %v", err)
@@ -182,7 +182,7 @@ func TestChat_JSONObjectDroppedWhenNotCapable(t *testing.T) {
 	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"{}"}]}]}`
 	p, body := captureServer(t, reply, WithProtocol("xai")) // not capable, not opted in
 
-	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}, nil, "grok",
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "grok",
 		map[string]any{ResponseFormatJSONObjectOption: true}); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestChat_ReasoningEffort(t *testing.T) {
 	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`
 	p, body := captureServer(t, reply, WithReasoningEffort("high"))
 
-	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	reasoning := asType[map[string]any](t, (*body)["reasoning"], "reasoning")
@@ -208,7 +208,7 @@ func TestChat_IncompleteIsLength(t *testing.T) {
 	reply := `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]}`
 	p, _ := captureServer(t, reply)
 
-	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil)
 	if err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestChat_DropParams(t *testing.T) {
 	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`
 	p, body := captureServer(t, reply, WithDropParams([]string{"temperature"}))
 
-	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}, nil, "gpt-5",
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5",
 		map[string]any{"temperature": 0.7}); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -243,7 +243,7 @@ func TestChat_HTTPError(t *testing.T) {
 	defer srv.Close()
 	p := NewProvider("k", srv.URL, "")
 
-	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil)
 	if err == nil {
 		t.Fatal("expected error on non-200")
 	}
@@ -255,7 +255,7 @@ func TestChat_HTTPError(t *testing.T) {
 func TestChat_StoreAlwaysFalse(t *testing.T) {
 	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}]}`
 	p, body := captureServer(t, reply)
-	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	if store, ok := (*body)["store"].(bool); !ok || store {
@@ -268,7 +268,7 @@ func TestChat_TemperatureGatedByReasoning(t *testing.T) {
 
 	// Non-reasoning: temperature sent, no include.
 	p, body := captureServer(t, reply)
-	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7}); err != nil {
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7}); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	if _, ok := (*body)["temperature"]; !ok {
@@ -280,7 +280,7 @@ func TestChat_TemperatureGatedByReasoning(t *testing.T) {
 
 	// Reasoning level: temperature dropped, encrypted reasoning requested.
 	p, body = captureServer(t, reply, WithReasoningEffort("high"))
-	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "o3", map[string]any{"temperature": 0.7}); err != nil {
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "o3", map[string]any{"temperature": 0.7}); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	if _, ok := (*body)["temperature"]; ok {
@@ -293,7 +293,7 @@ func TestChat_TemperatureGatedByReasoning(t *testing.T) {
 
 	// effort "none" = reasoning disabled: temperature kept, no include.
 	p, body = captureServer(t, reply, WithReasoningEffort("none"))
-	if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7}); err != nil {
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7}); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	if _, ok := (*body)["temperature"]; !ok {
@@ -309,7 +309,7 @@ func TestChat_CapturesReasoningItems(t *testing.T) {
 		`{"type":"reasoning","id":"rs_1","encrypted_content":"ENC","summary":[]},` +
 		`{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}]}`
 	p, _ := captureServer(t, reply, WithReasoningEffort("high"))
-	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "o3", nil)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "o3", nil)
 	if err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestBuildInput_ReplaysReasoningBeforeToolCall(t *testing.T) {
 func TestChat_IncompleteContentFilter(t *testing.T) {
 	reply := `{"status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[]}`
 	p, _ := captureServer(t, reply)
-	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil)
 	if err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
@@ -404,7 +404,7 @@ func TestChat_ToolHistoryReplay_DirectNameAndArguments(t *testing.T) {
 				{Role: "assistant", ToolCalls: []ToolCall{tt.call}},
 				{Role: "tool", ToolCallID: "call_1", Content: "sunny"},
 			}
-			if _, err := p.Chat(context.Background(), msgs, nil, "gpt-5", nil); err != nil {
+			if _, err := p.Chat(context.Background(), testID, msgs, nil, "gpt-5", nil); err != nil {
 				t.Fatalf("Chat error: %v", err)
 			}
 			input := asType[[]any](t, (*body)["input"], "input")
@@ -425,7 +425,7 @@ func TestChat_CacheUsageDetails(t *testing.T) {
 		`"usage":{"input_tokens":1000,"output_tokens":5,"total_tokens":1005,` +
 		`"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}}}`
 	p, _ := captureServer(t, reply)
-	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5.6", nil)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5.6", nil)
 	if err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -449,7 +449,7 @@ func TestChat_CacheUsageDetails(t *testing.T) {
 	}
 
 	p2, _ := captureServer(t, `{"status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}`)
-	out2, err := p2.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5.6", nil)
+	out2, err := p2.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5.6", nil)
 	if err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -474,7 +474,7 @@ func TestChat_ReferencedDeferredToolsSentAndReferencesAsText(t *testing.T) {
 		{Role: "assistant", ToolCalls: []ToolCall{{ID: "c1", Name: "search_tools", Arguments: map[string]any{}}}},
 		{Role: "tool", ToolCallID: "c1", Content: "1 match", ToolReferences: []string{"get_weather"}},
 	}
-	if _, err := p.Chat(context.Background(), msgs, tools, "gpt-5", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, msgs, tools, "gpt-5", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	// read_file was never referenced: left out. get_weather was: an ordinary

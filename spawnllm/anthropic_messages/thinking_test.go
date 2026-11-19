@@ -74,7 +74,7 @@ func TestChat_ThinkingLevelRequestBody(t *testing.T) {
 			if tt.level != nil {
 				opts["thinking_level"] = tt.level
 			}
-			if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "claude-sonnet-4-6", opts); err != nil {
+			if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "claude-sonnet-4-6", opts); err != nil {
 				t.Fatalf("Chat() error = %v", err)
 			}
 			body := captured[0]
@@ -126,7 +126,7 @@ func runToolLoop(t *testing.T, firstOpts, secondOpts map[string]any) (*LLMRespon
 	}}
 	msgs := make([]Message, 0, 3)
 	msgs = append(msgs, Message{Role: "user", Content: "Weather in NYC?"})
-	resp, err := p.Chat(t.Context(), msgs, tools, "claude-sonnet-4-6", firstOpts)
+	resp, err := p.Chat(t.Context(), testID, msgs, tools, "claude-sonnet-4-6", firstOpts)
 	if err != nil {
 		t.Fatalf("first Chat() error = %v", err)
 	}
@@ -134,7 +134,7 @@ func runToolLoop(t *testing.T, firstOpts, secondOpts map[string]any) (*LLMRespon
 		Message{Role: "assistant", Content: resp.Content, ToolCalls: resp.ToolCalls, AnthropicThinking: resp.AnthropicThinking},
 		Message{Role: "tool", ToolCallID: resp.ToolCalls[0].ID, Content: "sunny"},
 	)
-	if _, err := p.Chat(t.Context(), msgs, tools, "claude-sonnet-4-6", secondOpts); err != nil {
+	if _, err := p.Chat(t.Context(), testID, msgs, tools, "claude-sonnet-4-6", secondOpts); err != nil {
 		t.Fatalf("second Chat() error = %v", err)
 	}
 	return resp, captured
@@ -239,7 +239,7 @@ func TestChat_StreamingThinking(t *testing.T) {
 		"thinking_level":       "low",
 		common.TextDeltaOption: func(s string) { deltas = append(deltas, s) },
 	}
-	resp, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "2+2?"}}, nil, "claude-sonnet-4-6", opts)
+	resp, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "2+2?"}}, nil, "claude-sonnet-4-6", opts)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}

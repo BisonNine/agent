@@ -82,7 +82,7 @@ func TestChat_StreamingReconstructsWholeBody(t *testing.T) {
 
 	var deltas []string
 	p := NewProvider("k", srv.URL)
-	out, err := p.Chat(context.Background(),
+	out, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "weather?"}}, nil, "claude-sonnet-4.6",
 		map[string]any{
 			"max_tokens":           1024,
@@ -147,7 +147,7 @@ func TestChat_StreamingErrorEvent(t *testing.T) {
 	srv := sseMessagesServer(t, body, nil)
 	var deltas []string
 	p := NewProvider("k", srv.URL)
-	out, err := p.Chat(context.Background(),
+	out, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "hi"}}, nil, "claude-sonnet-4.6",
 		map[string]any{
 			"max_tokens":           1024,
@@ -183,7 +183,7 @@ func TestChat_NonStreamingWhenNoCallback(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	p := NewProvider("k", srv.URL)
-	out, err := p.Chat(context.Background(),
+	out, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "hi"}}, nil, "claude-sonnet-4.6",
 		map[string]any{
 			"max_tokens":           1024,

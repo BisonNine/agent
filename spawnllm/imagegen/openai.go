@@ -17,8 +17,10 @@ import (
 	"strconv"
 	"strings"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/httpcall"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -73,7 +75,14 @@ var (
 )
 
 // Generate creates images from the prompt.
-func (c *OpenAI) Generate(ctx context.Context, req *GenerateRequest) (*Result, error) {
+func (c *OpenAI) Generate(ctx context.Context, id accounting.Identity, req *GenerateRequest) (*Result, error) {
+	return launch.RunTask(ctx, id, generateSpec("openai", req), func(ctx context.Context) (*Result, error) {
+		return c.generate(ctx, req)
+	}, resultUsage)
+}
+
+// generate is Generate without the identity check and accounting.
+func (c *OpenAI) generate(ctx context.Context, req *GenerateRequest) (*Result, error) {
 	switch {
 	case req == nil:
 		return nil, errors.New("generate request is nil")
@@ -110,7 +119,14 @@ func (c *OpenAI) Generate(ctx context.Context, req *GenerateRequest) (*Result, e
 // Edit creates images from the prompt and the input images. A single image
 // is sent as the form field "image", several as repeated "image[]" fields;
 // the mask as "mask".
-func (c *OpenAI) Edit(ctx context.Context, req *EditRequest) (*Result, error) {
+func (c *OpenAI) Edit(ctx context.Context, id accounting.Identity, req *EditRequest) (*Result, error) {
+	return launch.RunTask(ctx, id, editSpec("openai", req), func(ctx context.Context) (*Result, error) {
+		return c.edit(ctx, req)
+	}, resultUsage)
+}
+
+// edit is Edit without the identity check and accounting.
+func (c *OpenAI) edit(ctx context.Context, req *EditRequest) (*Result, error) {
 	switch {
 	case req == nil:
 		return nil, errors.New("edit request is nil")
@@ -184,11 +200,13 @@ type imagesResponse struct {
 		URL       string `json:"url"`
 		MediaType string `json:"media_type"`
 	} `json:"data"`
+	// The counts are pointers so a count the response left out is told from
+	// a reported zero (TaskUsage.Reported).
 	Usage *struct {
-		InputTokens      int      `json:"input_tokens"`
-		OutputTokens     int      `json:"output_tokens"`
-		PromptTokens     int      `json:"prompt_tokens"`
-		CompletionTokens int      `json:"completion_tokens"`
+		InputTokens      *int     `json:"input_tokens"`
+		OutputTokens     *int     `json:"output_tokens"`
+		PromptTokens     *int     `json:"prompt_tokens"`
+		CompletionTokens *int     `json:"completion_tokens"`
 		TotalTokens      int      `json:"total_tokens"`
 		Cost             *float64 `json:"cost"`
 	} `json:"usage"`
@@ -224,10 +242,18 @@ func (c *OpenAI) send(httpReq *http.Request, model string) (*Result, error) {
 	}
 	out := &Result{Images: collector.Images()}
 	if u := parsed.Usage; u != nil {
+		in, inOK := common.ReportedCount(u.InputTokens)
+		prompt, promptOK := common.ReportedCount(u.PromptTokens)
+		outTokens, outOK := common.ReportedCount(u.OutputTokens)
+		completion, completionOK := common.ReportedCount(u.CompletionTokens)
 		out.Usage = &protocoltypes.TaskUsage{
-			InputTokens:  max(u.InputTokens, u.PromptTokens),
-			OutputTokens: max(u.OutputTokens, u.CompletionTokens),
+			InputTokens:  max(in, prompt),
+			OutputTokens: max(outTokens, completion),
 			TotalTokens:  u.TotalTokens,
+			Reported: protocoltypes.Reported{
+				InputTokens:  inOK || promptOK,
+				OutputTokens: outOK || completionOK,
+			},
 		}
 		if c.openRouter {
 			out.CostUSD = u.Cost

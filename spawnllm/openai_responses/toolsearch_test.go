@@ -55,7 +55,7 @@ func searchHistory() []Message {
 
 func TestChat_ClientToolSearch(t *testing.T) {
 	p, body := captureServer(t, `{"status":"completed","output":[]}`)
-	if _, err := p.Chat(context.Background(), searchHistory(), searchTools(true), "gpt-5.4", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, searchHistory(), searchTools(true), "gpt-5.4", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 
@@ -102,7 +102,7 @@ func TestChat_SearchResultWithoutTextHasNoDeveloperMessage(t *testing.T) {
 	history := searchHistory()
 	history[2].Content, history[2].ToolReferences = "", []string{"get_weather"}
 	p, body := captureServer(t, `{"status":"completed","output":[]}`)
-	if _, err := p.Chat(context.Background(), history, searchTools(true), "gpt-5.4", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, history, searchTools(true), "gpt-5.4", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	input := asType[[]any](t, (*body)["input"], "input")
@@ -120,7 +120,7 @@ func TestChat_SearchErrorTextReachesModel(t *testing.T) {
 	history := searchHistory()
 	history[2].Content, history[2].ToolReferences = "Error: invalid regex", nil
 	p, body := captureServer(t, `{"status":"completed","output":[]}`)
-	if _, err := p.Chat(context.Background(), history, searchTools(true), "gpt-5.4", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, history, searchTools(true), "gpt-5.4", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	input := asType[[]any](t, (*body)["input"], "input")
@@ -139,7 +139,7 @@ func TestChat_SearchErrorTextReachesModel(t *testing.T) {
 func TestChat_ToolSearchCallReportedAsToolCall(t *testing.T) {
 	reply := `{"status":"completed","output":[{"type":"tool_search_call","execution":"client","call_id":"call_9","status":"completed","arguments":{"goal":"weather"}}]}`
 	p, _ := captureServer(t, reply)
-	out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "weather?"}}, searchTools(true), "gpt-5.4", nil)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "weather?"}}, searchTools(true), "gpt-5.4", nil)
 	if err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
@@ -173,7 +173,7 @@ func TestChat_ToolSearchNotUsed(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p, body := captureServer(t, `{"status":"completed","output":[]}`)
-			if _, err := p.Chat(context.Background(), searchHistory(), tt.tools, tt.model, nil); err != nil {
+			if _, err := p.Chat(context.Background(), testID, searchHistory(), tt.tools, tt.model, nil); err != nil {
 				t.Fatalf("Chat error: %v", err)
 			}
 			sent := asType[[]any](t, (*body)["tools"], "tools")
@@ -220,7 +220,7 @@ func TestChat_ReferencesOutsideSearchResultLoadAdditionalTools(t *testing.T) {
 		Message{Role: "tool", ToolCallID: "call_2", Content: "schema", ToolReferences: []string{"get_forecast", "get_weather", "read_file", "unknown"}},
 	)
 	p, body := captureServer(t, `{"status":"completed","output":[]}`)
-	if _, err := p.Chat(context.Background(), history, tools, "gpt-5.4", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, history, tools, "gpt-5.4", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	input := asType[[]any](t, (*body)["input"], "input")
@@ -249,7 +249,7 @@ func TestChat_NoAdditionalToolsWithoutDeferredReferences(t *testing.T) {
 		Message{Role: "tool", ToolCallID: "call_2", Content: "text", ToolReferences: []string{"get_weather"}},
 	)
 	p, body := captureServer(t, `{"status":"completed","output":[]}`)
-	if _, err := p.Chat(context.Background(), history, searchTools(true), "gpt-5.4", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, history, searchTools(true), "gpt-5.4", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	input := asType[[]any](t, (*body)["input"], "input")
@@ -273,7 +273,7 @@ func TestChat_DeferredToolCallCarriesNamespace(t *testing.T) {
 		Message{Role: "tool", ToolCallID: "call_3", Content: "text"},
 	)
 	p, body := captureServer(t, `{"status":"completed","output":[]}`)
-	if _, err := p.Chat(context.Background(), history, searchTools(true), "gpt-5.4", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, history, searchTools(true), "gpt-5.4", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	input := asType[[]any](t, (*body)["input"], "input")
@@ -297,7 +297,7 @@ func TestChat_NoNamespaceWithoutToolSearch(t *testing.T) {
 		Message{Role: "tool", ToolCallID: "call_2", Content: "4C"},
 	)
 	p, body := captureServer(t, `{"status":"completed","output":[]}`)
-	if _, err := p.Chat(context.Background(), history, searchTools(true), "gpt-5.3", nil); err != nil {
+	if _, err := p.Chat(context.Background(), testID, history, searchTools(true), "gpt-5.3", nil); err != nil {
 		t.Fatalf("Chat error: %v", err)
 	}
 	input := asType[[]any](t, (*body)["input"], "input")

@@ -622,7 +622,7 @@ func TestProviderChatErrors(t *testing.T) {
 			// Create provider using constructor to ensure proper initialization
 			provider := NewProvider(tt.apiKey, "https://api.example.com")
 
-			_, err := provider.Chat(context.Background(), tt.messages, nil, "test-model", nil)
+			_, err := provider.Chat(context.Background(), testID, tt.messages, nil, "test-model", nil)
 			if err == nil {
 				t.Fatal("Chat() expected error, got nil")
 			}

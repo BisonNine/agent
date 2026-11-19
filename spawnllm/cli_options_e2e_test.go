@@ -52,7 +52,7 @@ func TestClaudeCLI_AppendsFortification_WhenJSONObjectOptionSet(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(),
+	_, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "summarise"}},
 		nil, "",
 		map[string]any{openai_compat.ResponseFormatJSONObjectOption: true},
@@ -73,7 +73,7 @@ func TestClaudeCLI_NoFortification_WhenOptionUnset(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(),
+	_, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "summarise"}},
 		nil, "", nil,
 	)
@@ -96,7 +96,7 @@ func TestCodexCLI_AppendsFortification_WhenJSONObjectOptionSet(t *testing.T) {
 	p := NewCodexCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(),
+	_, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "summarise"}},
 		nil, "",
 		map[string]any{openai_compat.ResponseFormatJSONObjectOption: true},
@@ -119,7 +119,7 @@ func TestAntigravityCLI_AppendsFortification_WhenJSONObjectOptionSet(t *testing.
 	p := NewAntigravityCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(),
+	_, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "summarise"}},
 		nil, "",
 		map[string]any{openai_compat.ResponseFormatJSONObjectOption: true},

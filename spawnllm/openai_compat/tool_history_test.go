@@ -37,7 +37,7 @@ func TestProviderChat_ToolCallsInEitherForm(t *testing.T) {
 				{Role: "assistant", ToolCalls: []ToolCall{tt.call}},
 				{Role: "tool", ToolCallID: "c1", Content: "sunny"},
 			}
-			if _, err := p.Chat(t.Context(), msgs, nil, "gpt-4o", nil); err != nil {
+			if _, err := p.Chat(t.Context(), testID, msgs, nil, "gpt-4o", nil); err != nil {
 				t.Fatalf("Chat() error = %v", err)
 			}
 

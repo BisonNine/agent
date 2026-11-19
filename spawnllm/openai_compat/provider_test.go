@@ -47,7 +47,7 @@ func TestProviderChat_UsesMaxCompletionTokensForGLM(t *testing.T) {
 
 	p := NewProvider("key", server.URL, "")
 	_, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi"}},
 		nil,
 		"glm-4.7",
@@ -100,7 +100,7 @@ func TestProviderChat_ParsesToolCalls(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -148,7 +148,7 @@ func TestProviderChat_ParsesToolCallsWithObjectArguments(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -197,7 +197,7 @@ func TestProviderChat_ParsesReasoningContent(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "1+1=?"}}, nil, "kimi-k2.5", nil)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "1+1=?"}}, nil, "kimi-k2.5", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -245,7 +245,7 @@ func TestProviderChat_PreservesReasoningContentInHistory(t *testing.T) {
 		{Role: "user", Content: "What about 2+2?"},
 	}
 
-	_, err := p.Chat(t.Context(), messages, nil, "kimi-k2.5", nil)
+	_, err := p.Chat(t.Context(), testID, messages, nil, "kimi-k2.5", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -271,7 +271,7 @@ func TestProviderChat_HTTPError(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -288,7 +288,7 @@ func TestProviderChat_JSONHTTPErrorDoesNotReportHTML(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -339,7 +339,7 @@ func TestProviderChat_HTMLResponsesReturnHelpfulError(t *testing.T) {
 			defer server.Close()
 
 			p := NewProvider("key", server.URL, "")
-			_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+			_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -374,7 +374,7 @@ func TestProviderChat_SuccessResponseUsesStreamingDecoder(t *testing.T) {
 		}),
 	}
 
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -397,7 +397,7 @@ func TestProviderChat_LargeHTMLResponsePreviewIsTruncated(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -434,7 +434,7 @@ func TestProviderChat_KeepsModelIDAndNormalizesKimiTemperature(t *testing.T) {
 
 	p := NewProvider("key", server.URL, "")
 	_, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi"}},
 		nil,
 		"moonshot/kimi-k2.5",
@@ -480,7 +480,7 @@ func TestProviderChat_DropParamsStripsFields(t *testing.T) {
 
 	p := NewProvider("key", server.URL, "", WithDropParams([]string{"temperature"}))
 	_, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi"}},
 		nil,
 		"openai/gpt-5.4",
@@ -526,7 +526,7 @@ func TestProviderChat_NoDropParamsKeepsTemperature(t *testing.T) {
 
 	p := NewProvider("key", server.URL, "")
 	_, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi"}},
 		nil,
 		"openai/gpt-4o",
@@ -584,7 +584,7 @@ func TestProviderChat_AcceptsNumericOptionTypes(t *testing.T) {
 
 	p := NewProvider("key", server.URL, "")
 	_, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi"}},
 		nil,
 		"gpt-4o",
@@ -654,7 +654,7 @@ func TestProviderChat_ForwardsModelIDUnchanged(t *testing.T) {
 				gotModel = nil
 				p := NewProvider("key", base, "")
 				p.httpClient.Transport = redirectTransport{target: target}
-				if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, model, nil); err != nil {
+				if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, model, nil); err != nil {
 					t.Fatalf("Chat() error = %v", err)
 				}
 				if gotModel != model {
@@ -870,7 +870,7 @@ func chatWithCacheKey(t *testing.T, apiBase string) map[string]any {
 	}
 
 	_, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi"}},
 		nil,
 		"test-model",
@@ -1186,7 +1186,7 @@ func TestProviderChat_PopulatesDispatchStatus(t *testing.T) {
 
 	p := NewProvider("key", server.URL, "")
 	out, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi from Alice"}},
 		nil,
 		"gpt-4o",
@@ -1232,7 +1232,7 @@ func TestProviderChat_HTTPErrorPopulatesStatus(t *testing.T) {
 
 	p := NewProvider("key", server.URL, "")
 	out, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi from Bob"}},
 		nil,
 		"gpt-4o",
@@ -1291,7 +1291,7 @@ func TestProviderChat_OmitsRequireParametersForNonOpenRouter(t *testing.T) {
 	}
 
 	p := NewProvider("key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, tools, "gpt-4o", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, tools, "gpt-4o", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -1344,7 +1344,7 @@ func TestProviderChat_OmitsProviderObjectWhenNoTools(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -1407,7 +1407,7 @@ func TestRequestBodyLogging_PairsWithResponse(t *testing.T) {
 		WithResponseLogFile(logPath),
 		WithModelLabel("test-alias"),
 	)
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
 
@@ -1470,7 +1470,7 @@ func TestRequestBodyLogging_RedactsAPIKey(t *testing.T) {
 		WithResponseLogFile(logPath),
 		WithExtraBody(map[string]any{"api_key": "leak-me-not"}),
 	)
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
 
@@ -1521,7 +1521,7 @@ func TestRequestBodyLogging_NoOpWhenUnset(t *testing.T) {
 	logPath := filepath.Join(dir, "rrlog.jsonl")
 
 	p := NewProvider("key", server.URL, "") // no WithResponseLogFile
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
 
@@ -1562,7 +1562,7 @@ func TestRequestBodyLogging_NonBlockingOnWriteError(t *testing.T) {
 	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath))
 
 	// First call lazily opens the file handle.
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "first"}}, nil, "test-model", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "first"}}, nil, "test-model", nil); err != nil {
 		t.Fatalf("Chat #1 error = %v", err)
 	}
 	if p.logFile == nil {
@@ -1579,7 +1579,7 @@ func TestRequestBodyLogging_NonBlockingOnWriteError(t *testing.T) {
 	// Two more calls; both should succeed, and the provider should emit
 	// at most one WRN total.
 	for i := range 2 {
-		if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "after-close"}}, nil, "test-model", nil); err != nil {
+		if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "after-close"}}, nil, "test-model", nil); err != nil {
 			t.Fatalf("Chat #%d after close: error = %v", i+2, err)
 		}
 	}
@@ -1618,7 +1618,7 @@ func TestResponseLogFile_LogsErrorResponses(t *testing.T) {
 	logPath := filepath.Join(dir, "rrlog.jsonl")
 
 	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath))
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err == nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil); err == nil {
 		t.Fatalf("expected error from 500 response")
 	}
 
@@ -1651,7 +1651,7 @@ func TestReasoningEffort_AddedToRequestBody(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "", WithReasoningEffort("high"))
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "grok-3", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "grok-3", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	if got, ok := captured["reasoning_effort"].(string); !ok || got != "high" {
@@ -1675,7 +1675,7 @@ func TestReasoningEffort_OmittedWhenEmpty(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("key", server.URL, "")
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	if _, ok := captured["reasoning_effort"]; ok {
@@ -1703,7 +1703,7 @@ func TestExtraBody_MergedIntoRequest(t *testing.T) {
 		"custom_flag":       true,
 	}
 	p := NewProvider("key", server.URL, "", WithExtraBody(extra))
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-4o", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 	sp, ok := captured["search_parameters"].(map[string]any)
@@ -1760,7 +1760,7 @@ func TestExtraBody_CollisionLogsAndDoesNotOverwrite(t *testing.T) {
 		WithExtraBody(extra),
 		WithModelLabel("grok-3-config-label"),
 	)
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "grok-real-wire", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "grok-real-wire", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 
@@ -1797,7 +1797,7 @@ func TestResponseLogFile_OpenFailureDoesNotPropagate(t *testing.T) {
 	dir := t.TempDir()
 	// Point response_log_file at a directory — os.OpenFile will fail.
 	p := NewProvider("key", server.URL, "", WithResponseLogFile(dir))
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "test-model", nil)
 	if err != nil {
 		t.Fatalf("Chat() must not propagate log-file errors, got: %v", err)
 	}

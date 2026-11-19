@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/spawnllm"
 	"go.bison9.com/agent/spawnllm/speech"
 )
@@ -32,7 +33,7 @@ func TestErrorsClassify(t *testing.T) {
 				t.Errorf("write response: %v", err)
 			}
 		}))
-		_, err := speech.NewOpenAI(srv.URL, "k").Transcribe(context.Background(),
+		_, err := speech.NewOpenAI(srv.URL, "k").Transcribe(context.Background(), accounting.Identity{Agent: "alice"},
 			&speech.TranscribeRequest{Model: "whisper-1", Audio: strings.NewReader("a"), Filename: "a.ogg"})
 		srv.Close()
 		fe := spawnllm.ClassifyError(err, "openai", "whisper-1")

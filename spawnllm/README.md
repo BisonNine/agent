@@ -8,8 +8,9 @@ It calls an LLM and drives it to completion:
 
 ## Boundaries
 
-spawnllm imports only [`toolspec`](../toolspec) and the
-standard library (plus provider SDKs). It **never imports a host**. Policy —
+spawnllm imports only [`toolspec`](../toolspec),
+[`accounting`](../accounting), the shared logger and the standard library
+(plus provider SDKs). It **never imports a host**. Policy —
 model selection, fallback, cooldown, config, results handling — stays in the host
 application. The host resolves a `ProviderSpec`, injects tools, and calls
 the worker.
@@ -17,6 +18,26 @@ the worker.
 Logging is host-injectable via `go.bison9.com/agent/logger` (`logger.SetBackend`), so
 provider/loop logs flow into the host's own logger; spawnllm is silent until a
 backend is installed.
+
+## Identity and accounting
+
+Every call that can launch a model takes an `accounting.Identity` right
+after the context: `LLMProvider.Chat`, `speech` `Transcribe` and
+`Synthesize`, and `imagegen` `Generate` and `Edit`. A `Worker` takes it from
+`WithAccounting`.
+
+- The agent name is required. A missing agent, or an agent or project name
+  longer than 16 characters, is refused before anything is launched; the
+  error wraps `accounting.ErrAgentRequired` or `accounting.ErrNameTooLong`.
+- An empty project is recorded as `default`.
+- Every call, refused or not, reports exactly one `accounting.Record`: kind,
+  provider, transport, model, the tokens and cost the provider reported, the
+  HTTP status (API providers), duration and outcome. A value the provider did
+  not report is written as `"-"`, never as 0.
+- `DispatchStatus.Reported` and `TaskUsage.Reported` say which counts a
+  response actually carried.
+
+See [`accounting`](../accounting) for the record and where it is written.
 
 ## Generated images
 

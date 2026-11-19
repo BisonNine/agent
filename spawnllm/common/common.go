@@ -233,15 +233,17 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}, opts ...ParseO
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
+		// The counts are pointers so a count the response left out is told
+		// from a reported zero (DispatchStatus.Reported).
 		Usage *struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
-			TotalTokens      int `json:"total_tokens"`
+			PromptTokens     *int `json:"prompt_tokens"`
+			CompletionTokens *int `json:"completion_tokens"`
+			TotalTokens      int  `json:"total_tokens"`
 			// prompt_tokens includes the cached and cache-written tokens (OpenAI
 			// semantics, which OpenRouter follows), so these are not added to it.
 			PromptTokensDetails *struct {
-				CachedTokens     int `json:"cached_tokens"`
-				CacheWriteTokens int `json:"cache_write_tokens"`
+				CachedTokens     *int `json:"cached_tokens"`
+				CacheWriteTokens *int `json:"cache_write_tokens"`
 			} `json:"prompt_tokens_details"`
 			// Cost is OpenRouter's charge for the request, in credits (US
 			// dollars); nil when the response has none.
@@ -375,19 +377,21 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}, opts ...ParseO
 		NumTurns:   1,
 		StopReason: choice0.FinishReason,
 	}
-	if apiResponse.Usage != nil {
+	if u := apiResponse.Usage; u != nil {
+		promptTokens, promptOK := ReportedCount(u.PromptTokens)
+		status.OutputTokens, status.Reported.OutputTokens = ReportedCount(u.CompletionTokens)
 		usage = &UsageInfo{
-			PromptTokens:     apiResponse.Usage.PromptTokens,
-			CompletionTokens: apiResponse.Usage.CompletionTokens,
-			TotalTokens:      apiResponse.Usage.TotalTokens,
+			PromptTokens:     promptTokens,
+			CompletionTokens: status.OutputTokens,
+			TotalTokens:      u.TotalTokens,
 		}
-		status.OutputTokens = apiResponse.Usage.CompletionTokens
-		if apiResponse.Usage.PromptTokensDetails != nil {
-			status.CacheReadTokens = apiResponse.Usage.PromptTokensDetails.CachedTokens
-			status.CacheCreationTokens = apiResponse.Usage.PromptTokensDetails.CacheWriteTokens
+		if d := u.PromptTokensDetails; d != nil {
+			status.CacheReadTokens, status.Reported.CacheReadTokens = ReportedCount(d.CachedTokens)
+			status.CacheCreationTokens, status.Reported.CacheCreationTokens = ReportedCount(d.CacheWriteTokens)
 		}
-		status.InputTokens = UncachedInputTokens(apiResponse.Usage.PromptTokens,
+		status.InputTokens = UncachedInputTokens(promptTokens,
 			status.CacheReadTokens, status.CacheCreationTokens)
+		status.Reported.InputTokens = promptOK
 		if o.usageCost && apiResponse.Usage.Cost != nil {
 			cost := *apiResponse.Usage.Cost
 			status.CostUSD = &cost
@@ -784,4 +788,31 @@ func AsFloat(v any) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+// ReportedNumbers returns the names of the fields of the JSON object b whose
+// value is a number, so a count reported as zero can be told from one that
+// was never reported. It returns nil when b is not a JSON object.
+func ReportedNumbers(b []byte) map[string]bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(b, &fields); err != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(fields))
+	for name, raw := range fields {
+		raw = bytes.TrimSpace(raw)
+		if len(raw) > 0 && (raw[0] == '-' || (raw[0] >= '0' && raw[0] <= '9')) {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+// ReportedCount returns *p and true, or 0 and false when p is nil: a count
+// the response did not report, which is not a reported zero.
+func ReportedCount(p *int) (int, bool) {
+	if p == nil {
+		return 0, false
+	}
+	return *p, true
 }

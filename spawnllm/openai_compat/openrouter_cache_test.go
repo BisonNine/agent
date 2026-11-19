@@ -40,7 +40,7 @@ func chatVia(t *testing.T, apiBase, model string, options map[string]any, reply 
 			return http.DefaultTransport.RoundTrip(r)
 		}),
 	}
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, model, options)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, model, options)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -177,7 +177,7 @@ func TestChat_InputTokensExcludeCacheStreaming(t *testing.T) {
 	server := sseServer(t, body, nil)
 	defer server.Close()
 	p := NewProvider("key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "m",
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "m",
 		map[string]any{common.TextDeltaOption: func(string) {}})
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)

@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // CodexCliProvider implements LLMProvider by wrapping the codex CLI as a subprocess.
@@ -59,6 +61,16 @@ func NewCodexCliProviderWithTimeout(command, workspace string, timeout time.Dura
 
 // Chat implements LLMProvider.Chat by executing the codex CLI in non-interactive mode.
 func (p *CodexCliProvider) Chat(
+	ctx context.Context, id accounting.Identity, messages []Message, tools []ToolDefinition, model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	return chatCLI(ctx, id, "codex-cli", model, func(ctx context.Context) (*LLMResponse, error) {
+		return p.chat(ctx, messages, tools, model, options)
+	})
+}
+
+// chat is Chat without the identity check and accounting.
+func (p *CodexCliProvider) chat(
 	ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]any,
 ) (*LLMResponse, error) {
 	if p.command == "" {
@@ -246,6 +258,18 @@ type codexUsage struct {
 	InputTokens       int `json:"input_tokens"`
 	CachedInputTokens int `json:"cached_input_tokens"`
 	OutputTokens      int `json:"output_tokens"`
+	// reported marks the counts the CLI's JSON carried.
+	reported protocoltypes.Reported
+}
+
+// UnmarshalJSON decodes the counts and notes which ones were present.
+func (u *codexUsage) UnmarshalJSON(b []byte) error {
+	type plain codexUsage
+	if err := json.Unmarshal(b, (*plain)(u)); err != nil {
+		return err
+	}
+	u.reported = cliUsageKeys{"input_tokens", "output_tokens", "cached_input_tokens", ""}.reported(b)
+	return nil
 }
 
 type codexEventErr struct {
@@ -372,6 +396,7 @@ func buildCodexCliStatus(model string, usage *codexUsage, numTurns int, lastErro
 		status.InputTokens = common.UncachedInputTokens(usage.InputTokens, usage.CachedInputTokens, 0)
 		status.OutputTokens = usage.OutputTokens
 		status.CacheReadTokens = usage.CachedInputTokens
+		status.Reported = usage.reported
 	}
 	return status
 }

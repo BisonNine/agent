@@ -107,7 +107,7 @@ func TestCLI_TimeoutKillsProcessGroup(t *testing.T) {
 			p := NewClaudeCliProviderWithTimeout(script, t.TempDir(), timeout, nil, nil)
 
 			started := time.Now()
-			resp, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "", nil)
+			resp, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "", nil)
 			elapsed := time.Since(started)
 
 			if !errors.Is(err, context.DeadlineExceeded) {
@@ -143,7 +143,7 @@ exit 0
 	p := NewClaudeCliProviderWithTimeout(script, t.TempDir(), time.Minute, nil, nil)
 
 	started := time.Now()
-	resp, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "", nil)
+	resp, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "", nil)
 	elapsed := time.Since(started)
 
 	if err != nil {
@@ -172,7 +172,7 @@ func TestCLI_StdoutCapExceeded(t *testing.T) {
 
 	p := NewClaudeCliProviderWithTimeout(script, t.TempDir(), time.Minute, nil, nil)
 
-	resp, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil, "", nil)
+	resp, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "", nil)
 	if !errors.Is(err, errCLIOutputCapExceeded) {
 		t.Fatalf("err = %v, want errCLIOutputCapExceeded", err)
 	}

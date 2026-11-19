@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -25,9 +26,14 @@ type (
 	GeneratedImage         = protocoltypes.GeneratedImage
 )
 
+// LLMProvider is a chat model. Chat checks id before launching anything: an
+// identity without an agent, or with a name too long, is refused with an
+// error wrapping accounting.ErrAgentRequired or accounting.ErrNameTooLong.
+// Every call, refused or not, is reported to the accounting package once.
 type LLMProvider interface {
 	Chat(
 		ctx context.Context,
+		id accounting.Identity,
 		messages []Message,
 		tools []ToolDefinition,
 		model string,

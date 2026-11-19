@@ -9,6 +9,7 @@ package spawnllm
 import (
 	"context"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/spawnllm/openai_compat"
 )
 
@@ -22,14 +23,17 @@ func NewHTTPProviderWithOptions(apiKey, apiBase, proxy string, opts ...openai_co
 	}
 }
 
+// Chat delegates to the openai_compat provider, which checks id and
+// accounts for the call; it is not accounted for again here.
 func (p *HTTPProvider) Chat(
 	ctx context.Context,
+	id accounting.Identity,
 	messages []Message,
 	tools []ToolDefinition,
 	model string,
 	options map[string]any,
 ) (*LLMResponse, error) {
-	return p.delegate.Chat(ctx, messages, tools, model, options)
+	return p.delegate.Chat(ctx, id, messages, tools, model, options)
 }
 
 func (p *HTTPProvider) GetDefaultModel() string {

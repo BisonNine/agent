@@ -6,6 +6,7 @@ import (
 	"errors"
 	"testing"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/toolspec"
 )
 
@@ -17,7 +18,7 @@ type scriptedProvider struct {
 	cli   bool
 }
 
-func (p *scriptedProvider) Chat(_ context.Context, _ []Message, _ []ToolDefinition, _ string, _ map[string]any) (*LLMResponse, error) {
+func (p *scriptedProvider) Chat(_ context.Context, _ accounting.Identity, _ []Message, _ []ToolDefinition, _ string, _ map[string]any) (*LLMResponse, error) {
 	i := p.calls
 	p.calls++
 	if i < len(p.errs) && p.errs[i] != nil {

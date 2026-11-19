@@ -18,7 +18,7 @@ func TestProviderChat_AzureInputTokensExcludeCache(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("test-key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "dep", nil)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "dep", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}

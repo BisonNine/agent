@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // CursorCliProvider implements LLMProvider using the Cursor agent CLI as a
@@ -58,6 +60,16 @@ func NewCursorCliProviderWithTimeout(command, workspace string, timeout time.Dur
 
 // Chat implements LLMProvider.Chat by executing the Cursor CLI.
 func (p *CursorCliProvider) Chat(
+	ctx context.Context, id accounting.Identity, messages []Message, tools []ToolDefinition, model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	return chatCLI(ctx, id, "cursor-cli", model, func(ctx context.Context) (*LLMResponse, error) {
+		return p.chat(ctx, messages, tools, model, options)
+	})
+}
+
+// chat is Chat without the identity check and accounting.
+func (p *CursorCliProvider) chat(
 	ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]any,
 ) (*LLMResponse, error) {
 	// CLI providers run their own internal agentic loop and return one final
@@ -214,6 +226,7 @@ func buildCursorCliStatus(resp *cursorCliJSONResponse) *DispatchStatus {
 		CacheCreationTokens: resp.Usage.CacheWriteTokens,
 		StopReason:          stopReason,
 		DurationMs:          int64(resp.DurationMS),
+		Reported:            resp.Usage.reported,
 	}
 }
 
@@ -239,6 +252,18 @@ type cursorCliUsageInfo struct {
 	OutputTokens     int `json:"outputTokens"`
 	CacheReadTokens  int `json:"cacheReadTokens"`
 	CacheWriteTokens int `json:"cacheWriteTokens"`
+	// reported marks the counts the CLI's JSON carried.
+	reported protocoltypes.Reported
+}
+
+// UnmarshalJSON decodes the counts and notes which ones were present.
+func (u *cursorCliUsageInfo) UnmarshalJSON(b []byte) error {
+	type plain cursorCliUsageInfo
+	if err := json.Unmarshal(b, (*plain)(u)); err != nil {
+		return err
+	}
+	u.reported = cliUsageKeys{"inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"}.reported(b)
+	return nil
 }
 
 // Workspace returns the working directory the CLI runs in. Exposed so hosts can

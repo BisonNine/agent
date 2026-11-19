@@ -7,8 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // AntigravityCliProvider implements LLMProvider using Google's Antigravity CLI
@@ -62,6 +64,16 @@ func NewAntigravityCliProviderWithTimeout(command, workspace string, timeout tim
 
 // Chat implements LLMProvider.Chat by executing the Antigravity CLI.
 func (p *AntigravityCliProvider) Chat(
+	ctx context.Context, id accounting.Identity, messages []Message, tools []ToolDefinition, model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	return chatCLI(ctx, id, "antigravity-cli", model, func(ctx context.Context) (*LLMResponse, error) {
+		return p.chat(ctx, messages, tools, model, options)
+	})
+}
+
+// chat is Chat without the identity check and accounting.
+func (p *AntigravityCliProvider) chat(
 	ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]any,
 ) (*LLMResponse, error) {
 	// CLI providers run their own internal agentic loop and return one final
@@ -257,6 +269,7 @@ func buildAntigravityCliStatus(resp *antigravityCliJSONResponse) *DispatchStatus
 		CacheReadTokens: resp.Usage.CacheReadTokens,
 		StopReason:      stopReason,
 		DurationMs:      int64(resp.DurationSeconds * 1000),
+		Reported:        resp.Usage.reported,
 	}
 }
 
@@ -301,6 +314,18 @@ type antigravityCliUsageInfo struct {
 	ThinkingTokens  int `json:"thinking_tokens"`
 	CacheReadTokens int `json:"cache_read_tokens"`
 	TotalTokens     int `json:"total_tokens"`
+	// reported marks the counts the CLI's JSON carried.
+	reported protocoltypes.Reported
+}
+
+// UnmarshalJSON decodes the counts and notes which ones were present.
+func (u *antigravityCliUsageInfo) UnmarshalJSON(b []byte) error {
+	type plain antigravityCliUsageInfo
+	if err := json.Unmarshal(b, (*plain)(u)); err != nil {
+		return err
+	}
+	u.reported = cliUsageKeys{"input_tokens", "output_tokens", "cache_read_tokens", ""}.reported(b)
+	return nil
 }
 
 // deniedActionNames returns the human names of refused actions, falling back to

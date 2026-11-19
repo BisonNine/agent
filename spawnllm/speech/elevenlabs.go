@@ -15,8 +15,10 @@ import (
 	"net/url"
 	"strings"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/internal/httpcall"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 )
 
 // ElevenLabsBaseURL is the ElevenLabs API's base URL, used when
@@ -62,7 +64,14 @@ func (e *ElevenLabs) call(model string, expectJSON bool) httpcall.Call {
 // refused. Language is the detected language_code and
 // DurationSeconds the audio_duration_secs, when returned. Scribe reports no
 // usage or cost.
-func (e *ElevenLabs) Transcribe(ctx context.Context, req *TranscribeRequest) (*Transcription, error) {
+func (e *ElevenLabs) Transcribe(ctx context.Context, id accounting.Identity, req *TranscribeRequest) (*Transcription, error) {
+	return launch.RunTask(ctx, id, transcribeSpec("elevenlabs", req), func(ctx context.Context) (*Transcription, error) {
+		return e.transcribe(ctx, req)
+	}, transcriptionUsage)
+}
+
+// transcribe is Transcribe without the identity check and accounting.
+func (e *ElevenLabs) transcribe(ctx context.Context, req *TranscribeRequest) (*Transcription, error) {
 	if err := validateTranscribe(req); err != nil {
 		return nil, err
 	}
@@ -116,7 +125,14 @@ func (e *ElevenLabs) Transcribe(ctx context.Context, req *TranscribeRequest) (*T
 // response's Content-Type, else the type the output format names (mp3 when
 // none was requested, the API's default). A 2xx answer that is text, JSON or
 // HTML is an error, not audio.
-func (e *ElevenLabs) Synthesize(ctx context.Context, req *SynthesizeRequest) (*Speech, error) {
+func (e *ElevenLabs) Synthesize(ctx context.Context, id accounting.Identity, req *SynthesizeRequest) (*Speech, error) {
+	return launch.RunTask(ctx, id, synthesizeSpec("elevenlabs", req), func(ctx context.Context) (*Speech, error) {
+		return e.synthesize(ctx, req)
+	}, speechUsage)
+}
+
+// synthesize is Synthesize without the identity check and accounting.
+func (e *ElevenLabs) synthesize(ctx context.Context, req *SynthesizeRequest) (*Speech, error) {
 	if err := validateSynthesize(req, true); err != nil {
 		return nil, err
 	}

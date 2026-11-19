@@ -31,7 +31,7 @@ func TestChat_ReferencedDeferredToolsSentAndReferencesAsText(t *testing.T) {
 		{Role: "tool", ToolCallID: "c1", ToolReferences: []string{"get_weather"}},
 	}
 	p := NewProvider("k", server.URL, "")
-	if _, err := p.Chat(t.Context(), msgs, tools, "gpt-5.2", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, msgs, tools, "gpt-5.2", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
 

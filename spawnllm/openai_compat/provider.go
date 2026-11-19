@@ -20,8 +20,10 @@ import (
 
 	"github.com/google/uuid"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -245,7 +247,38 @@ func NewProviderWithMaxTokensFieldAndTimeout(
 	)
 }
 
+// Chat sends one Chat Completions request and maps the result into an
+// LLMResponse.
+//
+// It checks id first and accounts for the call once (see the accounting
+// package): an invalid identity is refused before any request is sent.
 func (p *Provider) Chat(
+	ctx context.Context,
+	id accounting.Identity,
+	messages []Message,
+	tools []ToolDefinition,
+	model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	ctx, l, err := launch.Begin(ctx, id, launch.Spec{
+		Kind:      accounting.KindText,
+		Provider:  providerName,
+		Transport: accounting.TransportAPI,
+		Model:     model,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.chat(ctx, messages, tools, model, options)
+	l.EndChat(resp, err)
+	return resp, err
+}
+
+// providerName names this provider in accounting records.
+const providerName = "openai-chat"
+
+// chat is Chat without the identity check and accounting.
+func (p *Provider) chat(
 	ctx context.Context,
 	messages []Message,
 	tools []ToolDefinition,
@@ -447,6 +480,7 @@ func (p *Provider) Chat(
 		return httpErrorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0),
 			fmt.Errorf("failed to send request: %w", err)
 	}
+	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			logger.DebugCF("openai_compat", "closing response body", map[string]any{"error": closeErr.Error()})

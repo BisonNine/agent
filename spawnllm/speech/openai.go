@@ -15,8 +15,11 @@ import (
 	"net/http"
 	"strings"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/httpcall"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -90,11 +93,13 @@ type openAITranscription struct {
 	Text     string  `json:"text"`
 	Language string  `json:"language"`
 	Duration float64 `json:"duration"`
-	Usage    *struct {
-		InputTokens  int      `json:"input_tokens"`
-		OutputTokens int      `json:"output_tokens"`
+	// The counts are pointers so a count the response left out is told from
+	// a reported zero (TaskUsage.Reported).
+	Usage *struct {
+		InputTokens  *int     `json:"input_tokens"`
+		OutputTokens *int     `json:"output_tokens"`
 		TotalTokens  int      `json:"total_tokens"`
-		Seconds      float64  `json:"seconds"`
+		Seconds      *float64 `json:"seconds"`
 		Cost         *float64 `json:"cost"`
 	} `json:"usage"`
 }
@@ -115,7 +120,14 @@ type openAITranscription struct {
 // input_audio for it by choice, the shape used in production.
 // OpenRouter has no prompt field, so Prompt is not sent. Its usage.cost is
 // returned as CostUSD and usage.seconds as DurationSeconds.
-func (c *OpenAI) Transcribe(ctx context.Context, req *TranscribeRequest) (*Transcription, error) {
+func (c *OpenAI) Transcribe(ctx context.Context, id accounting.Identity, req *TranscribeRequest) (*Transcription, error) {
+	return launch.RunTask(ctx, id, transcribeSpec("openai", req), func(ctx context.Context) (*Transcription, error) {
+		return c.transcribe(ctx, req)
+	}, transcriptionUsage)
+}
+
+// transcribe is Transcribe without the identity check and accounting.
+func (c *OpenAI) transcribe(ctx context.Context, req *TranscribeRequest) (*Transcription, error) {
 	if err := validateTranscribe(req); err != nil {
 		return nil, err
 	}
@@ -144,14 +156,18 @@ func (c *OpenAI) Transcribe(ctx context.Context, req *TranscribeRequest) (*Trans
 
 	out := &Transcription{Text: parsed.Text, Language: parsed.Language, DurationSeconds: parsed.Duration}
 	if u := parsed.Usage; u != nil {
-		out.Usage = &protocoltypes.TaskUsage{
-			InputTokens: u.InputTokens, OutputTokens: u.OutputTokens, TotalTokens: u.TotalTokens, Seconds: u.Seconds,
+		usage := &protocoltypes.TaskUsage{TotalTokens: u.TotalTokens}
+		usage.InputTokens, usage.Reported.InputTokens = common.ReportedCount(u.InputTokens)
+		usage.OutputTokens, usage.Reported.OutputTokens = common.ReportedCount(u.OutputTokens)
+		if u.Seconds != nil {
+			usage.Seconds, usage.Reported.Seconds = *u.Seconds, true
 		}
+		out.Usage = usage
 		if c.transcription == TranscriptionInputAudio {
 			// OpenRouter reports the audio's length only as usage.seconds,
 			// and its usage.cost is in US dollars (credits).
 			if out.DurationSeconds == 0 {
-				out.DurationSeconds = u.Seconds
+				out.DurationSeconds = usage.Seconds
 			}
 			out.CostUSD = u.Cost
 		}
@@ -220,7 +236,14 @@ func (c *OpenAI) inputAudioRequest(ctx context.Context, req *TranscribeRequest) 
 // text, JSON or HTML is an error, not audio. ContentType is the
 // response's Content-Type; when the server sends none it is the media type of
 // the requested Format (mp3 when none was requested, OpenAI's default).
-func (c *OpenAI) Synthesize(ctx context.Context, req *SynthesizeRequest) (*Speech, error) {
+func (c *OpenAI) Synthesize(ctx context.Context, id accounting.Identity, req *SynthesizeRequest) (*Speech, error) {
+	return launch.RunTask(ctx, id, synthesizeSpec("openai", req), func(ctx context.Context) (*Speech, error) {
+		return c.synthesize(ctx, req)
+	}, speechUsage)
+}
+
+// synthesize is Synthesize without the identity check and accounting.
+func (c *OpenAI) synthesize(ctx context.Context, req *SynthesizeRequest) (*Speech, error) {
 	if err := validateSynthesize(req, true); err != nil {
 		return nil, err
 	}

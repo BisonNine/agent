@@ -24,6 +24,7 @@ import (
 
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 )
 
 // Call describes one request for logging and error reporting.
@@ -70,7 +71,9 @@ func NewPost(ctx context.Context, url string, body []byte, contentType string) (
 // Do sends req with client and returns the response read in full. Transport
 // errors are wrapped with %w, so a context deadline stays
 // context.DeadlineExceeded for errors.Is. The body is not capped: spawnllm
-// returns what the API returned and leaves size policy to the caller.
+// returns what the API returned and leaves size policy to the caller. The
+// response's status is recorded on the launch req's context carries, for
+// accounting.
 func Do(client *http.Client, req *http.Request, c Call) (*Response, error) {
 	start := time.Now()
 	logger.DebugCF(c.Component, "Sending request", map[string]any{
@@ -88,6 +91,7 @@ func Do(client *http.Client, req *http.Request, c Call) (*Response, error) {
 		})
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
+	launch.HTTPStatus(req.Context(), resp.StatusCode)
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit)) //nolint:errcheck // best effort
 		if closeErr := resp.Body.Close(); closeErr != nil {

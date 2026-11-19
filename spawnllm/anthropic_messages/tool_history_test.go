@@ -81,7 +81,7 @@ func TestChat_ToolUseFromHistory(t *testing.T) {
 				msgs = roundTripMessages(t, msgs)
 			}
 			p := NewProvider("k", server.URL)
-			if _, err := p.Chat(t.Context(), msgs, nil, "claude-sonnet-4.6", map[string]any{"max_tokens": 64}); err != nil {
+			if _, err := p.Chat(t.Context(), testID, msgs, nil, "claude-sonnet-4.6", map[string]any{"max_tokens": 64}); err != nil {
 				t.Fatalf("Chat() error: %v", err)
 			}
 

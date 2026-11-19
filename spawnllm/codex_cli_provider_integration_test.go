@@ -24,7 +24,7 @@ func TestIntegration_RealCodexCLI(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	resp, err := p.Chat(ctx, []Message{
+	resp, err := p.Chat(ctx, testID, []Message{
 		{Role: "user", Content: "Respond with only the word 'pong'. Nothing else."},
 	}, nil, "", nil)
 	if err != nil {
@@ -59,7 +59,7 @@ func TestIntegration_RealCodexCLI_WithSystemPrompt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
-	resp, err := p.Chat(ctx, []Message{
+	resp, err := p.Chat(ctx, testID, []Message{
 		{Role: "system", Content: "You are a calculator. Only respond with numbers. No text."},
 		{Role: "user", Content: "What is 2+2?"},
 	}, nil, "", nil)

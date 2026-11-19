@@ -134,7 +134,7 @@ func TestChat_Success(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	resp, err := p.Chat(context.Background(), []Message{
+	resp, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 	if err != nil {
@@ -170,7 +170,7 @@ func TestChat_IsErrorResponse(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 
@@ -192,7 +192,7 @@ func TestChat_PassesThroughToolCallText(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	resp, err := p.Chat(context.Background(), []Message{
+	resp, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "What's the weather?"},
 	}, nil, "", nil)
 	if err != nil {
@@ -215,7 +215,7 @@ func TestChat_StderrError(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 
@@ -233,7 +233,7 @@ func TestChat_NonZeroExitNoStderr(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 
@@ -249,7 +249,7 @@ func TestChat_CommandNotFound(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = "/nonexistent/claude-binary-that-does-not-exist"
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 
@@ -264,7 +264,7 @@ func TestChat_InvalidResponseJSON(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 
@@ -286,7 +286,7 @@ func TestChat_ContextCancellation(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, err := p.Chat(ctx, []Message{
+	_, err := p.Chat(ctx, testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 	elapsed := time.Since(start)
@@ -325,7 +325,7 @@ EOFMOCK
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "system", Content: "Be helpful."},
 		{Role: "user", Content: "Hi"},
 	}, nil, "", nil)
@@ -362,7 +362,7 @@ func TestChat_PassesModelFlag(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hi"},
 	}, nil, "claude-sonnet-4.6", nil)
 	if err != nil {
@@ -389,7 +389,7 @@ func TestChat_SkipsModelFlagForClaudeCode(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hi"},
 	}, nil, "claude-code", nil)
 	if err != nil {
@@ -413,7 +413,7 @@ func TestChat_SkipsModelFlagForEmptyModel(t *testing.T) {
 	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
 	p.command = script
 
-	_, err := p.Chat(context.Background(), []Message{
+	_, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hi"},
 	}, nil, "", nil)
 	if err != nil {
@@ -437,7 +437,7 @@ func TestChat_EmptyWorkspaceDoesNotSetDir(t *testing.T) {
 	p := NewClaudeCliProvider("", "", nil, nil)
 	p.command = script
 
-	resp, err := p.Chat(context.Background(), []Message{
+	resp, err := p.Chat(context.Background(), testID, []Message{
 		{Role: "user", Content: "Hello"},
 	}, nil, "", nil)
 	if err != nil {

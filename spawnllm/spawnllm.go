@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	anthropicmessages "go.bison9.com/agent/spawnllm/anthropic_messages"
 	"go.bison9.com/agent/spawnllm/azure"
 	"go.bison9.com/agent/spawnllm/common"
@@ -66,6 +67,10 @@ type Worker struct {
 
 	// identity threaded onto each tool call (so injected tools can scope work)
 	agentID, session, channel, chatID string
+
+	// accountingID names the agent and project each provider call is
+	// accounted to.
+	accountingID accounting.Identity
 }
 
 // Result is the outcome of a Run.
@@ -152,6 +157,16 @@ func WithIdentity(agentID, session, channel, chatID string) Option {
 	}
 }
 
+// WithAccounting sets the identity every provider call of the Worker is
+// accounted to. An agent name is required: without one, Run fails before
+// launching anything.
+func WithAccounting(id accounting.Identity) Option {
+	return func(w *Worker) error {
+		w.accountingID = id
+		return nil
+	}
+}
+
 // New builds a Worker. It returns an error if no provider was supplied.
 func New(opts ...Option) (*Worker, error) {
 	w := &Worker{maxIterations: 25}
@@ -172,7 +187,7 @@ func New(opts ...Option) (*Worker, error) {
 // stops requesting tools or the iteration cap is hit.
 func (w *Worker) Run(ctx context.Context, messages []Message) (*Result, error) {
 	if cli, ok := w.provider.(CLIProvider); ok && cli.IsCLI() {
-		resp, err := w.provider.Chat(ctx, messages, nil, w.model, w.llmOptions)
+		resp, err := w.provider.Chat(ctx, w.accountingID, messages, nil, w.model, w.llmOptions)
 		if err != nil {
 			return nil, err
 		}
@@ -183,7 +198,7 @@ func (w *Worker) Run(ctx context.Context, messages []Message) (*Result, error) {
 	msgs := append([]Message(nil), messages...)
 	var images []GeneratedImage
 	for i := 1; i <= w.maxIterations; i++ {
-		resp, err := w.provider.Chat(ctx, msgs, toolDefs, w.model, w.llmOptions)
+		resp, err := w.provider.Chat(ctx, w.accountingID, msgs, toolDefs, w.model, w.llmOptions)
 		if err != nil {
 			return nil, err
 		}

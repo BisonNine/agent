@@ -22,8 +22,10 @@ import (
 	"sync"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -156,8 +158,38 @@ func (p *Provider) modelLabelOr(model string) string {
 	return model
 }
 
-// Chat sends one Responses API request and maps the result into an LLMResponse.
+// Chat sends one Responses API request and maps the result into an
+// LLMResponse.
+//
+// It checks id first and accounts for the call once (see the accounting
+// package): an invalid identity is refused before any request is sent.
 func (p *Provider) Chat(
+	ctx context.Context,
+	id accounting.Identity,
+	messages []Message,
+	tools []ToolDefinition,
+	model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	ctx, l, err := launch.Begin(ctx, id, launch.Spec{
+		Kind:      accounting.KindText,
+		Provider:  providerName,
+		Transport: accounting.TransportAPI,
+		Model:     model,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.chat(ctx, messages, tools, model, options)
+	l.EndChat(resp, err)
+	return resp, err
+}
+
+// providerName names this provider in accounting records.
+const providerName = "openai-responses"
+
+// chat is Chat without the identity check and accounting.
+func (p *Provider) chat(
 	ctx context.Context,
 	messages []Message,
 	tools []ToolDefinition,
@@ -279,6 +311,7 @@ func (p *Provider) Chat(
 		return errorStatus(model, "error", time.Since(start).Milliseconds(), bytesSent, 0),
 			fmt.Errorf("failed to send request: %w", err)
 	}
+	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			logger.DebugCF("openai_responses", "closing response body", map[string]any{"error": closeErr.Error()})
@@ -602,14 +635,16 @@ type responseEnvelope struct {
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
 	} `json:"incomplete_details"`
+	// The counts are pointers so a count the response left out is told from
+	// a reported zero (DispatchStatus.Reported).
 	Usage *struct {
 		// input_tokens includes the cached and cache-written tokens.
-		InputTokens        int `json:"input_tokens"`
-		OutputTokens       int `json:"output_tokens"`
-		TotalTokens        int `json:"total_tokens"`
+		InputTokens        *int `json:"input_tokens"`
+		OutputTokens       *int `json:"output_tokens"`
+		TotalTokens        int  `json:"total_tokens"`
 		InputTokensDetails *struct {
-			CachedTokens     int `json:"cached_tokens"`
-			CacheWriteTokens int `json:"cache_write_tokens"`
+			CachedTokens     *int `json:"cached_tokens"`
+			CacheWriteTokens *int `json:"cache_write_tokens"`
 		} `json:"input_tokens_details"`
 	} `json:"usage"`
 }
@@ -737,19 +772,21 @@ func parseResponse(raw []byte, model, searchTool string) (*LLMResponse, error) {
 			StopReason: finishReason,
 		},
 	}
-	if env.Usage != nil {
+	if u := env.Usage; u != nil {
+		st := out.Status
+		inputTokens, inputOK := common.ReportedCount(u.InputTokens)
+		st.OutputTokens, st.Reported.OutputTokens = common.ReportedCount(u.OutputTokens)
 		out.Usage = &UsageInfo{
-			PromptTokens:     env.Usage.InputTokens,
-			CompletionTokens: env.Usage.OutputTokens,
-			TotalTokens:      env.Usage.TotalTokens,
+			PromptTokens:     inputTokens,
+			CompletionTokens: st.OutputTokens,
+			TotalTokens:      u.TotalTokens,
 		}
-		out.Status.OutputTokens = env.Usage.OutputTokens
-		if d := env.Usage.InputTokensDetails; d != nil {
-			out.Status.CacheReadTokens = d.CachedTokens
-			out.Status.CacheCreationTokens = d.CacheWriteTokens
+		if d := u.InputTokensDetails; d != nil {
+			st.CacheReadTokens, st.Reported.CacheReadTokens = common.ReportedCount(d.CachedTokens)
+			st.CacheCreationTokens, st.Reported.CacheCreationTokens = common.ReportedCount(d.CacheWriteTokens)
 		}
-		out.Status.InputTokens = common.UncachedInputTokens(env.Usage.InputTokens,
-			out.Status.CacheReadTokens, out.Status.CacheCreationTokens)
+		st.InputTokens = common.UncachedInputTokens(inputTokens, st.CacheReadTokens, st.CacheCreationTokens)
+		st.Reported.InputTokens = inputOK
 	}
 	return out, nil
 }

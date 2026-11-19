@@ -103,7 +103,7 @@ func TestCLIBaseArgs_MatchTheInvocation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			script, argsFile := argCaptureScript(t, tc.envelope)
 			p := tc.build(script)
-			if _, err := p.Chat(context.Background(),
+			if _, err := p.Chat(context.Background(), testID,
 				[]Message{{Role: "user", Content: "hi"}}, nil, "", nil); err != nil {
 				t.Fatalf("Chat: %v", err)
 			}

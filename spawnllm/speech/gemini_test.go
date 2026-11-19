@@ -105,7 +105,7 @@ func TestGeminiTranscribe(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := NewGemini(srv.URL+"/v1beta/", "g-key").Transcribe(context.Background(), &tc.req)
+			got, err := NewGemini(srv.URL+"/v1beta/", "g-key").Transcribe(context.Background(), testID, &tc.req)
 			if err != nil {
 				t.Fatalf("Transcribe: %v", err)
 			}
@@ -123,7 +123,7 @@ func TestGeminiTranscribe(t *testing.T) {
 }
 
 func TestGeminiTranscribe_UnknownType(t *testing.T) {
-	_, err := NewGemini("http://127.0.0.1:1", "k").Transcribe(context.Background(),
+	_, err := NewGemini("http://127.0.0.1:1", "k").Transcribe(context.Background(), testID,
 		&TranscribeRequest{Model: "m", Audio: audio(), Filename: "voice.xyz"})
 	if err == nil || !strings.Contains(err.Error(), "cannot determine audio type") {
 		t.Fatalf("err = %v", err)
@@ -157,7 +157,7 @@ func TestGeminiTranscribe_Failures(t *testing.T) {
 				writeJSON(t, w, tc.status, tc.body)
 			}))
 			defer srv.Close()
-			_, err := NewGemini(srv.URL, "g-key").Transcribe(context.Background(),
+			_, err := NewGemini(srv.URL, "g-key").Transcribe(context.Background(), testID,
 				&TranscribeRequest{Model: "m", Audio: audio(), ContentType: "audio/wav"})
 			if tc.wantHTTP != 0 {
 				statusErr, ok := errors.AsType[*common.HTTPStatusError](err)
@@ -215,7 +215,7 @@ func TestGeminiSynthesize(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := NewGemini(srv.URL, "g-key").Synthesize(context.Background(), &tc.req)
+			got, err := NewGemini(srv.URL, "g-key").Synthesize(context.Background(), testID, &tc.req)
 			if err != nil {
 				t.Fatalf("Synthesize: %v", err)
 			}
@@ -238,7 +238,7 @@ func TestGeminiSynthesize_NoAudio(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, `{"candidates":[{"content":{"parts":[{"text":"no"}]},"finishReason":"STOP"}]}`)
 	}))
 	defer srv.Close()
-	got, err := NewGemini(srv.URL, "g-key").Synthesize(context.Background(), &SynthesizeRequest{Model: "m", Text: "Hi"})
+	got, err := NewGemini(srv.URL, "g-key").Synthesize(context.Background(), testID, &SynthesizeRequest{Model: "m", Text: "Hi"})
 	if err == nil || !strings.Contains(err.Error(), "no audio") || got != nil {
 		t.Fatalf("got %v, err = %v, want a no-audio error", got, err)
 	}
@@ -261,11 +261,11 @@ func TestGemini_FinishReason(t *testing.T) {
 			}))
 			defer srv.Close()
 			g := NewGemini(srv.URL, "g-key")
-			tr, err := g.Transcribe(context.Background(), &TranscribeRequest{Model: "m", Audio: audio(), ContentType: "audio/ogg"})
+			tr, err := g.Transcribe(context.Background(), testID, &TranscribeRequest{Model: "m", Audio: audio(), ContentType: "audio/ogg"})
 			if err == nil || tr != nil || !strings.Contains(err.Error(), "finish reason "+tc.want) {
 				t.Errorf("Transcribe: got %v, err = %v, want finish reason %s", tr, err, tc.want)
 			}
-			sp, err := g.Synthesize(context.Background(), &SynthesizeRequest{Model: "m", Text: "Hi"})
+			sp, err := g.Synthesize(context.Background(), testID, &SynthesizeRequest{Model: "m", Text: "Hi"})
 			if err == nil || sp != nil || !strings.Contains(err.Error(), "finish reason "+tc.want) {
 				t.Errorf("Synthesize: got %v, err = %v, want finish reason %s", sp, err, tc.want)
 			}

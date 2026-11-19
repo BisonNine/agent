@@ -17,8 +17,10 @@ import (
 	"strings"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -79,8 +81,38 @@ func NewProviderWithTimeout(apiKey, apiBase string, timeoutSeconds int) *Provide
 	}
 }
 
-// Chat sends messages to the Anthropic Messages API and returns the response.
+// Chat sends messages to the Anthropic Messages API and returns the
+// response.
+//
+// It checks id first and accounts for the call once (see the accounting
+// package): an invalid identity is refused before any request is sent.
 func (p *Provider) Chat(
+	ctx context.Context,
+	id accounting.Identity,
+	messages []Message,
+	tools []ToolDefinition,
+	model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	ctx, l, err := launch.Begin(ctx, id, launch.Spec{
+		Kind:      accounting.KindText,
+		Provider:  providerName,
+		Transport: accounting.TransportAPI,
+		Model:     model,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := p.chat(ctx, messages, tools, model, options)
+	l.EndChat(resp, err)
+	return resp, err
+}
+
+// providerName names this provider in accounting records.
+const providerName = "anthropic"
+
+// chat is Chat without the identity check and accounting.
+func (p *Provider) chat(
 	ctx context.Context,
 	messages []Message,
 	tools []ToolDefinition,
@@ -139,6 +171,7 @@ func (p *Provider) Chat(
 		return httpErrorResponse(model, "error", elapsed, bytesSent, 0),
 			fmt.Errorf("executing HTTP request: %w", err)
 	}
+	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			logger.DebugCF("anthropic_messages", "closing response body", map[string]any{"error": closeErr.Error()})
@@ -263,14 +296,11 @@ func accumulateMessagesStream(r io.Reader, cb common.TextDeltaFunc) ([]byte, err
 	sr := common.NewSSEReader(r)
 
 	var (
-		model        string
-		stopReason   string
-		inputTokens  int64
-		outputTokens int64
-		cacheRead    int64
-		cacheCreate  int64
-		order        []int
-		byIndex      = map[int]*streamContentBlock{}
+		model      string
+		stopReason string
+		usage      usageInfo
+		order      []int
+		byIndex    = map[int]*streamContentBlock{}
 	)
 
 	for {
@@ -294,10 +324,7 @@ func accumulateMessagesStream(r io.Reader, cb common.TextDeltaFunc) ([]byte, err
 		case "message_start":
 			if evt.Message != nil {
 				model = evt.Message.Model
-				inputTokens = evt.Message.Usage.InputTokens
-				outputTokens = evt.Message.Usage.OutputTokens
-				cacheRead = evt.Message.Usage.CacheReadInputTokens
-				cacheCreate = evt.Message.Usage.CacheCreationInputTokens
+				usage = evt.Message.Usage
 			}
 		case "content_block_start":
 			blk := &streamContentBlock{}
@@ -337,14 +364,14 @@ func accumulateMessagesStream(r io.Reader, cb common.TextDeltaFunc) ([]byte, err
 				stopReason = evt.Delta.StopReason
 			}
 			// message_delta carries the running output token count.
-			if evt.Usage != nil {
-				outputTokens = evt.Usage.OutputTokens
+			if evt.Usage != nil && evt.Usage.reported.OutputTokens {
+				usage.OutputTokens = evt.Usage.OutputTokens
+				usage.reported.OutputTokens = true
 			}
 		}
 	}
 
-	return reconstructMessagesBody(model, stopReason, inputTokens, outputTokens,
-		cacheRead, cacheCreate, order, byIndex), nil
+	return reconstructMessagesBody(model, stopReason, usage, order, byIndex), nil
 }
 
 // reconstructMessagesBody assembles a non-streaming Messages-API JSON body from
@@ -353,7 +380,7 @@ func accumulateMessagesStream(r io.Reader, cb common.TextDeltaFunc) ([]byte, err
 // is duplicated.
 func reconstructMessagesBody(
 	model, stopReason string,
-	inputTokens, outputTokens, cacheRead, cacheCreate int64,
+	usage usageInfo,
 	order []int,
 	byIndex map[int]*streamContentBlock,
 ) []byte {
@@ -400,12 +427,7 @@ func reconstructMessagesBody(
 		"model":       model,
 		"stop_reason": stopReason,
 		"content":     content,
-		"usage": map[string]any{
-			"input_tokens":                inputTokens,
-			"output_tokens":               outputTokens,
-			"cache_read_input_tokens":     cacheRead,
-			"cache_creation_input_tokens": cacheCreate,
-		},
+		"usage":       usage.wire(),
 	}
 
 	out, err := json.Marshal(body)
@@ -439,9 +461,7 @@ type messagesStreamEvent struct {
 		Signature   string `json:"signature"`
 		StopReason  string `json:"stop_reason"`
 	} `json:"delta"`
-	Usage *struct {
-		OutputTokens int64 `json:"output_tokens"`
-	} `json:"usage"`
+	Usage *usageInfo      `json:"usage"`
 	Error json.RawMessage `json:"error"`
 }
 
@@ -783,6 +803,7 @@ func parseResponseBody(body []byte) (*LLMResponse, error) {
 		CacheReadTokens:     int(resp.Usage.CacheReadInputTokens),
 		CacheCreationTokens: int(resp.Usage.CacheCreationInputTokens),
 		StopReason:          resp.StopReason,
+		Reported:            resp.Usage.reported,
 	}
 
 	return &LLMResponse{
@@ -869,4 +890,42 @@ type usageInfo struct {
 	OutputTokens             int64 `json:"output_tokens"`
 	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
+	// reported marks the counts the JSON carried, so a count the response
+	// left out is not taken for a reported zero.
+	reported protocoltypes.Reported
+}
+
+// UnmarshalJSON decodes the counts and notes which ones were present.
+func (u *usageInfo) UnmarshalJSON(b []byte) error {
+	type plain usageInfo
+	if err := json.Unmarshal(b, (*plain)(u)); err != nil {
+		return err
+	}
+	n := common.ReportedNumbers(b)
+	u.reported = protocoltypes.Reported{
+		InputTokens:         n["input_tokens"],
+		OutputTokens:        n["output_tokens"],
+		CacheReadTokens:     n["cache_read_input_tokens"],
+		CacheCreationTokens: n["cache_creation_input_tokens"],
+	}
+	return nil
+}
+
+// wire returns the usage object with only the counts that were reported, as
+// the API would have sent it.
+func (u usageInfo) wire() map[string]any {
+	out := map[string]any{}
+	if u.reported.InputTokens {
+		out["input_tokens"] = u.InputTokens
+	}
+	if u.reported.OutputTokens {
+		out["output_tokens"] = u.OutputTokens
+	}
+	if u.reported.CacheReadTokens {
+		out["cache_read_input_tokens"] = u.CacheReadInputTokens
+	}
+	if u.reported.CacheCreationTokens {
+		out["cache_creation_input_tokens"] = u.CacheCreationInputTokens
+	}
+	return out
 }

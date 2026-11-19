@@ -46,7 +46,7 @@ func TestChat_StreamingText(t *testing.T) {
 
 	var deltas []string
 	p := NewProvider("k", srv.URL, "")
-	out, err := p.Chat(context.Background(),
+	out, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "hi"}}, nil, "gpt-5",
 		map[string]any{common.TextDeltaOption: func(d string) { deltas = append(deltas, d) }})
 	if err != nil {
@@ -77,7 +77,7 @@ func TestChat_StreamingToolCall(t *testing.T) {
 
 	srv := sseResponsesServer(t, body, nil)
 	p := NewProvider("k", srv.URL, "")
-	out, err := p.Chat(context.Background(),
+	out, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "weather?"}}, nil, "gpt-5",
 		map[string]any{common.TextDeltaOption: func(string) {}})
 	if err != nil {
@@ -101,7 +101,7 @@ func TestChat_StreamingError(t *testing.T) {
 	srv := sseResponsesServer(t, body, nil)
 	var deltas []string
 	p := NewProvider("k", srv.URL, "")
-	out, err := p.Chat(context.Background(),
+	out, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "hi"}}, nil, "gpt-5",
 		map[string]any{common.TextDeltaOption: func(d string) { deltas = append(deltas, d) }})
 	if err == nil {
@@ -134,7 +134,7 @@ func TestChat_NonStreamingWhenNoCallback(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	p := NewProvider("k", srv.URL, "")
-	out, err := p.Chat(context.Background(),
+	out, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "hi"}}, nil, "gpt-5",
 		map[string]any{common.TextDeltaOption: common.TextDeltaFunc(nil)})
 	if err != nil {

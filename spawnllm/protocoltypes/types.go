@@ -102,6 +102,10 @@ type DispatchStatus struct {
 	DurationMs    int64    `json:"duration_ms"`
 	BytesSent     int64    `json:"bytes_sent"`
 	BytesReceived int64    `json:"bytes_received"`
+	// Reported says which of the token counts above the provider's response
+	// actually carried. A count whose flag is false is zero because nothing
+	// was reported, not because the call used no tokens.
+	Reported Reported `json:"reported"`
 	// DeniedTools lists the tools an agentic CLI wanted to call but was refused
 	// by its own permission system during this request (the Claude CLI's
 	// permission_denials). The CLI still reports success and answers in prose,
@@ -201,9 +205,21 @@ type ToolFunctionDefinition struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 
+// Reported marks which counts a provider's response actually carried, so a
+// reported zero can be told from a count that was never reported. Only the
+// flags that apply to the type holding it are ever set.
+type Reported struct {
+	InputTokens         bool `json:"input_tokens,omitempty"`
+	OutputTokens        bool `json:"output_tokens,omitempty"`
+	CacheReadTokens     bool `json:"cache_read_tokens,omitempty"`
+	CacheCreationTokens bool `json:"cache_creation_tokens,omitempty"`
+	Seconds             bool `json:"seconds,omitempty"`
+	Characters          bool `json:"characters,omitempty"`
+}
+
 // TaskUsage is what a single-shot task call (a transcription, a speech
 // synthesis, an image generation) reports it used. Each field is zero when
-// the call reported nothing for it.
+// the call reported nothing for it; Reported tells the two apart.
 type TaskUsage struct {
 	// InputTokens, OutputTokens and TotalTokens are the token counts the
 	// response reported (token-billed models: gpt-4o-transcribe, Gemini,
@@ -217,4 +233,7 @@ type TaskUsage struct {
 	// Characters is the number of characters (Unicode code points) of text
 	// sent for synthesis, counted by spawnllm since no speech API reports it.
 	Characters int `json:"characters,omitempty"`
+	// Reported says which of InputTokens, OutputTokens, Seconds and
+	// Characters were reported.
+	Reported Reported `json:"reported"`
 }

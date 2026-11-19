@@ -12,6 +12,7 @@ the SDK never imports a host.
 | [`spawnllm`](spawnllm) | LLM dispatch: calls a CLI or API provider and drives the tool-call loop to completion. |
 | [`ctxengine`](ctxengine) | The context engine: keeps the transcript, assembles each request, evicts and summarises as the window fills. |
 | [`cogmem`](cogmem) | Cognitive memory: durable, typed memories organised into domains and refined by background consolidation. |
+| [`accounting`](accounting) | One record per LLM or API call launched through spawnllm, written to a file or to the logger. |
 | [`logger`](logger) | The logging seam shared by the packages above; silent until the host installs a backend. |
 
 Each package has its own README.
@@ -22,7 +23,9 @@ Each package imports only the ones below it, and a guard test in each package
 enforces that:
 
 - `toolspec` imports only the standard library.
-- `spawnllm` imports `toolspec`.
+- `logger` imports only the standard library.
+- `accounting` imports only `logger`.
+- `spawnllm` imports `toolspec`, `accounting` and `logger`.
 - `ctxengine` imports `spawnllm` and `toolspec`, never `cogmem`.
 - `cogmem` imports `toolspec`, never `spawnllm` or `ctxengine`.
 

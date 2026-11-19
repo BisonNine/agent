@@ -51,7 +51,7 @@ func TestProviderChat_ToolChoice(t *testing.T) {
 				options[common.ToolChoiceOption] = tt.choice
 			}
 			p := NewProvider("key", server.URL, "")
-			if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, tt.tools, "deployment", options); err != nil {
+			if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, tt.tools, "deployment", options); err != nil {
 				t.Fatalf("Chat() error = %v", err)
 			}
 			got, set := body["tool_choice"]

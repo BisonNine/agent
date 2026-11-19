@@ -37,7 +37,7 @@ func TestProviderChat_AzureURLConstruction(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("test-key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "my-gpt5-deployment", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "my-gpt5-deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -63,7 +63,7 @@ func TestProviderChat_AzureAuthHeader(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("test-azure-key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -88,7 +88,7 @@ func TestProviderChat_AzureOmitsModelFromBody(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("test-key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -111,7 +111,7 @@ func TestProviderChat_AzureUsesMaxCompletionTokens(t *testing.T) {
 
 	p := NewProvider("test-key", server.URL, "")
 	_, err := p.Chat(
-		t.Context(),
+		t.Context(), testID,
 		[]Message{{Role: "user", Content: "hi"}},
 		nil,
 		"deployment",
@@ -136,7 +136,7 @@ func TestProviderChat_AzureHTTPError(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("bad-key", server.URL, "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -172,7 +172,7 @@ func TestProviderChat_AzureParseToolCalls(t *testing.T) {
 	defer server.Close()
 
 	p := NewProvider("test-key", server.URL, "")
-	out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "weather?"}}, nil, "deployment", nil)
+	out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "weather?"}}, nil, "deployment", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
@@ -187,7 +187,7 @@ func TestProviderChat_AzureParseToolCalls(t *testing.T) {
 
 func TestProvider_AzureEmptyAPIBase(t *testing.T) {
 	p := NewProvider("test-key", "", "")
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "deployment", nil)
 	if err == nil {
 		t.Fatal("expected error for empty API base")
 	}
@@ -229,7 +229,7 @@ func TestProviderChat_AzureDeploymentNameEscaped(t *testing.T) {
 	p := NewProvider("test-key", server.URL, "")
 
 	// Deployment name with characters that could cause path injection
-	_, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "my deploy/../../admin", nil)
+	_, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "my deploy/../../admin", nil)
 	if err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}

@@ -37,7 +37,7 @@ func TestCursorCliProvider_Chat_ParsesResult(t *testing.T) {
 	script := createMockCLI(t, out, "", 0)
 	p := NewCursorCliProvider(script, t.TempDir(), nil, nil)
 
-	resp, err := p.Chat(context.Background(),
+	resp, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "respond with ok"}}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("Chat: %v", err)
@@ -69,7 +69,7 @@ func TestCursorCliProvider_Chat_Error(t *testing.T) {
 	script := createMockCLI(t, out, "", 0)
 	p := NewCursorCliProvider(script, t.TempDir(), nil, nil)
 
-	_, err := p.Chat(context.Background(),
+	_, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "x"}}, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected an error for an is_error envelope")
@@ -84,7 +84,7 @@ func TestCursorCliProvider_Chat_Args(t *testing.T) {
 
 	readArgs := func(model string) string {
 		p := NewCursorCliProvider(script, t.TempDir(), []string{"--yolo"}, nil)
-		if _, err := p.Chat(context.Background(),
+		if _, err := p.Chat(context.Background(), testID,
 			[]Message{{Role: "user", Content: "hi"}}, nil, model, nil); err != nil {
 			t.Fatalf("Chat: %v", err)
 		}

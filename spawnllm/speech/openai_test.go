@@ -30,7 +30,7 @@ func TestOpenAITranscribe_Multipart(t *testing.T) {
 	defer srv.Close()
 
 	c := NewOpenAI(srv.URL+"/v1/", "sk-test")
-	got, err := c.Transcribe(context.Background(), &TranscribeRequest{
+	got, err := c.Transcribe(context.Background(), testID, &TranscribeRequest{
 		Model: "whisper-1", Audio: audio(), Filename: "/tmp/voice.ogg", ContentType: "audio/ogg",
 		Language: "en", Prompt: "Alice and Bob",
 	})
@@ -81,7 +81,7 @@ func TestOpenAITranscribe_MultipartDefaultsAndOptionalFields(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := NewOpenAI(srv.URL, "").Transcribe(context.Background(),
+	got, err := NewOpenAI(srv.URL, "").Transcribe(context.Background(), testID,
 		&TranscribeRequest{Model: "whisper-large-v3", Audio: audio(), ContentType: "audio/ogg; codecs=opus"})
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
@@ -96,7 +96,7 @@ func TestOpenAITranscribe_DurationUsage(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, `{"text":"x","usage":{"type":"duration","seconds":7}}`)
 	}))
 	defer srv.Close()
-	got, err := NewOpenAI(srv.URL, "k").Transcribe(context.Background(),
+	got, err := NewOpenAI(srv.URL, "k").Transcribe(context.Background(), testID,
 		&TranscribeRequest{Model: "whisper-1", Audio: audio(), Filename: "a.mp3"})
 	if err != nil {
 		t.Fatalf("Transcribe: %v", err)
@@ -159,7 +159,7 @@ func TestOpenAITranscribe_OpenRouter(t *testing.T) {
 			// Chosen by host: the client is built for openrouter.ai and the
 			// transport delivers to the test server.
 			c := NewOpenAI("https://openrouter.ai/api/v1", "sk-or-test", WithHTTPClient(redirectClient(t, srv)))
-			got, err := c.Transcribe(context.Background(), &TranscribeRequest{
+			got, err := c.Transcribe(context.Background(), testID, &TranscribeRequest{
 				Model: "openai/whisper-large-v3", Audio: audio(), Filename: "Voice.OGG",
 				Language: tc.language, Prompt: "not sent",
 			})
@@ -194,7 +194,7 @@ func TestOpenAITranscribe_ExplicitAPI(t *testing.T) {
 		return &TranscribeRequest{Model: "m", Audio: audio(), Filename: "a.wav"}
 	}
 	if _, err := NewOpenAI(srv.URL, "k", WithTranscriptionAPI(TranscriptionInputAudio)).
-		Transcribe(context.Background(), req()); err != nil {
+		Transcribe(context.Background(), testID, req()); err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
 	if gotType != "application/json" {
@@ -202,7 +202,7 @@ func TestOpenAITranscribe_ExplicitAPI(t *testing.T) {
 	}
 	c := NewOpenAI("https://openrouter.ai/api/v1", "k",
 		WithTranscriptionAPI(TranscriptionMultipart), WithHTTPClient(redirectClient(t, srv)))
-	if _, err := c.Transcribe(context.Background(), req()); err != nil {
+	if _, err := c.Transcribe(context.Background(), testID, req()); err != nil {
 		t.Fatalf("Transcribe: %v", err)
 	}
 	if !strings.HasPrefix(gotType, "multipart/form-data") {
@@ -231,7 +231,7 @@ func TestOpenAITranscribe_OpenRouterNeedsExtension(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	defer srv.Close()
 	_, err := NewOpenAI(srv.URL, "k", WithTranscriptionAPI(TranscriptionInputAudio)).
-		Transcribe(context.Background(), &TranscribeRequest{Model: "m", Audio: audio(), Filename: "voice"})
+		Transcribe(context.Background(), testID, &TranscribeRequest{Model: "m", Audio: audio(), Filename: "voice"})
 	if err == nil || !strings.Contains(err.Error(), "cannot determine audio format") {
 		t.Fatalf("err = %v, want a format error", err)
 	}
@@ -321,7 +321,7 @@ func TestOpenAITranscribe_Errors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(tc.handler)
 			defer srv.Close()
-			_, err := NewOpenAI(srv.URL, "k").Transcribe(context.Background(),
+			_, err := NewOpenAI(srv.URL, "k").Transcribe(context.Background(), testID,
 				&TranscribeRequest{Model: "whisper-1", Audio: audio(), Filename: "a.ogg"})
 			tc.check(t, err)
 		})
@@ -336,7 +336,7 @@ func TestOpenAITranscribe_ContextDeadline(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := NewOpenAI(srv.URL, "k").Transcribe(ctx, &TranscribeRequest{Model: "m", Audio: audio(), Filename: "a.ogg"})
+	_, err := NewOpenAI(srv.URL, "k").Transcribe(ctx, testID, &TranscribeRequest{Model: "m", Audio: audio(), Filename: "a.ogg"})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
@@ -344,22 +344,22 @@ func TestOpenAITranscribe_ContextDeadline(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	c := NewOpenAI("http://127.0.0.1:1", "k")
-	if _, err := c.Transcribe(context.Background(), nil); err == nil {
+	if _, err := c.Transcribe(context.Background(), testID, nil); err == nil {
 		t.Error("nil transcribe request accepted")
 	}
-	if _, err := c.Transcribe(context.Background(), &TranscribeRequest{Audio: audio()}); err == nil {
+	if _, err := c.Transcribe(context.Background(), testID, &TranscribeRequest{Audio: audio()}); err == nil {
 		t.Error("missing model accepted")
 	}
-	if _, err := c.Transcribe(context.Background(), &TranscribeRequest{Model: "m"}); err == nil {
+	if _, err := c.Transcribe(context.Background(), testID, &TranscribeRequest{Model: "m"}); err == nil {
 		t.Error("missing audio accepted")
 	}
-	if _, err := c.Synthesize(context.Background(), &SynthesizeRequest{Model: "m", Voice: "v"}); err == nil {
+	if _, err := c.Synthesize(context.Background(), testID, &SynthesizeRequest{Model: "m", Voice: "v"}); err == nil {
 		t.Error("missing text accepted")
 	}
-	if _, err := c.Synthesize(context.Background(), &SynthesizeRequest{Model: "m", Text: "t"}); err == nil {
+	if _, err := c.Synthesize(context.Background(), testID, &SynthesizeRequest{Model: "m", Text: "t"}); err == nil {
 		t.Error("missing voice accepted")
 	}
-	if _, err := c.Synthesize(context.Background(), &SynthesizeRequest{Text: "t", Voice: "v"}); err == nil {
+	if _, err := c.Synthesize(context.Background(), testID, &SynthesizeRequest{Text: "t", Voice: "v"}); err == nil {
 		t.Error("missing model accepted")
 	}
 }
@@ -414,7 +414,7 @@ func TestOpenAISynthesize(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := NewOpenAI(srv.URL+"/v1", "k").Synthesize(context.Background(), &tc.req)
+			got, err := NewOpenAI(srv.URL+"/v1", "k").Synthesize(context.Background(), testID, &tc.req)
 			if err != nil {
 				t.Fatalf("Synthesize: %v", err)
 			}
@@ -436,7 +436,7 @@ func TestOpenAISynthesize_Error(t *testing.T) {
 		writeJSON(t, w, http.StatusBadRequest, `{"error":{"message":"input too long"}}`)
 	}))
 	defer srv.Close()
-	_, err := NewOpenAI(srv.URL, "k").Synthesize(context.Background(),
+	_, err := NewOpenAI(srv.URL, "k").Synthesize(context.Background(), testID,
 		&SynthesizeRequest{Model: "tts-1", Text: "x", Voice: "alloy"})
 	statusErr, ok := errors.AsType[*common.HTTPStatusError](err)
 	if !ok || statusErr.StatusCode != http.StatusBadRequest {
@@ -456,7 +456,7 @@ func TestOpenAITranscribe_UnknownFormat(t *testing.T) {
 			{Model: "m", Audio: audio()},
 			{Model: "m", Audio: audio(), Filename: "voice", ContentType: "application/octet-stream"},
 		} {
-			_, err := NewOpenAI(srv.URL, "k", WithTranscriptionAPI(api)).Transcribe(context.Background(), &req)
+			_, err := NewOpenAI(srv.URL, "k", WithTranscriptionAPI(api)).Transcribe(context.Background(), testID, &req)
 			if err == nil || !strings.Contains(err.Error(), "cannot determine audio format") {
 				t.Errorf("api %v, %+v: err = %v, want a format error", api, req, err)
 			}
@@ -487,7 +487,7 @@ func TestOpenAISynthesize_NotAudio(t *testing.T) {
 				writeRaw(t, w, []byte(tc.body))
 			}))
 			defer srv.Close()
-			got, err := NewOpenAI(srv.URL, "k").Synthesize(context.Background(),
+			got, err := NewOpenAI(srv.URL, "k").Synthesize(context.Background(), testID,
 				&SynthesizeRequest{Model: "tts-1", Text: "x", Voice: "alloy"})
 			if err == nil || got != nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, err = %v, want an error containing %q", got, err, tc.want)

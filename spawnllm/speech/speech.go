@@ -13,6 +13,10 @@
 // rewriting of the audio or text. The request's timeout is the context's
 // deadline; the default HTTP client sets none of its own.
 //
+// Every Transcribe and Synthesize call takes the accounting identity of its
+// caller. An invalid identity is refused before anything is sent, and every
+// call, refused or not, is reported to the accounting package once.
+//
 // Errors keep the HTTP status: a non-2xx response is a
 // *common.HTTPStatusError (status, Retry-After, a body excerpt of at most
 // 1 KiB), so spawnllm.ClassifyError reads it as it does a chat provider's.
@@ -25,6 +29,8 @@ import (
 	"net/url"
 	"strings"
 
+	"go.bison9.com/agent/accounting"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -35,12 +41,12 @@ import (
 // (a local model fed audio as it is recorded) can implement the same
 // interface without changing callers.
 type Transcriber interface {
-	Transcribe(ctx context.Context, req *TranscribeRequest) (*Transcription, error)
+	Transcribe(ctx context.Context, id accounting.Identity, req *TranscribeRequest) (*Transcription, error)
 }
 
 // Synthesizer turns text into audio.
 type Synthesizer interface {
-	Synthesize(ctx context.Context, req *SynthesizeRequest) (*Speech, error)
+	Synthesize(ctx context.Context, id accounting.Identity, req *SynthesizeRequest) (*Speech, error)
 }
 
 // TranscribeRequest is one transcription.
@@ -213,5 +219,32 @@ func isOpenRouter(baseURL string) bool {
 // characterUsage is the usage of a synthesis: the text's length in code
 // points.
 func characterUsage(text string) *protocoltypes.TaskUsage {
-	return &protocoltypes.TaskUsage{Characters: len([]rune(text))}
+	return &protocoltypes.TaskUsage{
+		Characters: len([]rune(text)),
+		Reported:   protocoltypes.Reported{Characters: true},
+	}
 }
+
+// transcribeSpec describes a transcription launch for accounting.
+func transcribeSpec(provider string, req *TranscribeRequest) launch.Spec {
+	s := launch.Spec{Kind: accounting.KindTranscription, Provider: provider, Transport: accounting.TransportAPI}
+	if req != nil {
+		s.Model = req.Model
+	}
+	return s
+}
+
+// synthesizeSpec describes a speech synthesis launch for accounting.
+func synthesizeSpec(provider string, req *SynthesizeRequest) launch.Spec {
+	s := launch.Spec{Kind: accounting.KindSpeech, Provider: provider, Transport: accounting.TransportAPI}
+	if req != nil {
+		s.Model = req.Model
+	}
+	return s
+}
+
+func transcriptionUsage(t *Transcription) (*protocoltypes.TaskUsage, *float64) {
+	return t.Usage, t.CostUSD
+}
+
+func speechUsage(s *Speech) (*protocoltypes.TaskUsage, *float64) { return s.Usage, s.CostUSD }

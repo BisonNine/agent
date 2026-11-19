@@ -59,7 +59,7 @@ func TestChat_OpenRouterUsageCostStreaming(t *testing.T) {
 			defer server.Close()
 			p := NewProvider("key", tt.apiBase, "")
 			p.httpClient = &http.Client{Transport: rerouteTo(server)}
-			out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, "m",
+			out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "m",
 				map[string]any{common.TextDeltaOption: func(string) {}})
 			if err != nil {
 				t.Fatalf("Chat() error = %v", err)

@@ -23,17 +23,19 @@ import (
 	"io"
 	"net/http"
 
+	"go.bison9.com/agent/accounting"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // Generator creates images from a prompt.
 type Generator interface {
-	Generate(ctx context.Context, req *GenerateRequest) (*Result, error)
+	Generate(ctx context.Context, id accounting.Identity, req *GenerateRequest) (*Result, error)
 }
 
 // Editor creates images from a prompt and input images.
 type Editor interface {
-	Edit(ctx context.Context, req *EditRequest) (*Result, error)
+	Edit(ctx context.Context, id accounting.Identity, req *EditRequest) (*Result, error)
 }
 
 // GenerateRequest is one image generation. Empty optional fields are not
@@ -115,3 +117,23 @@ func applyOptions(opts []Option) options {
 	}
 	return o
 }
+
+// generateSpec describes an image generation launch for accounting.
+func generateSpec(provider string, req *GenerateRequest) launch.Spec {
+	s := launch.Spec{Kind: accounting.KindImage, Provider: provider, Transport: accounting.TransportAPI}
+	if req != nil {
+		s.Model = req.Model
+	}
+	return s
+}
+
+// editSpec describes an image edit launch for accounting.
+func editSpec(provider string, req *EditRequest) launch.Spec {
+	s := launch.Spec{Kind: accounting.KindImage, Provider: provider, Transport: accounting.TransportAPI}
+	if req != nil {
+		s.Model = req.Model
+	}
+	return s
+}
+
+func resultUsage(r *Result) (*protocoltypes.TaskUsage, *float64) { return r.Usage, r.CostUSD }

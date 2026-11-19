@@ -34,7 +34,7 @@ func TestChat_ToolChoice(t *testing.T) {
 			if tt.choice != nil {
 				options[common.ToolChoiceOption] = tt.choice
 			}
-			if _, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "hi"}}, tt.tools, "gpt-5", options); err != nil {
+			if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, tt.tools, "gpt-5", options); err != nil {
 				t.Fatalf("Chat error: %v", err)
 			}
 			got, set := (*body)["tool_choice"]

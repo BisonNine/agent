@@ -67,7 +67,7 @@ func captureOpenRouterRequest(t *testing.T, extra map[string]any, withTools bool
 			},
 		}}
 	}
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, tools, "openai/gpt-4o", nil); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, tools, "openai/gpt-4o", nil); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
 	return body

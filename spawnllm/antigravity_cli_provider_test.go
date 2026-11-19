@@ -68,7 +68,7 @@ func TestAntigravityCliProvider_NeverPassesPrintFlag(t *testing.T) {
 		`{"conversation_id":"c","status":"SUCCESS","response":"ok"}`)
 	p := NewAntigravityCliProvider(script, t.TempDir(), []string{"--dangerously-skip-permissions"}, nil)
 
-	if _, err := p.Chat(context.Background(),
+	if _, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "hi"}}, nil, "", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestAntigravityCliProvider_Chat_ParsesResponse(t *testing.T) {
 	script := createMockCLI(t, out, "", 0)
 	p := NewAntigravityCliProvider(script, t.TempDir(), nil, nil)
 
-	resp, err := p.Chat(context.Background(),
+	resp, err := p.Chat(context.Background(), testID,
 		[]Message{{Role: "user", Content: "say ok"}}, nil, "", nil)
 	if err != nil {
 		t.Fatalf("Chat: %v", err)
@@ -142,7 +142,7 @@ func TestAntigravityCliProvider_NonSuccessStatusIsAnError(t *testing.T) {
 		script := createMockCLI(t, out, "", 0)
 		p := NewAntigravityCliProvider(script, t.TempDir(), nil, nil)
 
-		resp, err := p.Chat(context.Background(),
+		resp, err := p.Chat(context.Background(), testID,
 			[]Message{{Role: "user", Content: "hi"}}, nil, "", nil)
 		if err == nil {
 			t.Errorf("status %q: no error returned", status)
@@ -172,7 +172,7 @@ func TestAntigravityCliProvider_ModelFlag(t *testing.T) {
 		script, argsFile := argCaptureScript(t,
 			`{"conversation_id":"c","status":"SUCCESS","response":"ok"}`)
 		p := NewAntigravityCliProvider(script, t.TempDir(), nil, nil)
-		if _, err := p.Chat(context.Background(),
+		if _, err := p.Chat(context.Background(), testID,
 			[]Message{{Role: "user", Content: "hi"}}, nil, tc.model, nil); err != nil {
 			t.Fatalf("model %q: Chat: %v", tc.model, err)
 		}

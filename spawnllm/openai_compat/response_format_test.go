@@ -39,7 +39,7 @@ func captureChatRequestBody(
 	t.Cleanup(server.Close)
 
 	p := NewProvider("key", server.URL, "", opts...)
-	if _, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "hi"}}, nil, model, options); err != nil {
+	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, model, options); err != nil {
 		t.Fatalf("Chat() error = %v", err)
 	}
 	return captured

@@ -46,7 +46,7 @@ func TestChat_GeneratedImages(t *testing.T) {
 			} else {
 				p, _ = captureServer(t, final)
 			}
-			out, err := p.Chat(context.Background(), []Message{{Role: "user", Content: "draw a cat"}}, nil, "gpt-5", opts)
+			out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "draw a cat"}}, nil, "gpt-5", opts)
 			if err != nil {
 				t.Fatalf("Chat: %v", err)
 			}

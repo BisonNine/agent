@@ -402,7 +402,7 @@ func TestCodexCliProvider_MockCLI_Success(t *testing.T) {
 	}
 
 	messages := []Message{{Role: "user", Content: "Hello"}}
-	resp, err := p.Chat(context.Background(), messages, nil, "", nil)
+	resp, err := p.Chat(context.Background(), testID, messages, nil, "", nil)
 	if err != nil {
 		t.Fatalf("Chat() error: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestCodexCliProvider_MockCLI_Error(t *testing.T) {
 	}
 
 	messages := []Message{{Role: "user", Content: "Hello"}}
-	_, err := p.Chat(context.Background(), messages, nil, "", nil)
+	_, err := p.Chat(context.Background(), testID, messages, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -465,7 +465,7 @@ echo '{"type":"turn.completed"}'`
 	}
 
 	messages := []Message{{Role: "user", Content: "test"}}
-	_, err := p.Chat(context.Background(), messages, nil, "gpt-5.3-codex", nil)
+	_, err := p.Chat(context.Background(), testID, messages, nil, "gpt-5.3-codex", nil)
 	if err != nil {
 		t.Fatalf("Chat() error: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestCodexCliProvider_MockCLI_ContextCancel(t *testing.T) {
 	cancel() // cancel immediately
 
 	messages := []Message{{Role: "user", Content: "test"}}
-	_, err := p.Chat(ctx, messages, nil, "", nil)
+	_, err := p.Chat(ctx, testID, messages, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected error on canceled context")
 	}
@@ -520,7 +520,7 @@ func TestCodexCliProvider_EmptyCommand(t *testing.T) {
 	p := &CodexCliProvider{command: ""}
 
 	messages := []Message{{Role: "user", Content: "test"}}
-	_, err := p.Chat(context.Background(), messages, nil, "", nil)
+	_, err := p.Chat(context.Background(), testID, messages, nil, "", nil)
 	if err == nil {
 		t.Fatal("expected error for empty command")
 	}
@@ -548,7 +548,7 @@ func TestCodexCliProvider_Integration(t *testing.T) {
 		{Role: "user", Content: "Respond with just the word 'hello' and nothing else."},
 	}
 
-	resp, err := p.Chat(context.Background(), messages, nil, "", nil)
+	resp, err := p.Chat(context.Background(), testID, messages, nil, "", nil)
 	if err != nil {
 		t.Fatalf("Chat() error: %v", err)
 	}

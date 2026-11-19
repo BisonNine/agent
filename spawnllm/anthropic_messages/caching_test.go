@@ -75,7 +75,7 @@ func TestChat_SendsAutomaticCacheControl(t *testing.T) {
 			if streaming {
 				opts[common.TextDeltaOption] = func(string) {}
 			}
-			if _, err := p.Chat(t.Context(), messages, nil, "m", opts); err != nil {
+			if _, err := p.Chat(t.Context(), testID, messages, nil, "m", opts); err != nil {
 				t.Fatalf("Chat() error: %v", err)
 			}
 			if got := reqBody["cache_control"]; !reflect.DeepEqual(got, ephemeral) {

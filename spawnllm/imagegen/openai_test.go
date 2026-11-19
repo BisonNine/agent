@@ -97,7 +97,7 @@ func TestOpenAIGenerate(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := NewOpenAI(srv.URL+"/v1/", "sk").Generate(context.Background(), &tc.req)
+			got, err := NewOpenAI(srv.URL+"/v1/", "sk").Generate(context.Background(), testID, &tc.req)
 			if err != nil {
 				t.Fatalf("Generate: %v", err)
 			}
@@ -133,7 +133,7 @@ func TestOpenAIGenerate_NoUsage(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, `{"created":1,"data":[{"url":"https://cdn.example.com/b.png"}]}`)
 	}))
 	defer srv.Close()
-	got, err := NewOpenAI(srv.URL, "").Generate(context.Background(), &GenerateRequest{Model: "m", Prompt: "p"})
+	got, err := NewOpenAI(srv.URL, "").Generate(context.Background(), testID, &GenerateRequest{Model: "m", Prompt: "p"})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestOpenAIGenerate_NoImages(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			writeJSON(t, w, http.StatusOK, body)
 		}))
-		got, err := NewOpenAI(srv.URL, "k").Generate(context.Background(), &GenerateRequest{Model: "m", Prompt: "p"})
+		got, err := NewOpenAI(srv.URL, "k").Generate(context.Background(), testID, &GenerateRequest{Model: "m", Prompt: "p"})
 		srv.Close()
 		if !errors.Is(err, ErrNoImages) || got != nil {
 			t.Errorf("%s: got %v, err = %v, want ErrNoImages", body, got, err)
@@ -176,7 +176,7 @@ func TestOpenAIGenerate_OpenRouter(t *testing.T) {
 	defer srv.Close()
 
 	c := NewOpenAI("https://openrouter.ai/api/v1", "sk-or", WithHTTPClient(redirectClient(t, srv)))
-	got, err := c.Generate(context.Background(), &GenerateRequest{Model: "google/gemini-3-pro-image", Prompt: "Alice"})
+	got, err := c.Generate(context.Background(), testID, &GenerateRequest{Model: "google/gemini-3-pro-image", Prompt: "Alice"})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestOpenAIGenerate_OpenRouter(t *testing.T) {
 		t.Errorf("CostUSD = %v, want 0.04", got.CostUSD)
 	}
 
-	_, err = c.Edit(context.Background(), &EditRequest{Model: "m", Prompt: "p", Images: []InputImage{{Data: strings.NewReader("x")}}})
+	_, err = c.Edit(context.Background(), testID, &EditRequest{Model: "m", Prompt: "p", Images: []InputImage{{Data: strings.NewReader("x")}}})
 	if !errors.Is(err, ErrEditUnsupported) {
 		t.Errorf("Edit on OpenRouter: err = %v, want ErrEditUnsupported", err)
 	}
@@ -287,7 +287,7 @@ func TestOpenAIEdit(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := NewOpenAI(srv.URL, "sk").Edit(context.Background(), &tc.req)
+			got, err := NewOpenAI(srv.URL, "sk").Edit(context.Background(), testID, &tc.req)
 			if err != nil {
 				t.Fatalf("Edit: %v", err)
 			}
@@ -301,22 +301,22 @@ func TestOpenAIEdit(t *testing.T) {
 func TestOpenAI_Validation(t *testing.T) {
 	c := NewOpenAI("http://127.0.0.1:1", "k")
 	ctx := context.Background()
-	if _, err := c.Generate(ctx, nil); err == nil {
+	if _, err := c.Generate(ctx, testID, nil); err == nil {
 		t.Error("nil generate request accepted")
 	}
-	if _, err := c.Generate(ctx, &GenerateRequest{Prompt: "p"}); err == nil {
+	if _, err := c.Generate(ctx, testID, &GenerateRequest{Prompt: "p"}); err == nil {
 		t.Error("missing model accepted")
 	}
-	if _, err := c.Generate(ctx, &GenerateRequest{Model: "m"}); err == nil {
+	if _, err := c.Generate(ctx, testID, &GenerateRequest{Model: "m"}); err == nil {
 		t.Error("missing prompt accepted")
 	}
-	if _, err := c.Edit(ctx, &EditRequest{Model: "m", Prompt: "p"}); err == nil {
+	if _, err := c.Edit(ctx, testID, &EditRequest{Model: "m", Prompt: "p"}); err == nil {
 		t.Error("edit without images accepted")
 	}
-	if _, err := c.Edit(ctx, &EditRequest{Model: "m", Prompt: "p", Images: []InputImage{{}}}); err == nil {
+	if _, err := c.Edit(ctx, testID, &EditRequest{Model: "m", Prompt: "p", Images: []InputImage{{}}}); err == nil {
 		t.Error("image without data accepted")
 	}
-	if _, err := c.Edit(ctx, nil); err == nil {
+	if _, err := c.Edit(ctx, testID, nil); err == nil {
 		t.Error("nil edit request accepted")
 	}
 }
@@ -370,7 +370,7 @@ func TestOpenAI_Errors(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(tc.handler)
 			defer srv.Close()
-			_, err := NewOpenAI(srv.URL, "sk").Generate(context.Background(), &GenerateRequest{Model: "m", Prompt: "p"})
+			_, err := NewOpenAI(srv.URL, "sk").Generate(context.Background(), testID, &GenerateRequest{Model: "m", Prompt: "p"})
 			tc.check(t, err)
 		})
 	}

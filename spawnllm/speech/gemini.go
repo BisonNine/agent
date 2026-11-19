@@ -17,8 +17,11 @@ import (
 	"path/filepath"
 	"strings"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
+	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/httpcall"
+	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -85,10 +88,12 @@ type geminiResponse struct {
 	PromptFeedback *struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback"`
+	// The counts are pointers so a count the response left out is told from
+	// a reported zero (TaskUsage.Reported).
 	UsageMetadata *struct {
-		PromptTokenCount     int `json:"promptTokenCount"`
-		CandidatesTokenCount int `json:"candidatesTokenCount"`
-		TotalTokenCount      int `json:"totalTokenCount"`
+		PromptTokenCount     *int `json:"promptTokenCount"`
+		CandidatesTokenCount *int `json:"candidatesTokenCount"`
+		TotalTokenCount      int  `json:"totalTokenCount"`
 	} `json:"usageMetadata"`
 }
 
@@ -98,7 +103,14 @@ type geminiResponse struct {
 // a finish reason other than STOP is an error naming it.
 // The audio's media type is ContentType, else the one Filename's extension
 // names.
-func (g *Gemini) Transcribe(ctx context.Context, req *TranscribeRequest) (*Transcription, error) {
+func (g *Gemini) Transcribe(ctx context.Context, id accounting.Identity, req *TranscribeRequest) (*Transcription, error) {
+	return launch.RunTask(ctx, id, transcribeSpec("gemini", req), func(ctx context.Context) (*Transcription, error) {
+		return g.transcribe(ctx, req)
+	}, transcriptionUsage)
+}
+
+// transcribe is Transcribe without the identity check and accounting.
+func (g *Gemini) transcribe(ctx context.Context, req *TranscribeRequest) (*Transcription, error) {
 	if err := validateTranscribe(req); err != nil {
 		return nil, err
 	}
@@ -145,7 +157,14 @@ func (g *Gemini) Transcribe(ctx context.Context, req *TranscribeRequest) (*Trans
 // voice name (Kore, Puck, …); empty lets the model choose. Instructions, when
 // set, go before the text as "<instructions>: <text>". Format is ignored:
 // Gemini returns PCM only.
-func (g *Gemini) Synthesize(ctx context.Context, req *SynthesizeRequest) (*Speech, error) {
+func (g *Gemini) Synthesize(ctx context.Context, id accounting.Identity, req *SynthesizeRequest) (*Speech, error) {
+	return launch.RunTask(ctx, id, synthesizeSpec("gemini", req), func(ctx context.Context) (*Speech, error) {
+		return g.synthesize(ctx, req)
+	}, speechUsage)
+}
+
+// synthesize is Synthesize without the identity check and accounting.
+func (g *Gemini) synthesize(ctx context.Context, req *SynthesizeRequest) (*Speech, error) {
 	if err := validateSynthesize(req, false); err != nil {
 		return nil, err
 	}
@@ -187,6 +206,7 @@ func (g *Gemini) Synthesize(ctx context.Context, req *SynthesizeRequest) (*Speec
 		usage := characterUsage(req.Text)
 		if u := geminiUsage(parsed); u != nil {
 			usage.InputTokens, usage.OutputTokens, usage.TotalTokens = u.InputTokens, u.OutputTokens, u.TotalTokens
+			usage.Reported.InputTokens, usage.Reported.OutputTokens = u.Reported.InputTokens, u.Reported.OutputTokens
 		}
 		return &Speech{Audio: audio, ContentType: p.InlineData.MimeType, Size: int64(len(audio)), Usage: usage}, nil
 	}
@@ -231,11 +251,10 @@ func geminiUsage(r *geminiResponse) *protocoltypes.TaskUsage {
 	if r.UsageMetadata == nil {
 		return nil
 	}
-	return &protocoltypes.TaskUsage{
-		InputTokens:  r.UsageMetadata.PromptTokenCount,
-		OutputTokens: r.UsageMetadata.CandidatesTokenCount,
-		TotalTokens:  r.UsageMetadata.TotalTokenCount,
-	}
+	u := &protocoltypes.TaskUsage{TotalTokens: r.UsageMetadata.TotalTokenCount}
+	u.InputTokens, u.Reported.InputTokens = common.ReportedCount(r.UsageMetadata.PromptTokenCount)
+	u.OutputTokens, u.Reported.OutputTokens = common.ReportedCount(r.UsageMetadata.CandidatesTokenCount)
+	return u
 }
 
 // geminiAudioTypes maps file extensions to the audio types Gemini lists

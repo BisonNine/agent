@@ -59,7 +59,7 @@ func TestProviderChat_GeneratedImages(t *testing.T) {
 				opts[common.TextDeltaOption] = func(string) {}
 			}
 			p := NewProvider("key", srv.URL, "")
-			out, err := p.Chat(t.Context(), []Message{{Role: "user", Content: "draw a cat"}}, nil,
+			out, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "draw a cat"}}, nil,
 				"google/gemini-2.5-flash-image", opts)
 			if err != nil {
 				t.Fatalf("Chat() error = %v", err)

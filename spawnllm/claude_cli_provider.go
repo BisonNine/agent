@@ -8,8 +8,10 @@ import (
 	"strings"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
@@ -56,6 +58,16 @@ func NewClaudeCliProviderWithTimeout(command, workspace string, timeout time.Dur
 
 // Chat implements LLMProvider.Chat by executing the claude CLI.
 func (p *ClaudeCliProvider) Chat(
+	ctx context.Context, id accounting.Identity, messages []Message, tools []ToolDefinition, model string,
+	options map[string]any,
+) (*LLMResponse, error) {
+	return chatCLI(ctx, id, "claude-cli", model, func(ctx context.Context) (*LLMResponse, error) {
+		return p.chat(ctx, messages, tools, model, options)
+	})
+}
+
+// chat is Chat without the identity check and accounting.
+func (p *ClaudeCliProvider) chat(
 	ctx context.Context, messages []Message, tools []ToolDefinition, model string, options map[string]any,
 ) (*LLMResponse, error) {
 	// CLI providers run their own internal agentic loop and return one final
@@ -271,6 +283,7 @@ func buildClaudeCliStatus(resp *claudeCliJSONResponse) *DispatchStatus {
 		StopReason:          stopReason,
 		CostUSD:             resp.TotalCostUSD,
 		DurationMs:          int64(resp.DurationMS),
+		Reported:            resp.Usage.reported,
 	}
 }
 
@@ -364,6 +377,18 @@ type claudeCliUsageInfo struct {
 	OutputTokens             int `json:"output_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	// reported marks the counts the CLI's JSON carried.
+	reported protocoltypes.Reported
+}
+
+// UnmarshalJSON decodes the counts and notes which ones were present.
+func (u *claudeCliUsageInfo) UnmarshalJSON(b []byte) error {
+	type plain claudeCliUsageInfo
+	if err := json.Unmarshal(b, (*plain)(u)); err != nil {
+		return err
+	}
+	u.reported = cliUsageKeys{"input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"}.reported(b)
+	return nil
 }
 
 // Workspace returns the working directory the CLI runs in. Exposed so hosts can

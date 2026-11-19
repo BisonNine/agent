@@ -69,7 +69,7 @@ func TestElevenLabsTranscribe(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := NewElevenLabs(srv.URL, "el-key").Transcribe(context.Background(), &tc.req)
+			got, err := NewElevenLabs(srv.URL, "el-key").Transcribe(context.Background(), testID, &tc.req)
 			if err != nil {
 				t.Fatalf("Transcribe: %v", err)
 			}
@@ -116,7 +116,7 @@ func TestElevenLabsSynthesize(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := NewElevenLabs(srv.URL+"/", "el-key").Synthesize(context.Background(), &tc.req)
+			got, err := NewElevenLabs(srv.URL+"/", "el-key").Synthesize(context.Background(), testID, &tc.req)
 			if err != nil {
 				t.Fatalf("Synthesize: %v", err)
 			}
@@ -136,11 +136,11 @@ func TestElevenLabs_Errors(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := NewElevenLabs(srv.URL, "el-key")
-	_, err := c.Transcribe(context.Background(), &TranscribeRequest{Model: "scribe_v2", Audio: audio(), Filename: "a.ogg"})
+	_, err := c.Transcribe(context.Background(), testID, &TranscribeRequest{Model: "scribe_v2", Audio: audio(), Filename: "a.ogg"})
 	if statusErr, ok := errors.AsType[*common.HTTPStatusError](err); !ok || statusErr.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("transcribe err = %v", err)
 	}
-	_, err = c.Synthesize(context.Background(), &SynthesizeRequest{Model: "m", Text: "t", Voice: "v"})
+	_, err = c.Synthesize(context.Background(), testID, &SynthesizeRequest{Model: "m", Text: "t", Voice: "v"})
 	if statusErr, ok := errors.AsType[*common.HTTPStatusError](err); !ok || statusErr.StatusCode != http.StatusUnprocessableEntity {
 		t.Errorf("synthesize err = %v", err)
 	}
@@ -153,7 +153,7 @@ func TestNewElevenLabs_DefaultBaseURL(t *testing.T) {
 }
 
 func TestElevenLabsTranscribe_UnknownFormat(t *testing.T) {
-	_, err := NewElevenLabs("http://127.0.0.1:1", "k").Transcribe(context.Background(),
+	_, err := NewElevenLabs("http://127.0.0.1:1", "k").Transcribe(context.Background(), testID,
 		&TranscribeRequest{Model: "scribe_v2", Audio: audio()})
 	if err == nil || !strings.Contains(err.Error(), "cannot determine audio format") {
 		t.Fatalf("err = %v, want a format error", err)
@@ -174,7 +174,7 @@ func TestElevenLabsSynthesize_ContentTypeFallback(t *testing.T) {
 			w.Header()["Content-Type"] = nil
 			writeRaw(t, w, []byte{0, 1, 2})
 		}))
-		got, err := NewElevenLabs(srv.URL, "k").Synthesize(context.Background(),
+		got, err := NewElevenLabs(srv.URL, "k").Synthesize(context.Background(), testID,
 			&SynthesizeRequest{Model: "m", Text: "t", Voice: "v", Format: format})
 		srv.Close()
 		if err != nil || got.ContentType != want {
@@ -188,7 +188,7 @@ func TestElevenLabsSynthesize_NotAudio(t *testing.T) {
 		writeJSON(t, w, http.StatusOK, `{"detail":{"status":"quota_exceeded"}}`)
 	}))
 	defer srv.Close()
-	got, err := NewElevenLabs(srv.URL, "k").Synthesize(context.Background(),
+	got, err := NewElevenLabs(srv.URL, "k").Synthesize(context.Background(), testID,
 		&SynthesizeRequest{Model: "m", Text: "t", Voice: "v"})
 	if err == nil || got != nil || !strings.Contains(err.Error(), "quota_exceeded") {
 		t.Fatalf("got %v, err = %v, want an error with the body", got, err)

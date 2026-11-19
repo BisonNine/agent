@@ -74,9 +74,16 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 		}
 
 		// Attempt to parse stdout before treating as error — the CLI may exit
-		// non-zero but still write a valid JSON response to stdout.
+		// non-zero but still write a valid JSON response to stdout. When it
+		// did not, the usage and cost it reported are still kept for
+		// accounting.
+		var reported *DispatchStatus
 		if stdoutStr := strings.TrimSpace(stdout.String()); stdoutStr != "" {
-			if resp, parseErr := c.parse(stdoutStr); parseErr == nil && resp.Content != "" {
+			resp, parseErr := c.parse(stdoutStr)
+			if resp != nil {
+				reported = resp.Status
+			}
+			if parseErr == nil && resp.Content != "" {
 				exitCode := -1
 				if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 					exitCode = exitErr.ExitCode()
@@ -107,6 +114,7 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 		}
 		logger.ErrorCF("provider", label+"-cli subprocess failed", fields)
 		errResp := cliErrorResponse(model, "error", elapsed, bytesSent, bytesReceived)
+		withReportedUsage(errResp.Status, reported)
 		switch {
 		case stderrStr != "" && stdoutStr != "":
 			return errResp, fmt.Errorf("%s cli error: %w\nstderr: %s\nstdout: %s", label, runErr, stderrStr, stdoutStr)
@@ -127,7 +135,13 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 
 	resp, parseErr := c.parse(stdout.String())
 	if parseErr != nil {
-		return cliErrorResponse(model, "parse_error", elapsed, bytesSent, bytesReceived), parseErr
+		// A CLI that reported its own failure (is_error) still reported
+		// what the run used and cost; keep that for accounting.
+		errResp := cliErrorResponse(model, "parse_error", elapsed, bytesSent, bytesReceived)
+		if resp != nil {
+			withReportedUsage(errResp.Status, resp.Status)
+		}
+		return errResp, parseErr
 	}
 	if resp.Status != nil {
 		resp.Status.BytesSent = bytesSent
@@ -141,4 +155,23 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 		logger.WarnCF("provider", label+"-cli returned empty content", warnFields)
 	}
 	return resp, nil
+}
+
+// withReportedUsage copies onto the status of a failed run what the CLI
+// reported about it: the token counts with their Reported flags, the cost and
+// the model. The outcome, stop reason, measured duration and byte counts stay
+// as they are.
+func withReportedUsage(status, reported *DispatchStatus) {
+	if status == nil || reported == nil {
+		return
+	}
+	status.InputTokens = reported.InputTokens
+	status.OutputTokens = reported.OutputTokens
+	status.CacheReadTokens = reported.CacheReadTokens
+	status.CacheCreationTokens = reported.CacheCreationTokens
+	status.Reported = reported.Reported
+	status.CostUSD = reported.CostUSD
+	if reported.Model != "" {
+		status.Model = reported.Model
+	}
 }
