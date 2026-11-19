@@ -57,6 +57,7 @@ One JSON object per line, in this order:
 | `audio_seconds` | Billed audio seconds, when reported. |
 | `characters` | Characters of text sent for speech. |
 | `images` | Images the call returned: an image generation, or a chat reply from `openai-chat` or `openai-responses`. |
+| `notes` | A list of short remarks on how the record was filled in: the pricing row or fallback an estimate used, or why the cost could not be estimated. Left out when there is nothing to say. |
 
 A number the provider did not report is written as `"-"`, never as 0; a
 reported 0 is written as 0. `http_status` is `"-"` for a CLI call and for a
@@ -114,3 +115,6 @@ How a cost is settled:
   unknown, or when a token count is known and not zero but the row has no
   price for it.
 - Failed calls are estimated too, since they may still be billed.
+- `notes` names the row when it was a pattern, each cache price that fell
+  back to `input`, and the reason when a table is loaded but the cost stays
+  `-`.

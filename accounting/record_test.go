@@ -3,6 +3,7 @@ package accounting
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func TestRecordJSON(t *testing.T) {
 		t.Errorf("time = %v, want %v", back.Time, start)
 	}
 	back.Time = rec.Time
-	if back != rec {
+	if !reflect.DeepEqual(back, rec) {
 		t.Errorf("round trip =\n%+v\nwant\n%+v", back, rec)
 	}
 }
@@ -149,5 +150,32 @@ func TestRecordJSONKeepsSubSecondAndError(t *testing.T) {
 	}
 	if back.Error != "boom" || back.Agent != "bob" {
 		t.Errorf("round trip = %+v", back)
+	}
+}
+
+func TestRecordJSONNotes(t *testing.T) {
+	rec := Record{Time: time.Date(2026, 3, 4, 10, 6, 7, 0, time.UTC), Agent: "alice", Project: "default"}
+	b, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "notes") {
+		t.Errorf("a record without notes wrote the field: %s", b)
+	}
+
+	rec.Notes = []string{`priced by row "gpt-4o*"`, "second note"}
+	b, err = json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `"notes":["priced by row \"gpt-4o*\"","second note"]}`; !strings.HasSuffix(string(b), want) {
+		t.Errorf("marshal = %s, want it to end with %s", b, want)
+	}
+	var back Record
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(back.Notes, rec.Notes) {
+		t.Errorf("notes = %q, want %q", back.Notes, rec.Notes)
 	}
 }

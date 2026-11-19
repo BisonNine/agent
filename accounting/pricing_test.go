@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 )
@@ -342,5 +343,64 @@ func TestRecordJSONCostSourceAndImages(t *testing.T) {
 	}
 	if back.CostSource != CostEstimated || back.Images != KnownInt(2) || back.CostUSD != KnownFloat(0.25) {
 		t.Errorf("round trip = %+v from %s", back, b)
+	}
+}
+
+func TestSettleCostNotes(t *testing.T) {
+	plain := Price{Model: "m", Input: new(2.0), CacheRead: new(0.2), CacheWrite: new(2.5), Output: new(10.0)}
+	withCost := chatRecord(1000, 2000, 400, 500)
+	withCost.CostUSD = KnownFloat(0.5)
+	cacheUnknown := chatRecord(1000, 0, 0, 500)
+	cacheUnknown.CacheReadTokens = Int{}
+	dated := chatRecord(1000, 0, 0, 500)
+	dated.Model = "m-2026"
+
+	tests := []struct {
+		name string
+		rows []Price
+		rec  Record
+		want []string
+	}{
+		{name: "no table says nothing", rec: chatRecord(1000, 0, 0, 500)},
+		{name: "provided cost says nothing", rows: []Price{plain}, rec: withCost},
+		{name: "exact row with every price says nothing", rows: []Price{plain}, rec: chatRecord(1000, 2000, 400, 500)},
+		{
+			name: "no matching row", rows: []Price{{Model: "other", Input: new(1.0)}}, rec: chatRecord(1000, 0, 0, 500),
+			want: []string{`no pricing row for model "m"`},
+		},
+		{
+			name: "pattern row is named", rows: []Price{{Model: "m*", Input: new(2.0), Output: new(10.0)}}, rec: dated,
+			want: []string{`priced by row "m*"`},
+		},
+		{
+			name: "default row is named", rows: []Price{{Model: "*", Input: new(2.0), Output: new(10.0)}}, rec: dated,
+			want: []string{`priced by row "*"`},
+		},
+		{
+			name: "cache fallbacks are named", rows: []Price{{Model: "m", Input: new(2.0), Output: new(10.0)}},
+			rec: chatRecord(1000, 2000, 400, 500),
+			want: []string{
+				`no cache_read price in row "m", used input price`,
+				`no cache_write price in row "m", used input price`,
+			},
+		},
+		{
+			name: "missing token price", rows: []Price{{Model: "m", Input: new(2.0)}}, rec: chatRecord(1000, 0, 0, 500),
+			want: []string{`not priced: no output price in row "m"`},
+		},
+		{
+			name: "unknown quantity", rows: []Price{plain}, rec: cacheUnknown,
+			want: []string{"not priced: cache_read_tokens unknown"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			usePricing(t, tt.rows)
+			rec := tt.rec
+			settleCost(&rec)
+			if !slices.Equal(rec.Notes, tt.want) {
+				t.Errorf("notes = %q, want %q", rec.Notes, tt.want)
+			}
+		})
 	}
 }

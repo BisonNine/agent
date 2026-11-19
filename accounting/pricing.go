@@ -167,65 +167,82 @@ func priceFor(r *Record) (Price, bool) {
 }
 
 // settleCost sets the record's cost source, and estimates the cost from the
-// pricing table when the call returned none.
+// pricing table when the call returned none. It notes how an estimate was
+// made when that is not plain, and why a cost could not be estimated.
 func settleCost(r *Record) {
 	if _, ok := r.CostUSD.Value(); ok {
 		r.CostSource = CostProvided
 		return
 	}
 	r.CostSource = CostUnknown
-	p, ok := priceFor(r)
-	if !ok {
+	if pricing.Load() == nil {
 		return
 	}
-	if cost, ok := estimate(p, r); ok {
+	p, ok := priceFor(r)
+	if !ok {
+		r.Notes = append(r.Notes, fmt.Sprintf("no pricing row for model %q", r.Model))
+		return
+	}
+	cost, notes, ok := estimate(p, r)
+	if ok {
 		r.CostUSD = KnownFloat(cost)
 		r.CostSource = CostEstimated
+		if p.Model != r.Model {
+			r.Notes = append(r.Notes, fmt.Sprintf("priced by row %q", p.Model))
+		}
 	}
+	r.Notes = append(r.Notes, notes...)
 }
 
 // estimate prices the record's quantities by row p. Cache tokens with no
 // cache price of their own are priced at the input price. It fails when a
 // price the row sets has an unknown quantity, or when a token class with a
-// known, non-zero count has no price (the cost would be understated).
-func estimate(p Price, r *Record) (float64, bool) {
+// known, non-zero count has no price (the cost would be understated). The
+// notes name each fallback used, or the reason it failed.
+func estimate(p Price, r *Record) (float64, []string, bool) {
 	type term struct {
+		name     string // the price's name in the table
+		qtyName  string // the quantity's name in the record
 		price    *float64
 		fallback *float64 // used for a known quantity when price is not set
 		qty      float64  // in the price's unit
 		known    bool
 		token    bool
 	}
-	per := func(price, fallback *float64, v Int, unit float64, token bool) term {
+	per := func(name, qtyName string, price, fallback *float64, v Int, unit float64, token bool) term {
 		n, ok := v.Value()
-		return term{price, fallback, float64(n) / unit, ok, token}
+		return term{name, qtyName, price, fallback, float64(n) / unit, ok, token}
 	}
 	seconds, secondsOK := r.AudioSeconds.Value()
 	terms := []term{
-		per(p.Input, nil, r.InputTokens, 1e6, true),
-		per(p.CacheRead, p.Input, r.CacheReadTokens, 1e6, true),
-		per(p.CacheWrite, p.Input, r.CacheCreationTokens, 1e6, true),
-		per(p.Output, nil, r.OutputTokens, 1e6, true),
-		per(p.Characters, nil, r.Characters, 1e6, false),
-		{p.AudioMinute, nil, seconds / 60, secondsOK, false},
-		per(p.Image, nil, r.Images, 1, false),
+		per("input", "input_tokens", p.Input, nil, r.InputTokens, 1e6, true),
+		per("cache_read", "cache_read_tokens", p.CacheRead, p.Input, r.CacheReadTokens, 1e6, true),
+		per("cache_write", "cache_creation_tokens", p.CacheWrite, p.Input, r.CacheCreationTokens, 1e6, true),
+		per("output", "output_tokens", p.Output, nil, r.OutputTokens, 1e6, true),
+		per("characters", "characters", p.Characters, nil, r.Characters, 1e6, false),
+		{"audio_minute", "audio_seconds", p.AudioMinute, nil, seconds / 60, secondsOK, false},
+		per("image", "images", p.Image, nil, r.Images, 1, false),
 	}
-	var sum float64
+	var (
+		sum   float64
+		notes []string
+	)
 	for _, t := range terms {
 		if t.price == nil {
 			switch {
 			case !t.known || t.qty == 0:
 			case t.fallback != nil:
 				sum += *t.fallback * t.qty
+				notes = append(notes, fmt.Sprintf("no %s price in row %q, used input price", t.name, p.Model))
 			case t.token:
-				return 0, false
+				return 0, []string{fmt.Sprintf("not priced: no %s price in row %q", t.name, p.Model)}, false
 			}
 			continue
 		}
 		if !t.known {
-			return 0, false
+			return 0, []string{fmt.Sprintf("not priced: %s unknown", t.qtyName)}, false
 		}
 		sum += *t.price * t.qty
 	}
-	return sum, true
+	return sum, notes, true
 }

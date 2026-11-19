@@ -18,6 +18,8 @@ project uses [Semantic Versioning](https://semver.org/).
   A row's model is an exact name or a prefix ending in `*` (`*` alone is the
   default); the exact name, then the longest prefix, wins. Cache tokens
   are priced at the input price when a row has no cache price.
+  A record's `notes` say which pattern row or fallback an estimate used,
+  or why a cost could not be estimated.
   Records gain `cost_source` (`provided`, `estimated` or `-`) and `images`,
   the number of images the call returned (`DispatchStatus.Images`).
 - `accounting.Identity` (agent, required; project, default `default`; each at

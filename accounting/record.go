@@ -94,6 +94,10 @@ type Record struct {
 	Characters Int `json:"characters"`
 	// Images is the number of images the call returned.
 	Images Int `json:"images"`
+	// Notes say anything a reader should know about how the record was
+	// filled in: which pricing row or fallback an estimate used, or why the
+	// cost is unknown. Omitted when there is nothing to say.
+	Notes []string `json:"notes,omitempty"`
 }
 
 // recordJSON is Record without its methods, so the JSON methods can reuse
