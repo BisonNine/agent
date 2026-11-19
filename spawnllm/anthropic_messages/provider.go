@@ -803,8 +803,10 @@ func parseResponseBody(body []byte) (*LLMResponse, error) {
 		CacheReadTokens:     int(resp.Usage.CacheReadInputTokens),
 		CacheCreationTokens: int(resp.Usage.CacheCreationInputTokens),
 		StopReason:          resp.StopReason,
+		ToolCalls:           len(toolCalls),
 		Reported:            resp.Usage.reported,
 	}
+	status.Reported.ToolCalls = true
 
 	return &LLMResponse{
 		Content:           content.String(),

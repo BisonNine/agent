@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -69,6 +70,9 @@ var cliCases = []struct {
 	// wantModel is the model recorded: the one the CLI reports serving.
 	wantModel string
 	want      tokens
+	// wantTools is the tool call count recorded; unknown for a CLI whose
+	// output does not report its tool use.
+	wantTools accounting.Int
 }{
 	{
 		provider: "claude-cli",
@@ -84,12 +88,14 @@ var cliCases = []struct {
 	{
 		provider: "codex-cli",
 		build:    func(s string) LLMProvider { return NewCodexCliProvider(s, "", nil, nil) },
-		stdout: `{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"hi"}}` + "\n" +
+		stdout: `{"type":"item.completed","item":{"id":"i0","type":"command_execution","command":"ls","status":"completed"}}` + "\n" +
+			`{"type":"item.completed","item":{"id":"i1","type":"agent_message","text":"hi"}}` + "\n" +
 			`{"type":"turn.completed","usage":{"input_tokens":50,"cached_input_tokens":10,"output_tokens":15}}` + "\n",
 		model:     "gpt-test",
 		wantModel: "gpt-test",
 		// Codex reports no cache writes and no cost.
-		want: tokens{input: known(40), output: known(15), cacheRead: known(10)},
+		want:      tokens{input: known(40), output: known(15), cacheRead: known(10)},
+		wantTools: known(1),
 	},
 	{
 		provider: "cursor-cli",
@@ -166,6 +172,9 @@ func TestCLIProvidersAccountSuccess(t *testing.T) {
 			}
 			launchtest.Unknown(t, "http_status", got.HTTPStatus)
 			checkTokens(t, got, c.want)
+			if got.ToolCalls != c.wantTools {
+				t.Errorf("tool_calls = %+v, want %+v", got.ToolCalls, c.wantTools)
+			}
 		})
 	}
 }
@@ -368,6 +377,41 @@ func TestCLIFailureKeepsReportedUsage(t *testing.T) {
 				t.Errorf("record success=%v error=%q, want a failure", got.Success, got.Error)
 			}
 			checkTokens(t, got, tt.want)
+		})
+	}
+}
+
+func TestCodexToolCalls(t *testing.T) {
+	const done = `{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}`
+	msg := `{"type":"item.completed","item":{"id":"m","type":"agent_message","text":"hi"}}`
+	item := func(typ string) string {
+		return `{"type":"item.completed","item":{"id":"x","type":"` + typ + `"}}`
+	}
+	tests := []struct {
+		name   string
+		events []string
+		want   accounting.Int
+	}{
+		{name: "each tool item counts", want: known(4), events: []string{
+			`{"type":"item.started","item":{"id":"x","type":"command_execution"}}`,
+			item("command_execution"), item("file_change"), item("mcp_tool_call"), item("web_search"),
+			item("reasoning"), item("todo_list"), msg, done,
+		}},
+		{name: "no tool items is a known zero", want: known(0), events: []string{item("reasoning"), msg, done}},
+		{name: "unknown item type", events: []string{item("something_new"), msg, done}},
+		{name: "no completed turn", events: []string{item("command_execution"), msg}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launchtest.Capture(t)
+			script, _ := markerCLI(t, strings.Join(tt.events, "\n")+"\n")
+			if _, err := NewCodexCliProvider(script, "", nil, nil).Chat(context.Background(), testID,
+				[]Message{{Role: "user", Content: "hi"}}, nil, "", nil); err != nil {
+				t.Fatalf("Chat: %v", err)
+			}
+			if got := rec.One().ToolCalls; got != tt.want {
+				t.Errorf("tool_calls = %+v, want %+v", got, tt.want)
+			}
 		})
 	}
 }

@@ -48,6 +48,7 @@ One JSON object per line, in this order:
 | `output_tokens` | Output tokens. |
 | `cache_read_tokens`, `cache_creation_tokens` | Prompt cache tokens. |
 | `cost_usd` | The cost the provider reported. |
+| `tool_calls` | Tool calls the model made: those in an API response, or those a CLI's output reports (only Codex's does). |
 | `http_status` | The HTTP response status. |
 | `duration_ms` | Wall-clock time of the call. |
 | `success` | Whether the call succeeded. |
@@ -60,5 +61,5 @@ reported 0 is written as 0. `http_status` is `"-"` for a CLI call and for a
 call that got no HTTP response.
 
 ```json
-{"time":"2026-11-19T15:04:05.123456Z","agent":"alice","project":"default","kind":"text","provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":3,"cache_read_tokens":2,"cache_creation_tokens":"-","cost_usd":"-","http_status":200,"duration_ms":412,"success":true,"audio_seconds":"-","characters":"-"}
+{"time":"2026-11-19T15:04:05.123456Z","agent":"alice","project":"default","kind":"text","provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":3,"cache_read_tokens":2,"cache_creation_tokens":"-","cost_usd":"-","tool_calls":0,"http_status":200,"duration_ms":412,"success":true,"audio_seconds":"-","characters":"-"}
 ```

@@ -96,3 +96,36 @@ func TestChatStreamErrorKeepsHTTPStatus(t *testing.T) {
 	// The stream failed in-band after a 200 response.
 	rec.Failed(http.StatusOK)
 }
+
+func TestChatAccountsToolCalls(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply string
+		want  int64
+	}{
+		{name: "one call", want: 1, reply: `{"choices":[{"message":{"content":"","tool_calls":[` +
+			`{"id":"c1","type":"function","function":{"name":"a","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`},
+		{name: "no calls is a known zero", want: 0, reply: azureOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launchtest.Capture(t)
+			url, _ := launchtest.Server(t, http.StatusOK, "application/json", tt.reply)
+			if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "deploy", nil); err != nil {
+				t.Fatalf("Chat: %v", err)
+			}
+			if n := launchtest.Known(t, "tool_calls", rec.One().ToolCalls); n != tt.want {
+				t.Errorf("tool_calls = %d, want %d", n, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatErrorLeavesToolCallsUnknown(t *testing.T) {
+	rec := launchtest.Capture(t)
+	url, _ := launchtest.Server(t, http.StatusTooManyRequests, "application/json", `{"error":{"message":"no"}}`)
+	if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "deploy", nil); err == nil {
+		t.Fatal("Chat succeeded")
+	}
+	launchtest.Unknown(t, "tool_calls", rec.One().ToolCalls)
+}

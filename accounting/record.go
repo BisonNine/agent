@@ -60,6 +60,8 @@ type Record struct {
 	CacheReadTokens     Int   `json:"cache_read_tokens"`
 	CacheCreationTokens Int   `json:"cache_creation_tokens"`
 	CostUSD             Float `json:"cost_usd"`
+	// ToolCalls is the number of tool calls the model made in the launch.
+	ToolCalls Int `json:"tool_calls"`
 	// HTTPStatus is the status of the HTTP response; unknown for a CLI
 	// launch and for a call that got no response.
 	HTTPStatus Int `json:"http_status"`

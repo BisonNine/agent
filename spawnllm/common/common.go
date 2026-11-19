@@ -263,6 +263,7 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}, opts ...ParseO
 			Status: &DispatchStatus{
 				Model:    apiResponse.Model,
 				NumTurns: 1,
+				Reported: protocoltypes.Reported{ToolCalls: true},
 			},
 		}, nil
 	}
@@ -376,6 +377,8 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}, opts ...ParseO
 		Model:      apiResponse.Model,
 		NumTurns:   1,
 		StopReason: choice0.FinishReason,
+		ToolCalls:  len(aggToolCalls),
+		Reported:   protocoltypes.Reported{ToolCalls: true},
 	}
 	if u := apiResponse.Usage; u != nil {
 		promptTokens, promptOK := ReportedCount(u.PromptTokens)

@@ -158,8 +158,8 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 }
 
 // withReportedUsage copies onto the status of a failed run what the CLI
-// reported about it: the token counts with their Reported flags, the cost and
-// the model. The outcome, stop reason, measured duration and byte counts stay
+// reported about it: the token and tool call counts with their Reported
+// flags, the cost and the model. The outcome, stop reason, measured duration and byte counts stay
 // as they are.
 func withReportedUsage(status, reported *DispatchStatus) {
 	if status == nil || reported == nil {
@@ -169,6 +169,7 @@ func withReportedUsage(status, reported *DispatchStatus) {
 	status.OutputTokens = reported.OutputTokens
 	status.CacheReadTokens = reported.CacheReadTokens
 	status.CacheCreationTokens = reported.CacheCreationTokens
+	status.ToolCalls = reported.ToolCalls
 	status.Reported = reported.Reported
 	status.CostUSD = reported.CostUSD
 	if reported.Model != "" {

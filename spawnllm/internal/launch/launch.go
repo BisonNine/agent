@@ -86,6 +86,7 @@ func (l *Launch) EndChat(resp *protocoltypes.LLMResponse, err error) {
 		l.rec.CacheReadTokens = count(st.CacheReadTokens, st.Reported.CacheReadTokens)
 		l.rec.CacheCreationTokens = count(st.CacheCreationTokens, st.Reported.CacheCreationTokens)
 		l.rec.CostUSD = cost(st.CostUSD)
+		l.rec.ToolCalls = count(st.ToolCalls, st.Reported.ToolCalls)
 	}
 	l.finish(err)
 }

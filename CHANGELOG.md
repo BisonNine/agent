@@ -10,12 +10,15 @@ project uses [Semantic Versioning](https://semver.org/).
 
 - `accounting` package: one `Record` per LLM or API call launched through
   spawnllm, written as a JSON line to `<dir>/accounting.log` (`Start`,
-  `Report`, `Close`), or to the logger when no file is open. Values a
-  provider did not report are written as `"-"`.
+  `Report`, `Close`), or to the logger when no file is open. Each record
+  includes the number of tool calls the model made. Values a provider did
+  not report are written as `"-"`.
 - `accounting.Identity` (agent, required; project, default `default`; each at
   most 16 characters) and `spawnllm.WithAccounting` to set it on a `Worker`.
 - `DispatchStatus.Reported` and `TaskUsage.Reported`, which say which token
-  counts, seconds and characters a response actually carried.
+  counts, seconds, characters and tool call counts a response actually
+  carried, and `DispatchStatus.ToolCalls`: the tool calls in an API response,
+  or those in Codex's event stream.
 
 ### Changed
 

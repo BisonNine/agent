@@ -89,11 +89,15 @@ type DispatchStatus struct {
 	// the prompt cache, on every provider (Anthropic's meaning of
 	// input_tokens). InputTokens + CacheReadTokens + CacheCreationTokens is
 	// the whole prompt, which UsageInfo.PromptTokens reports.
-	InputTokens         int    `json:"input_tokens"`
-	OutputTokens        int    `json:"output_tokens"`
-	CacheReadTokens     int    `json:"cache_read_tokens"`
-	CacheCreationTokens int    `json:"cache_creation_tokens"`
-	StopReason          string `json:"stop_reason"`
+	InputTokens         int `json:"input_tokens"`
+	OutputTokens        int `json:"output_tokens"`
+	CacheReadTokens     int `json:"cache_read_tokens"`
+	CacheCreationTokens int `json:"cache_creation_tokens"`
+	// ToolCalls is the number of tool calls the model made in this request:
+	// for an API provider those in the response, for a CLI those its output
+	// reports. Meaningful only when Reported.ToolCalls is set.
+	ToolCalls  int    `json:"tool_calls"`
+	StopReason string `json:"stop_reason"`
 	// CostUSD is the request's cost as the provider reported it; nil when the
 	// provider returned no cost, which is not the same as a reported $0.00.
 	// Set by the Claude CLI (total_cost_usd) and by OpenAI-compatible requests
@@ -102,9 +106,9 @@ type DispatchStatus struct {
 	DurationMs    int64    `json:"duration_ms"`
 	BytesSent     int64    `json:"bytes_sent"`
 	BytesReceived int64    `json:"bytes_received"`
-	// Reported says which of the token counts above the provider's response
-	// actually carried. A count whose flag is false is zero because nothing
-	// was reported, not because the call used no tokens.
+	// Reported says which of the token and tool call counts above the
+	// provider's response actually carried. A count whose flag is false is
+	// zero because nothing was reported, not because the call used none.
 	Reported Reported `json:"reported"`
 	// DeniedTools lists the tools an agentic CLI wanted to call but was refused
 	// by its own permission system during this request (the Claude CLI's
@@ -215,6 +219,7 @@ type Reported struct {
 	CacheCreationTokens bool `json:"cache_creation_tokens,omitempty"`
 	Seconds             bool `json:"seconds,omitempty"`
 	Characters          bool `json:"characters,omitempty"`
+	ToolCalls           bool `json:"tool_calls,omitempty"`
 }
 
 // TaskUsage is what a single-shot task call (a transcription, a speech

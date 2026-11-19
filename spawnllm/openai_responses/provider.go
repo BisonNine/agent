@@ -770,6 +770,8 @@ func parseResponse(raw []byte, model, searchTool string) (*LLMResponse, error) {
 		Status: &DispatchStatus{
 			Model:      model,
 			StopReason: finishReason,
+			ToolCalls:  len(toolCalls),
+			Reported:   protocoltypes.Reported{ToolCalls: true},
 		},
 	}
 	if u := env.Usage; u != nil {

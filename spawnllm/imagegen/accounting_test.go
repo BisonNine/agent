@@ -87,6 +87,7 @@ func TestAccountsSuccess(t *testing.T) {
 			if _, ok := got.CostUSD.Value(); ok {
 				t.Error("cost_usd known, want unknown")
 			}
+			launchtest.Unknown(t, "tool_calls", got.ToolCalls)
 		})
 	}
 }

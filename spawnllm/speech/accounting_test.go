@@ -150,6 +150,7 @@ func checkSuccess(t *testing.T, got accounting.Record, provider string, kind acc
 		t.Errorf("http_status = %d", n)
 	}
 	launchtest.Unknown(t, "cache_read_tokens", got.CacheReadTokens)
+	launchtest.Unknown(t, "tool_calls", got.ToolCalls)
 }
 
 func TestAccountsSuccess(t *testing.T) {

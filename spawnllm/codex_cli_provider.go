@@ -283,6 +283,7 @@ func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int
 	var finalUsage *codexUsage
 	var lastError string
 	turnCompletedCount := 0
+	tools := codexToolCount{}
 
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 256*1024), 1024*1024)
@@ -303,6 +304,9 @@ func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int
 		case "item.completed":
 			if event.Item != nil && event.Item.Type == "agent_message" && event.Item.Text != "" {
 				contentParts = append(contentParts, event.Item.Text)
+			}
+			if event.Item != nil {
+				tools.add(event.Item.Type)
 			}
 		case "turn.completed":
 			turnCompletedCount++
@@ -335,6 +339,9 @@ func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int
 	}
 
 	status := buildCodexCliStatus(model, finalUsage, turnCompletedCount, lastError, durationMs)
+	if turnCompletedCount > 0 && !tools.unrecognized {
+		status.ToolCalls, status.Reported.ToolCalls = tools.n, true
+	}
 
 	if lastError != "" && len(contentParts) == 0 {
 		return &LLMResponse{Status: status}, fmt.Errorf("codex cli: %s", lastError)
@@ -412,3 +419,23 @@ func truncateString(s string, n int) string {
 // Workspace returns the working directory the CLI runs in. Exposed so hosts can
 // verify provider construction.
 func (p *CodexCliProvider) Workspace() string { return p.workspace }
+
+// codexToolCount counts the tool calls in a codex exec --json stream: one
+// per completed command, file change, MCP tool call or web search. An item
+// type it does not know makes the count unknown, since it may be a tool.
+type codexToolCount struct {
+	n            int
+	unrecognized bool
+}
+
+func (c *codexToolCount) add(itemType string) {
+	switch itemType {
+	case "command_execution", "file_change", "mcp_tool_call", "web_search":
+		c.n++
+	case "agent_message", "reasoning", "error", "todo_list":
+		// Not tool calls. todo_list is the plan, one item for the whole turn
+		// however often it is updated.
+	default:
+		c.unrecognized = true
+	}
+}

@@ -133,3 +133,37 @@ func TestChatAccountsConnectionError(t *testing.T) {
 	}
 	rec.Failed(0)
 }
+
+func TestChatAccountsToolCalls(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply string
+		want  int64
+	}{
+		{name: "two calls", want: 2, reply: `{"type":"message","model":"claude-test-1","stop_reason":"tool_use","content":[` +
+			`{"type":"tool_use","id":"t1","name":"a","input":{}},{"type":"tool_use","id":"t2","name":"b","input":{}}],` +
+			`"usage":{"input_tokens":1,"output_tokens":1}}`},
+		{name: "no calls is a known zero", want: 0, reply: messagesOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launchtest.Capture(t)
+			url, _ := launchtest.Server(t, http.StatusOK, "application/json", tt.reply)
+			if _, err := NewProvider("k", url).Chat(context.Background(), testID, hello, nil, "claude-test", maxTokens); err != nil {
+				t.Fatalf("Chat: %v", err)
+			}
+			if n := launchtest.Known(t, "tool_calls", rec.One().ToolCalls); n != tt.want {
+				t.Errorf("tool_calls = %d, want %d", n, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatErrorLeavesToolCallsUnknown(t *testing.T) {
+	rec := launchtest.Capture(t)
+	url, _ := launchtest.Server(t, http.StatusInternalServerError, "application/json", `{"type":"error"}`)
+	if _, err := NewProvider("k", url).Chat(context.Background(), testID, hello, nil, "claude-test", maxTokens); err == nil {
+		t.Fatal("Chat succeeded")
+	}
+	launchtest.Unknown(t, "tool_calls", rec.One().ToolCalls)
+}

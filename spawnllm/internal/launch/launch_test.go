@@ -67,6 +67,7 @@ func TestEndChatUsesOnlyReportedCounts(t *testing.T) {
 		InputTokens:  7,
 		OutputTokens: 0,
 		CostUSD:      &cost,
+		ToolCalls:    3,
 		Reported:     protocoltypes.Reported{InputTokens: true, OutputTokens: true},
 	}}, nil)
 	got := rec.One()
@@ -80,6 +81,8 @@ func TestEndChatUsesOnlyReportedCounts(t *testing.T) {
 		t.Errorf("output_tokens = %d, want a reported 0", n)
 	}
 	launchtest.Unknown(t, "cache_read_tokens", got.CacheReadTokens)
+	// A count without its Reported flag is not written.
+	launchtest.Unknown(t, "tool_calls", got.ToolCalls)
 	if c, ok := got.CostUSD.Value(); !ok || c != 0 {
 		t.Errorf("cost_usd = %v (known %v), want a reported 0", c, ok)
 	}
@@ -142,5 +145,16 @@ func TestEndTaskNilUsage(t *testing.T) {
 	launchtest.Unknown(t, "characters", got.Characters)
 	if _, ok := got.AudioSeconds.Value(); ok {
 		t.Error("audio_seconds known without usage")
+	}
+}
+
+func TestEndChatToolCalls(t *testing.T) {
+	rec := launchtest.Capture(t)
+	_, l := begin(t)
+	l.EndChat(&protocoltypes.LLMResponse{Status: &protocoltypes.DispatchStatus{
+		Reported: protocoltypes.Reported{ToolCalls: true},
+	}}, nil)
+	if n := launchtest.Known(t, "tool_calls", rec.One().ToolCalls); n != 0 {
+		t.Errorf("tool_calls = %d, want a reported 0", n)
 	}
 }

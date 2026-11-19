@@ -136,3 +136,37 @@ func TestChatStreamingAccountsOnce(t *testing.T) {
 		t.Errorf("http_status = %d", n)
 	}
 }
+
+func TestChatAccountsToolCalls(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply string
+		want  int64
+	}{
+		{name: "two calls", want: 2, reply: `{"choices":[{"message":{"content":"","tool_calls":[` +
+			`{"id":"c1","type":"function","function":{"name":"a","arguments":"{}"}},` +
+			`{"id":"c2","type":"function","function":{"name":"b","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`},
+		{name: "no calls is a known zero", want: 0, reply: okReply},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launchtest.Capture(t)
+			url, _ := launchtest.Server(t, http.StatusOK, "application/json", tt.reply)
+			if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "gpt-test", nil); err != nil {
+				t.Fatalf("Chat: %v", err)
+			}
+			if n := launchtest.Known(t, "tool_calls", rec.One().ToolCalls); n != tt.want {
+				t.Errorf("tool_calls = %d, want %d", n, tt.want)
+			}
+		})
+	}
+}
+
+func TestChatErrorLeavesToolCallsUnknown(t *testing.T) {
+	rec := launchtest.Capture(t)
+	url, _ := launchtest.Server(t, http.StatusInternalServerError, "application/json", `{"error":{"message":"no"}}`)
+	if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "gpt-test", nil); err == nil {
+		t.Fatal("Chat succeeded")
+	}
+	launchtest.Unknown(t, "tool_calls", rec.One().ToolCalls)
+}
