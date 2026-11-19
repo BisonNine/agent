@@ -88,6 +88,9 @@ func TestAccountsSuccess(t *testing.T) {
 				t.Error("cost_usd known, want unknown")
 			}
 			launchtest.Unknown(t, "tool_calls", got.ToolCalls)
+			if n := launchtest.Known(t, "images", got.Images); n != 1 {
+				t.Errorf("images = %d, want 1", n)
+			}
 		})
 	}
 }
@@ -132,7 +135,7 @@ func TestAccountsHTTPError(t *testing.T) {
 			if _, err := NewOpenAI(url, "k").Generate(context.Background(), testID, generateReq()); err == nil {
 				t.Fatal("Generate succeeded")
 			}
-			rec.Failed(status)
+			launchtest.Unknown(t, "images", rec.Failed(status).Images)
 		})
 	}
 }
@@ -143,4 +146,22 @@ func TestAccountsConnectionError(t *testing.T) {
 		t.Fatal("Generate succeeded")
 	}
 	rec.Failed(0)
+}
+
+func TestCostEstimatedFromPricing(t *testing.T) {
+	if err := accounting.SetPricing([]accounting.Price{{Model: "img-test", Image: new(0.04)}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(accounting.ClearPricing)
+	rec := launchtest.Capture(t)
+	// Two images and no usage: the row prices images only.
+	url, _ := launchtest.Server(t, http.StatusOK, "application/json",
+		`{"created":1,"data":[{"b64_json":"`+pngB64+`"},{"b64_json":"`+pngB64+`"}]}`)
+	if _, err := NewOpenAI(url, "k").Generate(context.Background(), testID, generateReq()); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	got := rec.One()
+	if cost, ok := got.CostUSD.Value(); !ok || cost != 0.08 || got.CostSource != accounting.CostEstimated {
+		t.Errorf("cost = %v (known %v, source %q), want 0.08 estimated", cost, ok, got.CostSource)
+	}
 }

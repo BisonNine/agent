@@ -243,8 +243,10 @@ func synthesizeSpec(provider string, req *SynthesizeRequest) launch.Spec {
 	return s
 }
 
-func transcriptionUsage(t *Transcription) (*protocoltypes.TaskUsage, *float64) {
-	return t.Usage, t.CostUSD
+func transcriptionUsage(t *Transcription) launch.TaskResult {
+	return launch.TaskResult{Usage: t.Usage, CostUSD: t.CostUSD}
 }
 
-func speechUsage(s *Speech) (*protocoltypes.TaskUsage, *float64) { return s.Usage, s.CostUSD }
+func speechUsage(s *Speech) launch.TaskResult {
+	return launch.TaskResult{Usage: s.Usage, CostUSD: s.CostUSD}
+}

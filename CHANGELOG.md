@@ -13,6 +13,10 @@ project uses [Semantic Versioning](https://semver.org/).
   `Report`, `Close`), or to the logger when no file is open. Each record
   includes the number of tool calls the model made. Values a provider did
   not report are written as `"-"`.
+- `accounting` pricing table (`LoadPricing`, `SetPricing`, `ClearPricing`):
+  per-model prices used to estimate the cost of a call that returned none.
+  Records gain `cost_source` (`provided`, `estimated` or `-`) and `images`,
+  the number of images the call returned (`DispatchStatus.Images`).
 - `accounting.Identity` (agent, required; project, default `default`; each at
   most 16 characters) and `spawnllm.WithAccounting` to set it on a `Worker`.
 - `DispatchStatus.Reported` and `TaskUsage.Reported`, which say which token

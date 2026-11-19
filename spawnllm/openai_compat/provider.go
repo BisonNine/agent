@@ -518,6 +518,7 @@ func (p *Provider) chat(
 	}
 	if out.Status != nil {
 		out.Status.Success = true
+		out.Status.Images, out.Status.Reported.Images = len(out.Images), true
 		out.Status.DurationMs = durationMs
 		out.Status.BytesSent = bytesSent
 		out.Status.BytesReceived = bytesReceived
@@ -564,6 +565,7 @@ func (p *Provider) readStream(
 
 	if out.Status != nil {
 		out.Status.Success = true
+		out.Status.Images, out.Status.Reported.Images = len(out.Images), true
 		out.Status.DurationMs = durationMs
 		out.Status.BytesSent = bytesSent
 		out.Status.BytesReceived = counter.n

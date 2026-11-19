@@ -93,10 +93,13 @@ func Start(dir string) error {
 	return nil
 }
 
-// Report records one launch. It is safe for concurrent use. When the queue
+// Report records one launch. It is safe for concurrent use. It first sets
+// the record's CostSource, estimating the cost from the pricing table when the
+// call returned none (see SetPricing). When the queue
 // is full it blocks until there is room; it never drops a record. Without a
 // running sink the record goes to the logger.
 func Report(r Record) {
+	settleCost(&r)
 	mu.RLock()
 	s := current
 	if s == nil {

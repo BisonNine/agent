@@ -47,7 +47,8 @@ One JSON object per line, in this order:
 | `input_tokens` | Input tokens not read from or written to the cache; the whole prompt when the provider does not break cache tokens out. |
 | `output_tokens` | Output tokens. |
 | `cache_read_tokens`, `cache_creation_tokens` | Prompt cache tokens. |
-| `cost_usd` | The cost the provider reported. |
+| `cost_usd` | The cost the call returned, or an estimate from the pricing table. |
+| `cost_source` | `provided` (returned by the call), `estimated` (from the pricing table) or `-`. |
 | `tool_calls` | Tool calls the model made: those in an API response, or those a CLI's output reports (only Codex's does). |
 | `http_status` | The HTTP response status. |
 | `duration_ms` | Wall-clock time of the call. |
@@ -55,11 +56,49 @@ One JSON object per line, in this order:
 | `error` | The error; left out on success. |
 | `audio_seconds` | Billed audio seconds, when reported. |
 | `characters` | Characters of text sent for speech. |
+| `images` | Images the call returned: an image generation, or a chat reply from `openai-chat` or `openai-responses`. |
 
 A number the provider did not report is written as `"-"`, never as 0; a
 reported 0 is written as 0. `http_status` is `"-"` for a CLI call and for a
 call that got no HTTP response.
 
 ```json
-{"time":"2026-11-19T15:04:05.123456Z","agent":"alice","project":"default","kind":"text","provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":3,"cache_read_tokens":2,"cache_creation_tokens":"-","cost_usd":"-","tool_calls":0,"http_status":200,"duration_ms":412,"success":true,"audio_seconds":"-","characters":"-"}
+{"time":"2026-11-19T15:04:05.123456Z","agent":"alice","project":"default","kind":"text","provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":3,"cache_read_tokens":2,"cache_creation_tokens":"-","cost_usd":"-","cost_source":"-","tool_calls":0,"http_status":200,"duration_ms":412,"success":true,"audio_seconds":"-","characters":"-","images":0}
 ```
+
+## Pricing
+
+An optional pricing table lets `Report` estimate the cost of a call that
+returned none. There are no built-in prices; an estimate is only as good as
+the table.
+
+- `LoadPricing(path)` reads a JSON file and installs it; `SetPricing(rows)`
+  installs rows from memory. Either replaces the whole table, and on error
+  keeps the one in place. An empty table, or `ClearPricing()`, removes it.
+- Prices are in US dollars: `input`, `cache_read`, `cache_write` and
+  `output` per million tokens, `characters` per million characters,
+  `audio_minute` per minute of audio, `image` per image. Each is optional,
+  and 0 is a real, free price.
+- A row needs `model` and at least one price. A negative price, an empty
+  model, a duplicate provider and model, or an unknown field is an error.
+
+```json
+{"prices": [
+  {"provider": "openai-chat", "model": "gpt-4o-2024-08-06", "input": 2.5, "cache_read": 1.25, "output": 10},
+  {"model": "whisper-1", "audio_minute": 0.006},
+  {"model": "gpt-image-1", "image": 0.04}
+]}
+```
+
+How a cost is settled:
+
+- A cost the call returned is kept (`provided`); the table is not used.
+- The row is the one whose `model` equals the record's model exactly; a row
+  naming the record's provider wins over one without a provider.
+- The estimate is the sum of every price the row sets times the record's
+  quantity (`cache_write` prices `cache_creation_tokens`; `audio_minute`
+  prices `audio_seconds` / 60).
+- The cost stays `-` when there is no row, when a priced quantity is
+  unknown, or when a token count is known and not zero but the row has no
+  price for it.
+- Failed calls are estimated too, since they may still be billed.

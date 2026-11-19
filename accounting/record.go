@@ -34,6 +34,18 @@ const (
 	TransportAPI Transport = "api"
 )
 
+// CostSource says where a record's cost came from.
+type CostSource string
+
+const (
+	// CostProvided is a cost the call itself returned.
+	CostProvided CostSource = "provided"
+	// CostEstimated is a cost computed from the pricing table.
+	CostEstimated CostSource = "estimated"
+	// CostUnknown is a record without a cost.
+	CostUnknown CostSource = Unknown
+)
+
 // Unknown is how a value the provider did not report is written in JSON.
 const Unknown = "-"
 
@@ -55,11 +67,16 @@ type Record struct {
 	Model     string    `json:"model"`
 	// InputTokens counts the input tokens neither read from nor written to
 	// the prompt cache (when the provider breaks cache tokens out).
-	InputTokens         Int   `json:"input_tokens"`
-	OutputTokens        Int   `json:"output_tokens"`
-	CacheReadTokens     Int   `json:"cache_read_tokens"`
-	CacheCreationTokens Int   `json:"cache_creation_tokens"`
-	CostUSD             Float `json:"cost_usd"`
+	InputTokens         Int `json:"input_tokens"`
+	OutputTokens        Int `json:"output_tokens"`
+	CacheReadTokens     Int `json:"cache_read_tokens"`
+	CacheCreationTokens Int `json:"cache_creation_tokens"`
+	// CostUSD is the cost the call returned or, with a pricing table, an
+	// estimate; CostSource says which.
+	CostUSD Float `json:"cost_usd"`
+	// CostSource is set by Report: CostProvided, CostEstimated or
+	// CostUnknown.
+	CostSource CostSource `json:"cost_source"`
 	// ToolCalls is the number of tool calls the model made in the launch.
 	ToolCalls Int `json:"tool_calls"`
 	// HTTPStatus is the status of the HTTP response; unknown for a CLI
@@ -75,6 +92,8 @@ type Record struct {
 	// Characters is the length of the text sent for speech synthesis, in
 	// code points.
 	Characters Int `json:"characters"`
+	// Images is the number of images the call returned.
+	Images Int `json:"images"`
 }
 
 // recordJSON is Record without its methods, so the JSON methods can reuse

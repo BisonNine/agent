@@ -31,13 +31,14 @@ after the context: `LLMProvider.Chat`, `speech` `Transcribe` and
   error wraps `accounting.ErrAgentRequired` or `accounting.ErrNameTooLong`.
 - An empty project is recorded as `default`.
 - Every call, refused or not, reports exactly one `accounting.Record`: kind,
-  provider, transport, model, the tokens and cost the provider reported, the
-  number of tool calls the model made, the HTTP status (API providers),
+  provider, transport, model, the tokens and cost the provider reported (or
+  a cost estimated from accounting's pricing table), the number of tool calls
+  the model made and of images it returned, the HTTP status (API providers),
   duration and outcome. A value the provider did
   not report is written as `"-"`, never as 0.
 - `DispatchStatus.Reported` and `TaskUsage.Reported` say which counts a
-  response actually carried. `DispatchStatus.ToolCalls` is the tool call
-  count.
+  response actually carried. `DispatchStatus.ToolCalls` and
+  `DispatchStatus.Images` are the tool call and image counts.
 
 See [`accounting`](../accounting) for the record and where it is written.
 

@@ -2,6 +2,7 @@ package openai_responses
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"testing"
@@ -118,4 +119,27 @@ func TestChatErrorLeavesToolCallsUnknown(t *testing.T) {
 		t.Fatal("Chat succeeded")
 	}
 	launchtest.Unknown(t, "tool_calls", rec.One().ToolCalls)
+}
+
+func TestChatAccountsImages(t *testing.T) {
+	tests := []struct {
+		name  string
+		reply string
+		want  int64
+	}{
+		{name: "one image", reply: imageResponse(base64.StdEncoding.EncodeToString(pngBytes)), want: 1},
+		{name: "no images is a known zero", reply: responsesOK, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launchtest.Capture(t)
+			url, _ := launchtest.Server(t, http.StatusOK, "application/json", tt.reply)
+			if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "gpt-test", nil); err != nil {
+				t.Fatalf("Chat: %v", err)
+			}
+			if n := launchtest.Known(t, "images", rec.One().Images); n != tt.want {
+				t.Errorf("images = %d, want %d", n, tt.want)
+			}
+		})
+	}
 }

@@ -771,7 +771,8 @@ func parseResponse(raw []byte, model, searchTool string) (*LLMResponse, error) {
 			Model:      model,
 			StopReason: finishReason,
 			ToolCalls:  len(toolCalls),
-			Reported:   protocoltypes.Reported{ToolCalls: true},
+			Images:     len(images.Images()),
+			Reported:   protocoltypes.Reported{ToolCalls: true, Images: true},
 		},
 	}
 	if u := env.Usage; u != nil {

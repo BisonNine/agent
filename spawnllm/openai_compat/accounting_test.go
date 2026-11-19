@@ -3,6 +3,7 @@ package openai_compat
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http"
 	"testing"
 
@@ -169,4 +170,63 @@ func TestChatErrorLeavesToolCallsUnknown(t *testing.T) {
 		t.Fatal("Chat succeeded")
 	}
 	launchtest.Unknown(t, "tool_calls", rec.One().ToolCalls)
+}
+
+func TestChatAccountsImages(t *testing.T) {
+	twoImages := `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"cats","images":[` +
+		`{"type":"image_url","image_url":{"url":"` + pngDataURL() + `"}},` +
+		`{"type":"image_url","image_url":{"url":"https://cdn.example.com/cat.png"}}]}}]}`
+	tests := []struct {
+		name  string
+		reply string
+		want  int64
+	}{
+		{name: "two images", reply: twoImages, want: 2},
+		{name: "no images is a known zero", reply: okReply, want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launchtest.Capture(t)
+			url, _ := launchtest.Server(t, http.StatusOK, "application/json", tt.reply)
+			if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "img-test", nil); err != nil {
+				t.Fatalf("Chat: %v", err)
+			}
+			if n := launchtest.Known(t, "images", rec.One().Images); n != tt.want {
+				t.Errorf("images = %d, want %d", n, tt.want)
+			}
+		})
+	}
+
+	t.Run("error", func(t *testing.T) {
+		rec := launchtest.Capture(t)
+		url, _ := launchtest.Server(t, http.StatusInternalServerError, "application/json", `{"error":{"message":"no"}}`)
+		if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "img-test", nil); err == nil {
+			t.Fatal("Chat succeeded")
+		}
+		launchtest.Unknown(t, "images", rec.One().Images)
+	})
+}
+
+func TestChatCostEstimatedFromPricing(t *testing.T) {
+	if err := accounting.SetPricing([]accounting.Price{{
+		Provider: "openai-chat", Model: "gpt-test-0101",
+		Input: new(2.0), CacheRead: new(0.5), Output: new(8.0),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(accounting.ClearPricing)
+	rec := launchtest.Capture(t)
+	// 10 uncached input, 2 cached, 3 output; no cache writes reported, and
+	// the row sets no cache-write price.
+	url, _ := launchtest.Server(t, http.StatusOK, "application/json",
+		`{"model":"gpt-test-0101","choices":[{"message":{"content":"hi"},"finish_reason":"stop"}],`+
+			`"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":2}}}`)
+	if _, err := NewProvider("k", url, "").Chat(context.Background(), testID, hello, nil, "gpt-test", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	got := rec.One()
+	want := (10*2.0 + 2*0.5 + 3*8.0) / 1e6
+	if cost, ok := got.CostUSD.Value(); !ok || math.Abs(cost-want) > 1e-15 || got.CostSource != accounting.CostEstimated {
+		t.Errorf("cost = %v (known %v, source %q), want %v estimated", cost, ok, got.CostSource, want)
+	}
 }

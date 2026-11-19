@@ -96,7 +96,11 @@ type DispatchStatus struct {
 	// ToolCalls is the number of tool calls the model made in this request:
 	// for an API provider those in the response, for a CLI those its output
 	// reports. Meaningful only when Reported.ToolCalls is set.
-	ToolCalls  int    `json:"tool_calls"`
+	ToolCalls int `json:"tool_calls"`
+	// Images is the number of images the model generated in this reply
+	// (LLMResponse.Images); set only by the providers that can return
+	// images, and meaningful only when Reported.Images is set.
+	Images     int    `json:"images"`
 	StopReason string `json:"stop_reason"`
 	// CostUSD is the request's cost as the provider reported it; nil when the
 	// provider returned no cost, which is not the same as a reported $0.00.
@@ -106,7 +110,7 @@ type DispatchStatus struct {
 	DurationMs    int64    `json:"duration_ms"`
 	BytesSent     int64    `json:"bytes_sent"`
 	BytesReceived int64    `json:"bytes_received"`
-	// Reported says which of the token and tool call counts above the
+	// Reported says which of the token, tool call and image counts above the
 	// provider's response actually carried. A count whose flag is false is
 	// zero because nothing was reported, not because the call used none.
 	Reported Reported `json:"reported"`
@@ -220,6 +224,7 @@ type Reported struct {
 	Seconds             bool `json:"seconds,omitempty"`
 	Characters          bool `json:"characters,omitempty"`
 	ToolCalls           bool `json:"tool_calls,omitempty"`
+	Images              bool `json:"images,omitempty"`
 }
 
 // TaskUsage is what a single-shot task call (a transcription, a speech

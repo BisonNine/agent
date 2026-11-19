@@ -136,4 +136,10 @@ func editSpec(provider string, req *EditRequest) launch.Spec {
 	return s
 }
 
-func resultUsage(r *Result) (*protocoltypes.TaskUsage, *float64) { return r.Usage, r.CostUSD }
+func resultUsage(r *Result) launch.TaskResult {
+	return launch.TaskResult{
+		Usage:   r.Usage,
+		CostUSD: r.CostUSD,
+		Images:  accounting.KnownInt(int64(len(r.Images))),
+	}
+}

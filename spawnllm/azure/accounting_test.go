@@ -59,6 +59,8 @@ func TestChatAccountsSuccess(t *testing.T) {
 	// The response has no prompt_tokens_details: the cache counts are unknown.
 	launchtest.Unknown(t, "cache_read_tokens", got.CacheReadTokens)
 	launchtest.Unknown(t, "cache_creation_tokens", got.CacheCreationTokens)
+	// Azure chat never returns images.
+	launchtest.Unknown(t, "images", got.Images)
 	if _, ok := got.CostUSD.Value(); ok {
 		t.Error("cost_usd known, want unknown")
 	}

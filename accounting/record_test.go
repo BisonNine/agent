@@ -95,7 +95,9 @@ func TestRecordJSON(t *testing.T) {
 		InputTokens:     KnownInt(10),
 		OutputTokens:    KnownInt(0),
 		CacheReadTokens: KnownInt(4),
+		CostSource:      CostUnknown,
 		HTTPStatus:      KnownInt(200),
+		Images:          KnownInt(0),
 		DurationMs:      42,
 		Success:         true,
 	}
@@ -105,8 +107,8 @@ func TestRecordJSON(t *testing.T) {
 	}
 	want := `{"time":"2026-03-04T10:06:07.000000Z","agent":"alice","project":"default","kind":"text",` +
 		`"provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":0,` +
-		`"cache_read_tokens":4,"cache_creation_tokens":"-","cost_usd":"-","tool_calls":"-","http_status":200,"duration_ms":42,` +
-		`"success":true,"audio_seconds":"-","characters":"-"}`
+		`"cache_read_tokens":4,"cache_creation_tokens":"-","cost_usd":"-","cost_source":"-","tool_calls":"-","http_status":200,"duration_ms":42,` +
+		`"success":true,"audio_seconds":"-","characters":"-","images":0}`
 	if string(b) != want {
 		t.Fatalf("marshal =\n%s\nwant\n%s", b, want)
 	}

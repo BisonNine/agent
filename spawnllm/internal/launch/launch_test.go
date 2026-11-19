@@ -28,7 +28,7 @@ func TestEndReportsExactlyOnce(t *testing.T) {
 	_, l := begin(t)
 	l.EndChat(nil, nil)
 	l.EndChat(nil, errors.New("second"))
-	l.EndTask(nil, nil, errors.New("third"))
+	l.EndTask(TaskResult{}, errors.New("third"))
 	if got := rec.One(); !got.Success || got.Error != "" {
 		t.Errorf("record = %+v, want the first End's success", got)
 	}
@@ -137,7 +137,7 @@ func TestBeginRejectedIdentity(t *testing.T) {
 func TestEndTaskNilUsage(t *testing.T) {
 	rec := launchtest.Capture(t)
 	_, l := begin(t)
-	l.EndTask(nil, nil, nil)
+	l.EndTask(TaskResult{}, nil)
 	got := rec.One()
 	if !got.Success {
 		t.Error("success = false")

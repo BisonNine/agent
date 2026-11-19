@@ -70,6 +70,8 @@ func TestChatAccountsSuccess(t *testing.T) {
 	if _, ok := got.CostUSD.Value(); ok {
 		t.Error("cost_usd known, want unknown")
 	}
+	// The Messages API never returns images.
+	launchtest.Unknown(t, "images", got.Images)
 }
 
 func TestChatPartialUsageLeavesRestUnknown(t *testing.T) {

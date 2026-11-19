@@ -175,6 +175,7 @@ func TestCLIProvidersAccountSuccess(t *testing.T) {
 			if got.ToolCalls != c.wantTools {
 				t.Errorf("tool_calls = %+v, want %+v", got.ToolCalls, c.wantTools)
 			}
+			launchtest.Unknown(t, "images", got.Images)
 		})
 	}
 }

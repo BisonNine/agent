@@ -87,14 +87,23 @@ func (l *Launch) EndChat(resp *protocoltypes.LLMResponse, err error) {
 		l.rec.CacheCreationTokens = count(st.CacheCreationTokens, st.Reported.CacheCreationTokens)
 		l.rec.CostUSD = cost(st.CostUSD)
 		l.rec.ToolCalls = count(st.ToolCalls, st.Reported.ToolCalls)
+		l.rec.Images = count(st.Images, st.Reported.Images)
 	}
 	l.finish(err)
 }
 
-// EndTask reports a task launch (speech, transcription, image): the usage
-// and cost the call reported, and err.
-func (l *Launch) EndTask(usage *protocoltypes.TaskUsage, costUSD *float64, err error) {
-	if usage != nil {
+// TaskResult is what a task call reported: its usage, cost and the number of
+// images it returned (unknown for calls that return none).
+type TaskResult struct {
+	Usage   *protocoltypes.TaskUsage
+	CostUSD *float64
+	Images  accounting.Int
+}
+
+// EndTask reports a task launch (speech, transcription, image): what the
+// call reported, and err.
+func (l *Launch) EndTask(res TaskResult, err error) {
+	if usage := res.Usage; usage != nil {
 		r := usage.Reported
 		l.rec.InputTokens = count(usage.InputTokens, r.InputTokens)
 		l.rec.OutputTokens = count(usage.OutputTokens, r.OutputTokens)
@@ -103,7 +112,8 @@ func (l *Launch) EndTask(usage *protocoltypes.TaskUsage, costUSD *float64, err e
 		}
 		l.rec.Characters = count(usage.Characters, r.Characters)
 	}
-	l.rec.CostUSD = cost(costUSD)
+	l.rec.CostUSD = cost(res.CostUSD)
+	l.rec.Images = res.Images
 	l.finish(err)
 }
 
@@ -138,25 +148,22 @@ func cost(v *float64) accounting.Float {
 }
 
 // RunTask checks id and accounts for one task call (speech, transcription,
-// image): an invalid identity is refused before call runs. usage returns
-// what a non-nil result reports it used and cost.
+// image): an invalid identity is refused before call runs. result returns
+// what a non-nil result of call reports.
 func RunTask[T any](
 	ctx context.Context, id accounting.Identity, s Spec,
 	call func(context.Context) (*T, error),
-	usage func(*T) (*protocoltypes.TaskUsage, *float64),
+	result func(*T) TaskResult,
 ) (*T, error) {
 	ctx, l, err := Begin(ctx, id, s)
 	if err != nil {
 		return nil, err
 	}
 	out, err := call(ctx)
-	var (
-		u       *protocoltypes.TaskUsage
-		costUSD *float64
-	)
+	var res TaskResult
 	if out != nil {
-		u, costUSD = usage(out)
+		res = result(out)
 	}
-	l.EndTask(u, costUSD, err)
+	l.EndTask(res, err)
 	return out, err
 }

@@ -151,6 +151,7 @@ func checkSuccess(t *testing.T, got accounting.Record, provider string, kind acc
 	}
 	launchtest.Unknown(t, "cache_read_tokens", got.CacheReadTokens)
 	launchtest.Unknown(t, "tool_calls", got.ToolCalls)
+	launchtest.Unknown(t, "images", got.Images)
 }
 
 func TestAccountsSuccess(t *testing.T) {
