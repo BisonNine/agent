@@ -44,8 +44,6 @@ func TestSettleCost(t *testing.T) {
 	failed.Success = false
 	dated := chatRecord(1e6, 0, 0, 0)
 	dated.Model = "m-2026-01-01"
-	otherProvider := chatRecord(1e6, 0, 0, 0)
-	otherProvider.Provider = "azure"
 	upper := chatRecord(1e6, 0, 0, 0)
 	upper.Model = "M"
 
@@ -64,22 +62,13 @@ func TestSettleCost(t *testing.T) {
 		},
 		{name: "no table", rec: chatRecord(1, 0, 0, 0), source: CostUnknown},
 		{name: "no matching row", rows: []Price{{Model: "other", Input: new(1.0)}}, rec: chatRecord(1, 0, 0, 0), source: CostUnknown},
+		{name: "dated model does not match undated exact row", rows: []Price{{Model: "m", Input: new(1.0)}}, rec: dated, source: CostUnknown},
 		{
-			name: "provider row beats generic", rec: chatRecord(1e6, 0, 0, 0),
-			rows: []Price{{Model: "m", Input: new(1.0)}, {Provider: "openai-chat", Model: "m", Input: new(2.0)}},
-			want: 2, wantCost: true, source: CostEstimated,
+			name: "dated model matches pattern", rows: []Price{{Model: "m", Input: new(1.0)}, {Model: "m*", Input: new(2.0)}},
+			rec: dated, want: 2, wantCost: true, source: CostEstimated,
 		},
-		{
-			name: "generic row for another provider", rec: otherProvider,
-			rows: []Price{{Model: "m", Input: new(1.0)}, {Provider: "openai-chat", Model: "m", Input: new(2.0)}},
-			want: 1, wantCost: true, source: CostEstimated,
-		},
-		{
-			name: "provider row does not match another provider", rec: otherProvider,
-			rows: []Price{{Provider: "openai-chat", Model: "m", Input: new(2.0)}}, source: CostUnknown,
-		},
-		{name: "dated model does not match undated row", rows: []Price{{Model: "m", Input: new(1.0)}}, rec: dated, source: CostUnknown},
 		{name: "match is case-sensitive", rows: []Price{{Model: "m", Input: new(1.0)}}, rec: upper, source: CostUnknown},
+		{name: "pattern is case-sensitive", rows: []Price{{Model: "m*", Input: new(1.0)}}, rec: upper, source: CostUnknown},
 		// 1000×3 + 2000×0.3 + 400×3.75 + 500×15, per million.
 		{
 			name: "tokens with cache read and write", rows: []Price{tokens}, rec: chatRecord(1000, 2000, 400, 500),
@@ -159,7 +148,7 @@ func TestLoadPricing(t *testing.T) {
 	t.Cleanup(ClearPricing)
 	path := writeFile(t, `{"prices":[
 		{"model":"m","input":2,"output":8},
-		{"provider":"anthropic","model":"claude","input":3,"cache_read":0.3,"cache_write":3.75,"output":15}
+		{"model":"claude*","input":3,"cache_read":0.3,"cache_write":3.75,"output":15}
 	]}`)
 	if err := LoadPricing(path); err != nil {
 		t.Fatalf("LoadPricing: %v", err)
@@ -189,8 +178,14 @@ func TestLoadPricingErrors(t *testing.T) {
 		{name: "bad JSON", body: `{"prices":[`},
 		{name: "negative price", body: `{"prices":[{"model":"m","input":-1}]}`},
 		{name: "duplicate row", body: `{"prices":[{"model":"m","input":1},{"model":"m","output":1}]}`},
+		{name: "duplicate pattern", body: `{"prices":[{"model":"m*","input":1},{"model":"m*","output":1}]}`},
+		{name: "duplicate default", body: `{"prices":[{"model":"*","input":1},{"model":"*","output":1}]}`},
 		{name: "empty model", body: `{"prices":[{"model":" ","input":1}]}`},
-		{name: "no prices in row", body: `{"prices":[{"provider":"azure","model":"m"}]}`},
+		{name: "star in the middle", body: `{"prices":[{"model":"gpt-*-mini","input":1}]}`},
+		{name: "double star", body: `{"prices":[{"model":"**","input":1}]}`},
+		{name: "leading star", body: `{"prices":[{"model":"*foo","input":1}]}`},
+		{name: "no prices in row", body: `{"prices":[{"model":"m"}]}`},
+		{name: "provider is no longer a field", body: `{"prices":[{"provider":"azure","model":"m","input":1}]}`},
 		{name: "unknown field", body: `{"prices":[{"model":"m","inputs":1}]}`},
 	}
 	for _, tt := range tests {
@@ -215,12 +210,8 @@ func TestLoadPricingErrors(t *testing.T) {
 	})
 }
 
-func TestSetPricingDistinguishesProviders(t *testing.T) {
-	// The same model under two providers is not a duplicate.
-	usePricing(t, []Price{{Model: "m", Input: new(1.0)}, {Provider: "azure", Model: "m", Input: new(2.0)}})
-	if err := SetPricing([]Price{{Provider: "azure", Model: "m", Input: new(1.0)}, {Provider: "azure", Model: "m", Image: new(1.0)}}); !errors.Is(err, ErrInvalidPricing) {
-		t.Errorf("duplicate provider row: err = %v", err)
-	}
+func TestSetPricingNilRemovesTable(t *testing.T) {
+	usePricing(t, []Price{{Model: "m", Input: new(1.0)}})
 	if err := SetPricing(nil); err != nil {
 		t.Errorf("SetPricing(nil) = %v", err)
 	}
@@ -229,6 +220,55 @@ func TestSetPricingDistinguishesProviders(t *testing.T) {
 	if rec.CostSource != CostUnknown {
 		t.Error("SetPricing(nil) did not remove the table")
 	}
+}
+
+func TestModelMatching(t *testing.T) {
+	rows := []Price{
+		{Model: "*", Input: new(1.0)},
+		{Model: "gpt-4*", Input: new(2.0)},
+		{Model: "gpt-4o-2*", Input: new(3.0)},
+		{Model: "gpt-4o-2024-08-06", Input: new(4.0)},
+	}
+	tests := []struct {
+		model string
+		want  float64
+	}{
+		{model: "gpt-4o-2024-08-06", want: 4}, // exact beats every pattern
+		{model: "gpt-4o-2024-11-20", want: 3}, // longest matching prefix
+		{model: "gpt-4o-mini", want: 2},
+		{model: "gpt-4", want: 2},       // a prefix matches itself
+		{model: "claude-test", want: 1}, // only the default matches
+		{model: "", want: 1},            // no model matches only the default
+	}
+	// The order of the rows does not matter.
+	orders := map[string][]Price{
+		"as written": rows,
+		"reversed":   {rows[3], rows[2], rows[1], rows[0]},
+		"shuffled":   {rows[1], rows[3], rows[0], rows[2]},
+	}
+	for name, order := range orders {
+		for _, tt := range tests {
+			t.Run(name+"/"+tt.model, func(t *testing.T) {
+				usePricing(t, order)
+				rec := Record{Model: tt.model, InputTokens: KnownInt(1e6)}
+				settleCost(&rec)
+				if got, ok := rec.CostUSD.Value(); !ok || got != tt.want {
+					t.Errorf("cost = %v (known %v), want %v", got, ok, tt.want)
+				}
+			})
+		}
+	}
+
+	t.Run("no default and no match", func(t *testing.T) {
+		usePricing(t, rows[1:])
+		for _, model := range []string{"claude-test", ""} {
+			rec := Record{Model: model, InputTokens: KnownInt(1e6)}
+			settleCost(&rec)
+			if rec.CostSource != CostUnknown {
+				t.Errorf("model %q: cost_source = %q, want -", model, rec.CostSource)
+			}
+		}
+	})
 }
 
 func TestPricingConcurrentWithReport(t *testing.T) {

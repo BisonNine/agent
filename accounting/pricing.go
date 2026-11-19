@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -23,10 +24,10 @@ var ErrInvalidPricing = errors.New("invalid pricing")
 // is optional; nil is not set, and an explicit 0 is a real, free price. A row
 // sets at least one price.
 type Price struct {
-	// Provider limits the row to one provider (a record's provider, e.g.
-	// "openai-chat"); empty matches any provider.
-	Provider string `json:"provider,omitempty"`
-	// Model is matched exactly against the record's model.
+	// Model is an exact model name ("gpt-4o-2024-08-06"), or a prefix
+	// ending in a single "*" ("gpt-4o*"); "*" alone matches any model. A
+	// record uses the exact row for its model, else the matching pattern
+	// with the longest prefix. Matching is case-sensitive.
 	Model string `json:"model"`
 	// Input, CacheRead, CacheWrite and Output are USD per million tokens.
 	Input      *float64 `json:"input,omitempty"`
@@ -46,10 +47,20 @@ type PricingFile struct {
 	Prices []Price `json:"prices"`
 }
 
-type priceKey struct{ provider, model string }
+// priceTable is an installed pricing table.
+type priceTable struct {
+	exact map[string]Price
+	// patterns are the rows whose model ends in "*", longest prefix first.
+	patterns []pricePattern
+}
+
+type pricePattern struct {
+	prefix string
+	price  Price
+}
 
 // pricing is the installed table; nil when there is none.
-var pricing atomic.Pointer[map[priceKey]Price]
+var pricing atomic.Pointer[priceTable]
 
 // LoadPricing reads a pricing file (see PricingFile) and installs it in
 // place of the current table, as SetPricing does (a file with no prices
@@ -77,19 +88,28 @@ func SetPricing(rows []Price) error {
 		ClearPricing()
 		return nil
 	}
-	table := make(map[priceKey]Price, len(rows))
+	table := &priceTable{exact: make(map[string]Price, len(rows))}
+	seen := make(map[string]bool, len(rows))
 	for i, p := range rows {
 		if err := p.validate(); err != nil {
 			return fmt.Errorf("accounting: %w: row %d: %w", ErrInvalidPricing, i+1, err)
 		}
-		k := priceKey{p.Provider, p.Model}
-		if _, dup := table[k]; dup {
-			return fmt.Errorf("accounting: %w: row %d: duplicate provider %q, model %q",
-				ErrInvalidPricing, i+1, p.Provider, p.Model)
+		if seen[p.Model] {
+			return fmt.Errorf("accounting: %w: row %d: duplicate model %q", ErrInvalidPricing, i+1, p.Model)
 		}
-		table[k] = p
+		seen[p.Model] = true
+		if prefix, ok := strings.CutSuffix(p.Model, "*"); ok {
+			table.patterns = append(table.patterns, pricePattern{prefix: prefix, price: p})
+		} else {
+			table.exact[p.Model] = p
+		}
 	}
-	pricing.Store(&table)
+	// Longest prefix first, so the first pattern that matches is the most
+	// specific. Two prefixes of the same length cannot both match one model.
+	sort.SliceStable(table.patterns, func(a, b int) bool {
+		return len(table.patterns[a].prefix) > len(table.patterns[b].prefix)
+	})
+	pricing.Store(table)
 	return nil
 }
 
@@ -99,6 +119,9 @@ func ClearPricing() { pricing.Store(nil) }
 func (p Price) validate() error {
 	if strings.TrimSpace(p.Model) == "" {
 		return errors.New("model is required")
+	}
+	if i := strings.Index(p.Model, "*"); i >= 0 && i != len(p.Model)-1 {
+		return fmt.Errorf("model %q: \"*\" is allowed only once, as the last character", p.Model)
 	}
 	set := 0
 	for name, v := range p.prices() {
@@ -123,18 +146,23 @@ func (p Price) prices() map[string]*float64 {
 	}
 }
 
-// priceFor returns the row for a record: the one for its provider and model,
-// else the one for its model and any provider.
+// priceFor returns the row for a record's model: the exact row, else the
+// pattern with the longest matching prefix. A record without a model matches
+// only "*".
 func priceFor(r *Record) (Price, bool) {
 	t := pricing.Load()
 	if t == nil {
 		return Price{}, false
 	}
-	if p, ok := (*t)[priceKey{r.Provider, r.Model}]; ok {
+	if p, ok := t.exact[r.Model]; ok {
 		return p, true
 	}
-	p, ok := (*t)[priceKey{"", r.Model}]
-	return p, ok
+	for _, pat := range t.patterns {
+		if strings.HasPrefix(r.Model, pat.prefix) {
+			return pat.price, true
+		}
+	}
+	return Price{}, false
 }
 
 // settleCost sets the record's cost source, and estimates the cost from the

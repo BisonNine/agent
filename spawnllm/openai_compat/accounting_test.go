@@ -209,7 +209,7 @@ func TestChatAccountsImages(t *testing.T) {
 
 func TestChatCostEstimatedFromPricing(t *testing.T) {
 	if err := accounting.SetPricing([]accounting.Price{{
-		Provider: "openai-chat", Model: "gpt-test-0101",
+		Model: "gpt-test*",
 		Input: new(2.0), CacheRead: new(0.5), Output: new(8.0),
 	}}); err != nil {
 		t.Fatal(err)

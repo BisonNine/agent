@@ -15,6 +15,8 @@ project uses [Semantic Versioning](https://semver.org/).
   not report are written as `"-"`.
 - `accounting` pricing table (`LoadPricing`, `SetPricing`, `ClearPricing`):
   per-model prices used to estimate the cost of a call that returned none.
+  A row's model is an exact name or a prefix ending in `*` (`*` alone is the
+  default); the exact name, then the longest prefix, wins.
   Records gain `cost_source` (`provided`, `estimated` or `-`) and `images`,
   the number of images the call returned (`DispatchStatus.Images`).
 - `accounting.Identity` (agent, required; project, default `default`; each at

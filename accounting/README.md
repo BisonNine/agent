@@ -80,21 +80,30 @@ the table.
   `audio_minute` per minute of audio, `image` per image. Each is optional,
   and 0 is a real, free price.
 - A row needs `model` and at least one price. A negative price, an empty
-  model, a duplicate provider and model, or an unknown field is an error.
+  model, a duplicate model, a misplaced `*` or an unknown field is an error.
 
 ```json
 {"prices": [
-  {"provider": "openai-chat", "model": "gpt-4o-2024-08-06", "input": 2.5, "cache_read": 1.25, "output": 10},
+  {"model": "gpt-4o-2024-08-06", "input": 2.5, "cache_read": 1.25, "output": 10},
+  {"model": "gpt-4o*", "input": 2.5, "output": 10},
   {"model": "whisper-1", "audio_minute": 0.006},
-  {"model": "gpt-image-1", "image": 0.04}
+  {"model": "*", "image": 0.04}
 ]}
 ```
+
+Models:
+
+- `model` is an exact name, or a prefix ending in one `*` (`gpt-4o*`).
+  `*` alone is the default row and matches any model.
+- `*` is allowed only as the last character.
+- An exact name wins; otherwise the longest matching prefix; `*` last. The
+  order of rows does not matter.
+- Matching is case-sensitive. A record with no model matches only `*`.
 
 How a cost is settled:
 
 - A cost the call returned is kept (`provided`); the table is not used.
-- The row is the one whose `model` equals the record's model exactly; a row
-  naming the record's provider wins over one without a provider.
+- The row is chosen by model, as above.
 - The estimate is the sum of every price the row sets times the record's
   quantity (`cache_write` prices `cache_creation_tokens`; `audio_minute`
   prices `audio_seconds` / 60).
