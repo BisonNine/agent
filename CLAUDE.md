@@ -6,8 +6,9 @@ holding `toolspec`, `spawnllm`, `ctxengine`, `cogmem` and the shared `logger`.
 ## Status
 
 - **Unreleased.** No tags exist; do not preserve legacy behaviour unless asked.
-- **Version in development: 0.0.1**, on the branch `dev/0.0.1`. The module
-  stays in 0.0.x until the maintainer says otherwise. Do not create tags.
+- **Version in development: 0.2.0**, on the branch `dev/0.0.1` (named before
+  the version was chosen). It will be merged and tagged `v0.2.0` by the
+  maintainer. Do not create tags.
 - A library: there is no `make install` target.
 
 ## Layering
