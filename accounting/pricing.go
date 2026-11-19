@@ -30,6 +30,7 @@ type Price struct {
 	// with the longest prefix. Matching is case-sensitive.
 	Model string `json:"model"`
 	// Input, CacheRead, CacheWrite and Output are USD per million tokens.
+	// Cache tokens are priced at Input when their own price is not set.
 	Input      *float64 `json:"input,omitempty"`
 	CacheRead  *float64 `json:"cache_read,omitempty"`
 	CacheWrite *float64 `json:"cache_write,omitempty"`
@@ -183,34 +184,40 @@ func settleCost(r *Record) {
 	}
 }
 
-// estimate prices the record's quantities by row p. It fails when a price
-// the row sets has an unknown quantity, or when a token class with a known,
-// non-zero count has no price (the cost would be understated).
+// estimate prices the record's quantities by row p. Cache tokens with no
+// cache price of their own are priced at the input price. It fails when a
+// price the row sets has an unknown quantity, or when a token class with a
+// known, non-zero count has no price (the cost would be understated).
 func estimate(p Price, r *Record) (float64, bool) {
 	type term struct {
-		price *float64
-		qty   float64 // in the price's unit
-		known bool
-		token bool
+		price    *float64
+		fallback *float64 // used for a known quantity when price is not set
+		qty      float64  // in the price's unit
+		known    bool
+		token    bool
 	}
-	per := func(price *float64, v Int, unit float64, token bool) term {
+	per := func(price, fallback *float64, v Int, unit float64, token bool) term {
 		n, ok := v.Value()
-		return term{price, float64(n) / unit, ok, token}
+		return term{price, fallback, float64(n) / unit, ok, token}
 	}
 	seconds, secondsOK := r.AudioSeconds.Value()
 	terms := []term{
-		per(p.Input, r.InputTokens, 1e6, true),
-		per(p.CacheRead, r.CacheReadTokens, 1e6, true),
-		per(p.CacheWrite, r.CacheCreationTokens, 1e6, true),
-		per(p.Output, r.OutputTokens, 1e6, true),
-		per(p.Characters, r.Characters, 1e6, false),
-		{p.AudioMinute, seconds / 60, secondsOK, false},
-		per(p.Image, r.Images, 1, false),
+		per(p.Input, nil, r.InputTokens, 1e6, true),
+		per(p.CacheRead, p.Input, r.CacheReadTokens, 1e6, true),
+		per(p.CacheWrite, p.Input, r.CacheCreationTokens, 1e6, true),
+		per(p.Output, nil, r.OutputTokens, 1e6, true),
+		per(p.Characters, nil, r.Characters, 1e6, false),
+		{p.AudioMinute, nil, seconds / 60, secondsOK, false},
+		per(p.Image, nil, r.Images, 1, false),
 	}
 	var sum float64
 	for _, t := range terms {
 		if t.price == nil {
-			if t.token && t.known && t.qty != 0 {
+			switch {
+			case !t.known || t.qty == 0:
+			case t.fallback != nil:
+				sum += *t.fallback * t.qty
+			case t.token:
 				return 0, false
 			}
 			continue

@@ -107,6 +107,9 @@ How a cost is settled:
 - The estimate is the sum of every price the row sets times the record's
   quantity (`cache_write` prices `cache_creation_tokens`; `audio_minute`
   prices `audio_seconds` / 60).
+- Cache tokens are priced at `input` when the row has no `cache_read` or
+  `cache_write` price. Cached reads usually cost less than input, so set
+  `cache_read` for a closer estimate.
 - The cost stays `-` when there is no row, when a priced quantity is
   unknown, or when a token count is known and not zero but the row has no
   price for it.

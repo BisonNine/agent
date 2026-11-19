@@ -103,6 +103,23 @@ func TestSettleCost(t *testing.T) {
 			name: "known non-zero token class without price", rows: []Price{{Model: "m", Input: new(1.0)}},
 			rec: chatRecord(1000, 0, 0, 500), source: CostUnknown,
 		},
+		// 1000×2 + 2000×2 + 400×2 + 500×10, per million.
+		{
+			name: "cache tokens without a cache price use the input price",
+			rows: []Price{{Model: "m", Input: new(2.0), Output: new(10.0)}},
+			rec:  chatRecord(1000, 2000, 400, 500), want: 0.0118, wantCost: true, source: CostEstimated,
+		},
+		// 1000×2 + 2000×0.2 + 400×2 + 500×10, per million.
+		{
+			name: "a set cache price is used, the other falls back to input",
+			rows: []Price{{Model: "m", Input: new(2.0), CacheRead: new(0.2), Output: new(10.0)}},
+			rec:  chatRecord(1000, 2000, 400, 500), want: 0.0082, wantCost: true, source: CostEstimated,
+		},
+		{
+			name: "cache tokens with no cache price and no input price",
+			rows: []Price{{Model: "m", Output: new(10.0)}},
+			rec:  chatRecord(0, 2000, 0, 500), source: CostUnknown,
+		},
 		{
 			name: "known zero token class without price", rows: []Price{{Model: "m", Input: new(1.0)}},
 			rec: chatRecord(1e6, 0, 0, 0), want: 1, wantCost: true, source: CostEstimated,
