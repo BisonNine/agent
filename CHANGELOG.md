@@ -32,5 +32,7 @@ project uses [Semantic Versioning](https://semver.org/).
   characters, is refused before anything is launched.
 - The `DispatchStatus` of a failed CLI run also carries the usage and cost
   the CLI reported, instead of dropping them.
+- The Antigravity CLI's completion token count no longer adds thinking
+  tokens a second time; the CLI already includes them in its output count.
 - toolspec, spawnllm, ctxengine and cogmem, previously separate modules, are
   consolidated into this repository as packages of `go.bison9.com/agent`.

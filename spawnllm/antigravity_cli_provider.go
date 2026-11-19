@@ -219,9 +219,11 @@ func (p *AntigravityCliProvider) parseAntigravityCliResponse(output string) (*LL
 	if resp.Usage.InputTokens > 0 || resp.Usage.OutputTokens > 0 {
 		// Cached reads are prompt tokens that were served from cache; they are
 		// reported separately, so add them back to get what the model actually
-		// read. Thinking tokens are billed output.
+		// read. Thinking tokens are billed output and are already part of
+		// output_tokens (the CLI's own total is input + output), so they are
+		// not added again.
 		promptTokens := resp.Usage.InputTokens + resp.Usage.CacheReadTokens
-		completionTokens := resp.Usage.OutputTokens + resp.Usage.ThinkingTokens
+		completionTokens := resp.Usage.OutputTokens
 		total := resp.Usage.TotalTokens
 		if total == 0 {
 			total = promptTokens + completionTokens
@@ -306,8 +308,8 @@ type antigravityCliDeniedAction struct {
 }
 
 // antigravityCliUsageInfo is the token accounting from an Antigravity CLI
-// response. ThinkingTokens are billed output the model spent reasoning; they
-// are counted toward completion so cost accounting is not understated.
+// response. ThinkingTokens are billed output the model spent reasoning; the
+// CLI already includes them in OutputTokens.
 type antigravityCliUsageInfo struct {
 	InputTokens     int `json:"input_tokens"`
 	OutputTokens    int `json:"output_tokens"`

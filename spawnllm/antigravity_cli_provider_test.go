@@ -113,8 +113,8 @@ func TestAntigravityCliProvider_Chat_ParsesResponse(t *testing.T) {
 	if want := 5356 + 8129; resp.Usage.PromptTokens != want {
 		t.Errorf("PromptTokens = %d, want %d (input + cache_read)", resp.Usage.PromptTokens, want)
 	}
-	if want := 27 + 26; resp.Usage.CompletionTokens != want {
-		t.Errorf("CompletionTokens = %d, want %d (output + thinking)", resp.Usage.CompletionTokens, want)
+	if want := 27; resp.Usage.CompletionTokens != want {
+		t.Errorf("CompletionTokens = %d, want %d (output, which already includes thinking)", resp.Usage.CompletionTokens, want)
 	}
 	if resp.Usage.TotalTokens != 5383 {
 		t.Errorf("TotalTokens = %d, want the reported 5383", resp.Usage.TotalTokens)
