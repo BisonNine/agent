@@ -10,10 +10,12 @@ type Outcome string
 const (
 	// OutcomeOK: the agent replied (text, or images alone).
 	OutcomeOK Outcome = "ok"
-	// OutcomeError: the turn failed, or used up its budget (ErrDeadline).
+	// OutcomeError: the turn failed (a model, the session store, a panic in
+	// a callback that changes a step), or used up its budget (ErrDeadline).
 	OutcomeError Outcome = "error"
 	// OutcomeCancelled: the turn was interrupted or cancelled with any cause
-	// but ErrDeadline, or dropped from the session's queue before it started.
+	// but ErrDeadline (CauseOutcome), or dropped from the session's queue
+	// before it started.
 	OutcomeCancelled Outcome = "cancelled"
 	// OutcomeEmpty: the agent produced no reply.
 	OutcomeEmpty Outcome = "empty"
@@ -37,8 +39,15 @@ type TurnResult struct {
 	// is stored when it is empty. A failed or cancelled turn starts with it
 	// empty; for a turn BeforeTurn answered or refused it is never stored.
 	Stored string
-	// Err is the error that ended the turn, nil when it answered.
+	// Err is the error that ended the turn, nil when it answered. A store
+	// the session refused matches ErrSessionStore (*SessionStoreError); a
+	// recovered panic is a *PanicError.
 	Err error
+	// SaveErr is the error of storing Stored or saving the session after
+	// AfterTurn (a *SessionStoreError), nil when both succeeded or there was
+	// nothing to store. Storing the reply failing also sets Err and makes the
+	// outcome OutcomeError; a failed save only sets SaveErr.
+	SaveErr error
 	// Cause is why the turn's context ended (a cancel cause, or
 	// context.DeadlineExceeded wrapped in ErrDeadline); nil while it was live.
 	Cause error

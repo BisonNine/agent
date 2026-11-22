@@ -116,11 +116,14 @@ type AfterTurnFunc func(ctx context.Context, turn *Turn, result *TurnResult)
 type BeforeModelFunc func(ctx context.Context, call *ModelInfo) (*protocoltypes.LLMResponse, error)
 
 // AfterModelFunc runs once per answered dispatch, on the turn's goroutine
-// and context, before the engine acts on the response: before it stores the
+// and context, after the answering ModelCall was emitted and before the
+// engine acts on the response: before ModelAnswer, before it stores the
 // assistant message, runs tools or ends the loop.
 //
-// It may change resp.Response and add to resp.Notes and resp.ReplyLines. It
-// must not change call.
+// It may change resp.Response and add to resp.Notes and resp.ReplyLines.
+// resp.Response is the engine's own copy of the provider's response (its
+// tool calls, their arguments and its images copied too), so a change never
+// reaches the ModelCall event. It must not change call.
 type AfterModelFunc func(ctx context.Context, call *ModelInfo, resp *ModelResponse)
 
 // OnModelErrorFunc runs when a dispatch failed for good, after the engine's
@@ -240,4 +243,28 @@ type Plugin struct {
 	OnTextDelta  OnTextDeltaFunc
 	OnInterrupt  OnInterruptFunc
 	OnEvent      OnEventFunc
+
+	DescribeImages DescribeImagesFunc
 }
+
+// UnseenImages are the images one batch's tools returned for a model that
+// cannot see them (its vision mode is modelspec.VisionOff).
+type UnseenImages struct {
+	// Iteration is the turn's model request whose tool calls returned them.
+	Iteration int
+	// Images are the images (data URLs), in call order.
+	Images []string
+	// Focus are the texts of the results that carried images (each a
+	// result's ForLLM), in call order, to steer a description.
+	Focus []string
+}
+
+// DescribeImagesFunc gives a model that cannot see images a text in their
+// place: it runs once per batch whose tools returned images, when the turn's
+// model has vision off, on the turn's goroutine and context, after every
+// result of the batch was stored. The text it returns is stored as one user
+// message after the results, and the model reads it in the next request.
+// ok false stores nothing; the model then has only the engine's note that
+// images are hidden. The callbacks run in order until one returns ok. It
+// may not change anything else.
+type DescribeImagesFunc func(ctx context.Context, images UnseenImages) (text string, ok bool)

@@ -23,8 +23,10 @@ type EventHeader struct {
 // Header returns the header; it makes every event type an Event.
 func (h EventHeader) Header() EventHeader { return h }
 
-// TurnStarted is the first event of a run that started (left the queue),
-// emitted before BeforeTurn: Message is as the run was given it.
+// TurnStarted is the first event of a run that started (left the queue). It
+// opens the turn's span: it is emitted before BeforeTurn and before anything
+// of the turn is stored, so a compaction while the message is stored falls
+// inside the turn. Message and Options are as the run was given them.
 type TurnStarted struct {
 	EventHeader
 
@@ -32,34 +34,82 @@ type TurnStarted struct {
 	Options RunOptions
 }
 
-// ModelCall is one call to one model: one per model the agent's models
-// called for a dispatch (a model skipped because it is parked or disabled
-// is reported in Fallback instead), and one for a response BeforeModel or
-// OnModelError supplied (Model is then the turn's model and Supplied is
-// set). For the model that answered it is emitted after AfterModel.
-type ModelCall struct {
+// ModelCallStarted is one provider call about to be made: emitted for each
+// model the agent's models call for a dispatch (a skipped model gets none),
+// just before the call. Exactly one ModelCall follows it. A host that counts
+// the model calls in flight counts these against ModelCall.
+type ModelCallStarted struct {
 	EventHeader
 
 	Iteration int
 	Model     ModelRef
+}
+
+// ModelCall is one provider call that returned, success or failure, emitted
+// as soon as it returns: before the engine retries, falls back, runs
+// OnModelError or AfterModel. It reports the provider's own call: what
+// logging, usage, spend and request dumps consume. What the turn made of the
+// answer is ModelAnswer.
+type ModelCall struct {
+	EventHeader
+
+	Iteration int
+	// Model is the model called.
+	Model ModelRef
 	// Request is the dispatch's request as BeforeModel left it, before the
-	// engine shaped it for this model (a snapshot).
+	// engine shaped it for this model.
 	Request *ModelRequest
-	// Response is the answer (as AfterModel left it); nil on a failure.
+	// Response is the provider's response as it returned it; nil on a
+	// failure. The engine never changes it: AfterModel works on a copy.
 	Response *protocoltypes.LLMResponse
-	// Err is the call's error; nil on success.
-	Err      error
-	Elapsed  time.Duration
+	// Err is the call's error; nil on success. A call the turn's end cut
+	// short carries the context's error.
+	Err     error
+	Elapsed time.Duration
+}
+
+// ModelAnswer is a dispatch's answer as the turn will act on it: emitted
+// once per answered dispatch, after AfterModel, before the engine stores the
+// assistant message or runs tools. It is what a host showing the turn
+// consumes.
+type ModelAnswer struct {
+	EventHeader
+
+	Iteration int
+	// Model is the model that answered (the turn's model for a supplied
+	// answer).
+	Model ModelRef
+	// Response is the response as AfterModel left it.
+	Response *protocoltypes.LLMResponse
+	// Notes and ReplyLines are what AfterModel added (ModelResponse).
+	Notes      []string
+	ReplyLines []string
+	// Supplied reports an answer BeforeModel or OnModelError gave: no
+	// ModelCall reports it.
 	Supplied bool
 }
 
-// TextDelta is partial reply text as the model streams it. Every TextDelta
-// of a run comes before its TurnFinished.
+// TextDelta is partial reply text as the model streams it. The engine asks
+// a provider for partial text only when the agent has an OnTextDelta
+// callback; without one no TextDelta is emitted. Every TextDelta of a run
+// comes before its TurnFinished.
 type TextDelta struct {
 	EventHeader
 
 	Iteration int
 	Text      string
+}
+
+// ToolBatchStarted is a model response's tool calls about to run: emitted
+// once the batch passed the repeated-batch check, before the tool-call
+// message is stored and before the first ToolCallStarted. Content is the text
+// the model sent with the calls (its narration), possibly empty.
+type ToolBatchStarted struct {
+	EventHeader
+
+	Iteration int
+	Calls     []ToolCall
+	Content   string
 }
 
 // ToolCallStarted is a tool call the model made, with the model's
@@ -72,12 +122,15 @@ type ToolCallStarted struct {
 }
 
 // ToolCallFinished is the end of a tool call that was started: emitted as
-// each call ends (so not necessarily in call order), after AfterTool.
+// each call ends (so not in call order when calls run in parallel), after
+// AfterTool, before its result is stored.
 type ToolCallFinished struct {
 	EventHeader
 
+	// Call is the call as the tool ran it: its arguments as BeforeTool left
+	// them.
 	Call ToolCall
-	// Result is the result as stored.
+	// Result is the result as AfterTool left it.
 	Result  *toolkit.Result
 	Elapsed time.Duration
 	// Answered reports a call BeforeTool answered or refused: the tool did
@@ -86,6 +139,29 @@ type ToolCallFinished struct {
 	// Interrupted reports a call abandoned after an interrupt or cancel;
 	// Result is then InterruptedResult.
 	Interrupted bool
+}
+
+// ToolBatchFinished is every call of a batch ended: emitted once, after the
+// batch's last ToolCallFinished and before its first result is stored.
+type ToolBatchFinished struct {
+	EventHeader
+
+	Iteration int
+	// Calls is the number of calls in the batch.
+	Calls int
+}
+
+// ToolResultStored is one result of a batch stored in the session: emitted
+// in call order, each just after its result was stored. A result the session
+// refused gets none (the turn ends with a SessionStoreError). A host that
+// shows a tool's own output (toolkit.Result's ForUser and Media) consumes
+// these, so the output follows the model's order and is never shown for a
+// result that was not kept.
+type ToolResultStored struct {
+	EventHeader
+
+	Call   ToolCall
+	Result *toolkit.Result
 }
 
 // Attempt is one model a dispatch moved past.
@@ -120,8 +196,10 @@ type CompactionPhase string
 const (
 	// CompactionStarted: a summary pass is about to call the summary model.
 	CompactionStarted CompactionPhase = "started"
-	// CompactionOverflow: a model refused the request as too large; the
-	// engine is about to force a compaction and retry.
+	// CompactionOverflow: a model refused the dispatch's request as too
+	// large and the engine is about to force a compaction and retry. It is
+	// reported once per dispatch, on the first such retry; a dispatch that
+	// overflows again is retried without another report.
 	CompactionOverflow CompactionPhase = "overflow"
 	// CompactionEvicted: tool results were collapsed to placeholders before
 	// a dispatch, without a model.
@@ -137,7 +215,10 @@ type Eviction struct {
 }
 
 // Compaction is a change the engine made to the session's context to keep
-// it within the model's window.
+// it within the model's window. One inside a turn's span (from TurnStarted
+// to TurnFinished, storing the message included) is a turn event; one
+// outside it (the deferred pass after the reply, one a tool asked for) is
+// emitted to OnEvent only, with no turn id.
 type Compaction struct {
 	EventHeader
 
@@ -151,8 +232,8 @@ type Compaction struct {
 	Evictions []Eviction
 }
 
-// Image is one image the model generated, emitted after AfterModel for the
-// response that carried it.
+// Image is one image the model generated, emitted after the ModelAnswer of
+// the response that carried it.
 type Image struct {
 	EventHeader
 
@@ -179,9 +260,10 @@ type TaskFinished struct {
 	Result *toolkit.Result
 }
 
-// TurnFinished is the last event of every run.
+// TurnFinished is the last event of every run. It closes the turn's span:
+// it is emitted after AfterTurn, after the reply was stored and the session
+// saved.
 type TurnFinished struct {
 	EventHeader
-
 	TurnResult
 }

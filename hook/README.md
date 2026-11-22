@@ -18,15 +18,24 @@ Watching is done with events; a callback exists only to change a step.
 - **Events.** `Run.Events()` is one turn's stream (a Go iterator,
   `for ev, err := range run.Events()`); `OnEvent` sees every run of the
   agent, including those the host holds no handle for. The events are
-  `TurnStarted`, `ModelCall`, `TextDelta`, `ToolCallStarted`,
-  `ToolCallFinished`, `Fallback`, `Compaction`, `Image`, `TaskStarted`,
-  `TaskFinished` and `TurnFinished`; each carries an `EventHeader` (the
-  turn's `Scope` and the time).
+  `TurnStarted`; per provider call `ModelCallStarted` and `ModelCall` (the
+  provider's own response, before any callback: logging, usage, dumps);
+  `ModelAnswer` (the answer after `AfterModel`: what a UI shows);
+  `TextDelta`; `Fallback`; per batch of tool calls `ToolBatchStarted`,
+  `ToolCallStarted`, `ToolCallFinished`, `ToolBatchFinished` and
+  `ToolResultStored`; `Compaction`; `Image`; `TaskStarted`, `TaskFinished`;
+  and `TurnFinished`. Each carries an `EventHeader` (the turn's `Scope` and
+  the time).
 - **Callbacks that change a step.** `BeforeTurn`, `AfterTurn`,
   `BeforeModel`, `AfterModel`, `OnModelError`, `BeforeTool`, `AfterTool`,
-  `OnToolError`. A `Before…` callback may edit the step's input; a non-nil
-  replacement it returns skips the step. An `After…` callback edits the
-  step's result in place. Several of one kind run in registration order.
+  `OnToolError`, and `DescribeImages` (one text for the images a batch's
+  tools returned, for a model that cannot see them). A `Before…` callback
+  may edit the step's input; a non-nil replacement it returns skips the
+  step. An `After…` callback edits the step's result in place. Several of
+  one kind run in registration order.
+- **Panics.** A panic in an observer is logged and the turn goes on; in a
+  callback that changes a turn or model step it ends the turn with
+  `OutcomeError` and a `*PanicError`; in a tool callback it fails that call.
 - **Callbacks that only observe,** at the moment a step happens:
   `OnFallback`, `OnCompaction`, `OnTextDelta`, `OnInterrupt`.
 - A `Plugin` is a named bundle of callbacks.
@@ -57,7 +66,10 @@ knows stay in the host's own context keys.
 ## Cancellation and tasks
 
 The cancel causes are `ErrInterrupted`, `ErrShutdown`, `ErrDeadline` and
-`ErrSuperseded`; a host's own cause wraps one. A tool call abandoned after
+`ErrSuperseded`; a host's own cause wraps one, and `CauseOutcome` maps a
+cause to the turn's outcome. A write the session store refused is a
+`*SessionStoreError` (`errors.Is(err, ErrSessionStore)`), in
+`TurnResult.Err` or, for the save after the reply, `TurnResult.SaveErr`. A tool call abandoned after
 an interrupt gets `InterruptedResult()`. Tasks (sub-agents and other
 background jobs) run on their own contexts: `TaskInfo`, `TaskState`
 (`running`, `done`, `error`, `cancelled`), `TaskMode` (`wait`, `callback`)

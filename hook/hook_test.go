@@ -17,7 +17,12 @@ import (
 // take plain functions of their signature, and a Plugin holds one of each.
 var (
 	_ hook.Event = hook.TurnStarted{}
+	_ hook.Event = hook.ModelCallStarted{}
 	_ hook.Event = hook.ModelCall{}
+	_ hook.Event = hook.ModelAnswer{}
+	_ hook.Event = hook.ToolBatchStarted{}
+	_ hook.Event = hook.ToolBatchFinished{}
+	_ hook.Event = hook.ToolResultStored{}
 	_ hook.Event = hook.TextDelta{}
 	_ hook.Event = hook.ToolCallStarted{}
 	_ hook.Event = hook.ToolCallFinished{}
@@ -46,6 +51,8 @@ var (
 		OnTextDelta:  func(context.Context, hook.TextDelta) {},
 		OnInterrupt:  func(context.Context, hook.Interrupted) {},
 		OnEvent:      func(context.Context, hook.Event) {},
+
+		DescribeImages: func(context.Context, hook.UnseenImages) (string, bool) { return "", false },
 	}
 
 	_ hook.Run            = (*fakeRun)(nil)
@@ -97,6 +104,73 @@ func TestCancelCauses(t *testing.T) {
 	host := fmt.Errorf("service stopping: %w", hook.ErrShutdown)
 	if !errors.Is(host, hook.ErrShutdown) {
 		t.Error("a wrapped cause is not recognised")
+	}
+}
+
+// hostStopError is a host's own stop cause, wrapping a hook cause.
+type hostStopError struct{ cause error }
+
+func (c hostStopError) Error() string { return "stopped by the host: " + c.cause.Error() }
+func (c hostStopError) Unwrap() error { return c.cause }
+
+// A host's cause reaches the engine unchanged through context.Cause, is
+// recognised with errors.Is, and decides the outcome.
+func TestCauseThroughHostWrapper(t *testing.T) {
+	cases := []struct {
+		cause error
+		want  hook.Outcome
+	}{
+		{nil, ""},
+		{hostStopError{hook.ErrInterrupted}, hook.OutcomeCancelled},
+		{fmt.Errorf("service stopping: %w", hook.ErrShutdown), hook.OutcomeCancelled},
+		{hostStopError{hook.ErrSuperseded}, hook.OutcomeCancelled},
+		{hostStopError{hook.ErrDeadline}, hook.OutcomeError},
+		{fmt.Errorf("%w: %w", hook.ErrDeadline, context.DeadlineExceeded), hook.OutcomeError},
+		{context.DeadlineExceeded, hook.OutcomeError},
+		{errors.New("a host cause wrapping nothing"), hook.OutcomeCancelled},
+	}
+	for _, tc := range cases {
+		if got := hook.CauseOutcome(tc.cause); got != tc.want {
+			t.Errorf("CauseOutcome(%v) = %q, want %q", tc.cause, got, tc.want)
+		}
+		if tc.cause == nil {
+			continue
+		}
+		ctx, cancel := context.WithCancelCause(context.Background())
+		cancel(tc.cause)
+		got := context.Cause(ctx)
+		if got != tc.cause { //nolint:errorlint // the very value is returned
+			t.Errorf("context.Cause = %v, want the host's own error", got)
+		}
+		if w, ok := errors.AsType[hostStopError](tc.cause); ok && !errors.Is(got, w.cause) {
+			t.Errorf("errors.Is(%v, %v) = false", got, w.cause)
+		}
+	}
+}
+
+func TestSessionStoreError(t *testing.T) {
+	disk := errors.New("disk full")
+	err := fmt.Errorf("turn: %w", &hook.SessionStoreError{What: "tool result", Err: disk})
+	if !errors.Is(err, hook.ErrSessionStore) || !errors.Is(err, disk) {
+		t.Fatalf("errors.Is fails on %v", err)
+	}
+	var se *hook.SessionStoreError
+	if !errors.As(err, &se) || se.What != "tool result" {
+		t.Fatalf("errors.As = %+v", se)
+	}
+	if want := "turn: session store rejected the tool result: disk full"; err.Error() != want {
+		t.Fatalf("text = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestPanicError(t *testing.T) {
+	a := &hook.PanicError{Callback: "AfterModel", Plugin: "images", Value: "boom"}
+	if got, want := a.Error(), "AfterModel callback of images panicked: boom"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
+	}
+	b := &hook.PanicError{Callback: "BeforeTool", Value: 42}
+	if got, want := b.Error(), "BeforeTool callback panicked: 42"; got != want {
+		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
