@@ -181,8 +181,8 @@ func OpenReadOnly(path string, log *slog.Logger) (*ArchiveStore, error) {
 }
 
 // busyTimeoutMillis is how long a connection waits for a lock before failing
-// with SQLITE_BUSY. The writer sets it with a PRAGMA; readers carry it in
-// their DSN.
+// with SQLITE_BUSY. Writers and readers both carry it in their DSN, so a
+// connection the pool opens to replace a discarded one has it too.
 const busyTimeoutMillis = 2000
 
 // openReadOnly opens a short-lived read-only connection to the database at
@@ -215,7 +215,9 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
-	db, err := sql.Open("sqlite", path)
+	// The parameters follow the first '?', so a path without one reaches
+	// SQLite unchanged.
+	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout(%d)", path, busyTimeoutMillis))
 	if err != nil {
 		log.Warn("archive open failed",
 			"path", path, "error", err.Error())
@@ -229,12 +231,6 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		iox.CloseQuietly(log, db)
 		log.Warn("archive WAL failed",
-			"path", path, "error", err.Error())
-		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
-	}
-	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMillis)); err != nil {
-		iox.CloseQuietly(log, db)
-		log.Warn("archive busy_timeout failed",
 			"path", path, "error", err.Error())
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}

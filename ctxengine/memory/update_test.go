@@ -6,8 +6,11 @@
 package memory
 
 import (
+	"context"
+	"database/sql"
 	"errors"
 	"testing"
+	"time"
 )
 
 // assertWritable checks that a and a second handle on the same file can both
@@ -50,7 +53,9 @@ func TestUpdate_PanicRollsBack(t *testing.T) {
 
 // TestUpdate_FailedRollbackDiscardsConnection makes the rollback of a failed
 // Update fail with the transaction still open: the connection is discarded,
-// so the next write on the handle, and one on another handle, succeed.
+// so the next write on the handle, and one on another handle, succeed, and
+// the connection that replaces it still waits for a lock another connection
+// holds instead of failing at once.
 func TestUpdate_FailedRollbackDiscardsConnection(t *testing.T) {
 	rollbackStmt = "ROLLBACK_BROKEN"
 	t.Cleanup(func() { rollbackStmt = "ROLLBACK" })
@@ -73,4 +78,28 @@ func TestUpdate_FailedRollbackDiscardsConnection(t *testing.T) {
 		t.Errorf("the failed Update was committed: NextSeq = %d", st.NextSeq)
 	}
 	assertWritable(t, dir, a)
+	assertWaitsForLock(t, ArchivePath(dir, "alice"), a)
+}
+
+// assertWaitsForLock holds the write lock of the database at path on another
+// connection for a moment and checks that a write on a waits for it and
+// succeeds.
+func assertWaitsForLock(t *testing.T, path string, a *ArchiveStore) {
+	t.Helper()
+	db, err := sql.Open("sqlite", path)
+	noErr(t, err)
+	t.Cleanup(func() { noErr(t, db.Close()) })
+	conn, err := db.Conn(context.Background())
+	noErr(t, err)
+	t.Cleanup(func() { noErr(t, conn.Close()) })
+	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	noErr(t, err)
+	released := make(chan error, 1)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_, err := conn.ExecContext(context.Background(), "COMMIT")
+		released <- err
+	}()
+	noErr(t, setState(a, SessionState{Key: "alice", NextSeq: 3}))
+	noErr(t, <-released)
 }

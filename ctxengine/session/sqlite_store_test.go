@@ -280,15 +280,30 @@ func TestConcurrent_AddAndRead(t *testing.T) {
 type gate struct {
 	arrived map[string]chan struct{}
 	release map[string]chan struct{}
+	once    map[string]*sync.Once
 }
 
-func newGate(contents ...string) *gate {
-	g := &gate{arrived: map[string]chan struct{}{}, release: map[string]chan struct{}{}}
+// newGate stops the adds of contents; t's cleanup opens every gate, so a test
+// that fails early leaves no add waiting.
+func newGate(t *testing.T, contents ...string) *gate {
+	t.Helper()
+	g := &gate{arrived: map[string]chan struct{}{}, release: map[string]chan struct{}{}, once: map[string]*sync.Once{}}
 	for _, c := range contents {
 		g.arrived[c] = make(chan struct{})
 		g.release[c] = make(chan struct{})
+		g.once[c] = &sync.Once{}
 	}
+	t.Cleanup(func() {
+		for _, c := range contents {
+			g.open(c)
+		}
+	})
 	return g
+}
+
+// open lets the add of content continue; opening twice is harmless.
+func (g *gate) open(content string) {
+	g.once[content].Do(func() { close(g.release[content]) })
 }
 
 // key is the memory.NoiseKeyFunc. IsNoise and Record both call it; only the
@@ -355,7 +370,7 @@ func TestForgetSession_WriterInFlight(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newStore(t)
 			const key = "alice"
-			g := newGate("first", "second")
+			g := newGate(t, "first", "second")
 			s.SetNoiseKey(g.key)
 
 			var wg sync.WaitGroup
@@ -384,8 +399,8 @@ func TestForgetSession_WriterInFlight(t *testing.T) {
 			if g.reached("second", 100*time.Millisecond) {
 				t.Error("a second add ran while the first held the session")
 			}
-			close(g.release["second"])
-			close(g.release["first"])
+			g.open("second")
+			g.open("first")
 			wg.Wait()
 			<-forgotten
 			close(errs)
@@ -410,11 +425,12 @@ func TestForgetSession_WriterInFlight(t *testing.T) {
 // another session still complete.
 func TestSessionsIndependent(t *testing.T) {
 	s := newStore(t)
-	g := newGate("held")
+	g := newGate(t, "held")
 	s.SetNoiseKey(g.key)
 
 	var wg sync.WaitGroup
-	wg.Go(func() { noErr(t, s.AddMessage("alice", "user", "held")) })
+	heldErr := make(chan error, 1)
+	wg.Go(func() { heldErr <- s.AddMessage("alice", "user", "held") })
 	if !g.reached("held", 5*time.Second) {
 		t.Fatal("the add never reached the gate")
 	}
@@ -436,8 +452,9 @@ func TestSessionsIndependent(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("bob's session waited for alice's")
 	}
-	close(g.release["held"])
+	g.open("held")
 	wg.Wait()
+	noErr(t, <-heldErr)
 
 	if got := len(s.GetHistory("bob")); got != 5 {
 		t.Errorf("bob = %d messages, want 5", got)
@@ -492,7 +509,7 @@ func TestTwoHandlesNeverShareSeq(t *testing.T) {
 // session is not left locked and the next add succeeds.
 func TestNoiseKeyPanic(t *testing.T) {
 	s := newStore(t)
-	g := newGate()
+	g := newGate(t)
 	s.SetNoiseKey(g.key)
 	func() {
 		defer func() {
