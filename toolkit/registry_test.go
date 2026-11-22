@@ -3,6 +3,7 @@ package toolkit
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"slices"
@@ -479,6 +480,89 @@ func TestExecute_RefusalLoggedAtWarn(t *testing.T) {
 			}
 			if strings.Contains(buf.String(), "s3cret") {
 				t.Fatal("tool arguments must never be logged")
+			}
+		})
+	}
+}
+
+// The error of a failed call is logged through the catalogue's truncate
+// function: by default cut to 500 runes plus "…", in full with an
+// identity function, which receives the default limit.
+func TestExecute_LogTruncate(t *testing.T) {
+	long := strings.Repeat("x", 600)
+	var gotMax int
+	for _, tc := range []struct {
+		name string
+		opt  Option
+		want string
+	}{
+		{"default", nil, strings.Repeat("x", 500) + "…"},
+		{"nil", WithTruncate(nil), strings.Repeat("x", 500) + "…"},
+		{"identity", WithTruncate(func(s string, limit int) string { gotMax = limit; return s }), long},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf syncBuffer
+			opts := []Option{WithLogger(slog.New(slog.NewJSONHandler(&buf, nil)))}
+			if tc.opt != nil {
+				opts = append(opts, tc.opt)
+			}
+			c := New(opts...)
+			mustAdd(t, c, Entry{Tool: &mockTool{name: "probe", params: map[string]any{}, result: ErrorResult(long)}})
+			c.Execute(context.Background(), "probe", nil, nil)
+
+			var rec struct {
+				Error string `json:"error"`
+			}
+			for l := range strings.SplitSeq(buf.String(), "\n") {
+				if strings.Contains(l, "Tool execution failed") {
+					if err := json.Unmarshal([]byte(l), &rec); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if rec.Error != tc.want {
+				t.Fatalf("logged error has %d runes, want %d", len([]rune(rec.Error)), len([]rune(tc.want)))
+			}
+		})
+	}
+	if gotMax != 500 {
+		t.Fatalf("truncate got max %d, want 500", gotMax)
+	}
+}
+
+// Overwriting a tool warns with the host's text for a hidden or a listed
+// registration.
+func TestPut_OverwriteWarning(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		hidden bool
+		want   string
+	}{
+		{"listed", false, "Tool registration overwrites existing tool"},
+		{"hidden", true, "Hidden tool registration overwrites existing tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf syncBuffer
+			c := New(WithLogger(slog.New(slog.NewJSONHandler(&buf, nil))))
+			for range 2 {
+				if err := c.Put(Entry{Tool: newMockTool("dup", "d"), Hidden: tc.hidden}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var rec struct {
+				Level string `json:"level"`
+				Msg   string `json:"msg"`
+				Name  string `json:"name"`
+			}
+			for l := range strings.SplitSeq(buf.String(), "\n") {
+				if strings.Contains(l, "overwrites existing tool") {
+					if err := json.Unmarshal([]byte(l), &rec); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if rec.Msg != tc.want || rec.Level != "WARN" || rec.Name != "dup" {
+				t.Fatalf("got %+v, want WARN %q name=dup; log:\n%s", rec, tc.want, buf.String())
 			}
 		})
 	}

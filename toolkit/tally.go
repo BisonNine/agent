@@ -6,6 +6,10 @@ import "sync"
 // call; longer text is cut and ends in "…".
 const MaxLastErrorRunes = 300
 
+// logErrorRunes is the limit the catalogue passes to its truncate function
+// (see WithTruncate) for the error text of a failed or refused call it logs.
+const logErrorRunes = 500
+
 // Tally counts the tool calls of the runs that ask for it, keyed by a run
 // key (typically a session key). A run that never called Begin is not
 // counted, so a key nobody watches costs one map lookup. It is safe for

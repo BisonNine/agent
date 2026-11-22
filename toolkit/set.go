@@ -349,10 +349,10 @@ func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name st
 	case result.IsError && IsExpectedRefusal(result.Err):
 		// A configured permission or limit said no: expected, not a fault.
 		log.WarnContext(ctx, "Tool call refused",
-			"tool", name, "duration", duration.Milliseconds(), "error", truncateRunes(result.ForLLM, 500))
+			"tool", name, "duration", duration.Milliseconds(), "error", s.cat.truncate(result.ForLLM, logErrorRunes))
 	case result.IsError:
 		log.ErrorContext(ctx, "Tool execution failed",
-			"tool", name, "duration", duration.Milliseconds(), "error", truncateRunes(result.ForLLM, 500))
+			"tool", name, "duration", duration.Milliseconds(), "error", s.cat.truncate(result.ForLLM, logErrorRunes))
 	case result.Async:
 		log.InfoContext(ctx, "Tool started (async)", "tool", name, "duration", duration.Milliseconds())
 	default:

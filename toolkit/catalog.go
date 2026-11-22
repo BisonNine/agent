@@ -24,7 +24,8 @@ var ErrDuplicate = errors.New("tool already registered")
 // use from any goroutine at any time, including while turns run. Create
 // one with New; the zero value is not usable.
 type Catalog struct {
-	logger *slog.Logger
+	logger   *slog.Logger
+	truncate func(s string, limit int) string // shortens text the catalogue logs
 
 	mu      sync.Mutex // serialises writers; readers never lock
 	state   atomic.Pointer[catState]
@@ -50,13 +51,27 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// WithTruncate sets the function that shortens text the catalogue logs,
+// such as the error of a failed or refused call. It is called with the
+// text and the limit the catalogue would use (logErrorRunes). The default,
+// also used when fn is nil, cuts to that many runes and appends "…"; a
+// host that wants the full text passes a function that returns s.
+func WithTruncate(fn func(s string, limit int) string) Option {
+	return func(c *Catalog) {
+		if fn != nil {
+			c.truncate = fn
+		}
+	}
+}
+
 // New returns an empty catalogue with a default set that grants every
 // tool.
 func New(opts ...Option) *Catalog {
 	c := &Catalog{
-		logger:  slog.New(slog.DiscardHandler),
-		watched: map[*Set]int{},
-		sets:    map[string]*Set{},
+		logger:   slog.New(slog.DiscardHandler),
+		truncate: truncateRunes,
+		watched:  map[*Set]int{},
+		sets:     map[string]*Set{},
 	}
 	for _, o := range opts {
 		o(c)
@@ -213,18 +228,22 @@ func (c *Catalog) Put(entries ...Entry) error {
 	if err != nil {
 		return err
 	}
-	var overwritten []string
+	var overwritten []*entry
 	err = c.update(func(next *catState) (bool, error) {
 		for _, e := range put {
 			if _, exists := next.entries[e.name]; exists {
-				overwritten = append(overwritten, e.name)
+				overwritten = append(overwritten, e)
 			}
 			next.entries[e.name] = e
 		}
 		return len(put) > 0, nil
 	})
-	for _, name := range overwritten {
-		c.logger.Warn("Tool registration overwrites existing tool", "name", name)
+	for _, e := range overwritten {
+		if e.hidden {
+			c.logger.Warn("Hidden tool registration overwrites existing tool", "name", e.name)
+		} else {
+			c.logger.Warn("Tool registration overwrites existing tool", "name", e.name)
+		}
 	}
 	return err
 }

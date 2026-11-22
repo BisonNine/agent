@@ -140,3 +140,13 @@ the `discovery` package's.
 
 `WithLogger(*slog.Logger)`; records carry `component=toolkit`. The default
 discards. Tool arguments are never logged.
+
+`WithTruncate(fn func(s string, limit int) string)` sets how the catalogue
+shortens text it logs (the `error` of "Tool execution failed" and "Tool
+call refused"); `fn` gets the text and the limit, 500 runes. The default,
+or nil, cuts to the limit and appends "…"; pass a function that returns
+`s` to log the full text. It does not change what `Tally` keeps.
+
+Overwriting a tool with `Put` warns "Tool registration overwrites existing
+tool", or "Hidden tool registration overwrites existing tool" for a hidden
+entry, with field `name`.
