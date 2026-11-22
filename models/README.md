@@ -71,6 +71,11 @@ On a Set:
 - `Current(purpose, scope...)`: `Serving{Selected, Serving, Since, Reason,
   Attempts}`, what answered last and why it is not the selected model.
 - `Begin(purpose, scope...) *Chain`, `Caller(purpose, id, scope...)`.
+- `Replace(purpose, assignments...)` and `ReplaceAll(map[Purpose][]Assignment)`:
+  replace whole lists in one step (`Assignment{Name, Options}`, in priority
+  order). Validated first; readers see the old lists or the new ones; selections
+  and serving records whose model is still listed are kept; those whose model
+  is gone revert and are returned; identical lists change nothing.
 - `Forget(scope)`: drops the scope's selections and serving record from
   memory (not from the store), for a scope that has ended.
 
@@ -107,6 +112,22 @@ enable switch, re-read before each call.
   (`AllContextLimit()` says whether compaction might help); when every model is
   disabled, a `*NoModelError`.
 
+`chain.Do(ctx, fn, opts...)` is the same walk for a call that is not a chat
+call (speech, transcription, image generation): `fn(ctx, candidate)` makes the
+call with the caller's own client, built from `Candidate.Spec` and
+`Candidate.ProviderSpec` (copies of the model's and provider's definitions,
+secrets resolved). It shares health, switches, fallback and events with chat;
+`Chat` is `Do` with a chat call. `WithClassify(fn)` replaces `DefaultVerdict`
+for one call: a `Verdict{Reason, Status, RetryAfter, Record, Next, Wait}`
+says whether the failure counts against the model's health, whether the next
+model is tried, and whether to wait and retry the same model once first.
+
+`chain.Client(name)`, `set.Client(name)` and `catalog.Client(name)` return a
+model's chat client (the chain's is the pinned and, if `Isolated`, isolated
+one) and a `release` function: for a call that records no health and ignores
+the switches. The client stays usable until `release` is called, once; a
+client replaced by `Adopt` or `RegisterClient` is closed only after that.
+
 `WithPrepare` shapes the request for each model (its own `max_tokens`, images
 it cannot take), `WithNotify` is called each time the call moves on (a run of
 skipped models is one notice; none for the model that ends the call), and
@@ -125,6 +146,13 @@ type Caller interface {
 	Complete(ctx context.Context, req CompleteRequest) (CompleteReply, error)
 }
 ```
+
+`set.Caller(purpose, id, scope, opts...)` and `chain.Caller(id, opts...)` take
+the call options too: `WithFinish` (each model call), `WithPrepare`,
+`WithClassify`, and `WithNotify`, which receives each model passed (one
+attempt and the model considered next, or the zero `Candidate`) instead of
+the SDK logging it. When no model could be called the error wraps
+`ErrNoModelAvailable`.
 
 `CompleteRequest{System, User, JSONObject, Exclude}` and
 `CompleteReply{Content, FinishReason, Model}` are the shape the summarizer and
@@ -186,7 +214,10 @@ reason, status, consecutive failures, whether past the escalation steps, and
 for how long), `Recovered` (a model that answered after being parked, and since
 when it had been failing; also after `ResetHealth` or `Adopt`), `FellBack` (a
 chain moving on) and `Exhausted` (a call that ended without an answer). They
-are called on the calling goroutine with no lock held and must not block.
+are called with no lock held and must not block. `Parked` and `Recovered` for
+one model key arrive in the order the health changes happened (a `Recovered`
+after the `Parked` it answers); to keep that order, one goroutine at a time
+delivers a key's events, which may be another call's goroutine.
 
 ## Clients
 
@@ -217,10 +248,18 @@ the live object.
 
 ## Persisting selections
 
-`WithSelectionStore(st)`: `LoadSelection` is called the first time a
-selection is needed, `SaveSelection` on each `Select` and `Reset` (an empty
-name is no selection). A store error is logged and the selection is kept in
-memory. A stored model that is not in the list is ignored.
+`WithSelectionStore(st)`:
+
+- `LoadSelection` is called the first time a selection is needed. An error
+  means "cannot load now": the default is used and the selection is read again
+  on the next use. A stored model that is not in the list is ignored.
+- `SaveSelection` is called, with no lock held, on `Select` and `Reset`; with
+  `""` for a selection reverted because its model left the list (`Remove`,
+  `Unassign`, `Replace`, `Adopt`); and with the same name for a selection kept
+  in a list whose members or order changed, so a store that keeps a position
+  rather than a name can re-save it against the new list (`Set.List`). Only
+  selections loaded in this process are written. A write error is logged and
+  the selection is kept in memory.
 
 ## Testing
 

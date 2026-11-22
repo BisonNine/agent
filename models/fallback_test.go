@@ -456,7 +456,7 @@ func TestChainStopsWhenCallerGivesUp(t *testing.T) {
 			if h, _ := f.cat.Get("sonnet"); h.Health.Failures != 0 {
 				t.Fatalf("health = %+v", h.Health)
 			}
-			_, err = f.cat.Default().Caller(models.Chat, alice).Complete(ctx, models.CompleteRequest{})
+			_, err = f.cat.Default().Caller(models.Chat, alice, "").Complete(ctx, models.CompleteRequest{})
 			if !errors.Is(err, tc.want) {
 				t.Fatalf("complete: err = %v, want %v", err, tc.want)
 			}
@@ -474,8 +474,8 @@ func TestChainModelTimeoutFallsBack(t *testing.T) {
 	}
 }
 
-// A Retry-After wait cut short by the caller still records the failure that
-// caused it.
+// A Retry-After wait cut short by the caller records nothing against the
+// model; the attempt is still returned.
 func TestChainRetryWaitCutShort(t *testing.T) {
 	f := newFixture(t, three)
 	f.fake.Script("claude-sonnet", modelstest.Status(429, 2*time.Second))
@@ -485,11 +485,19 @@ func TestChainRetryWaitCutShort(t *testing.T) {
 			cancel()
 		}
 	}()
-	_, err := f.cat.Begin(models.Chat).Chat(ctx, alice, models.Request{})
+	_, attempts, err := f.cat.Begin(models.Chat).Do(ctx, func(ctx context.Context, c models.Candidate) error {
+		return modelstest.Status(429, 2*time.Second).Err
+	})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v", err)
 	}
-	if h, _ := f.cat.Get("sonnet"); h.Health.Available || h.Health.Failures != 1 {
-		t.Fatalf("the 429 was not recorded: %+v", h.Health)
+	if got := describeAll(attempts); !slices.Equal(got, []string{"sonnet failed rate_limit"}) {
+		t.Fatalf("attempts = %q", got)
+	}
+	if h, _ := f.cat.Get("sonnet"); !h.Health.Available || h.Health.Failures != 0 {
+		t.Fatalf("a failure was recorded for a call the caller cancelled: %+v", h.Health)
+	}
+	if p, _, _, _ := f.obs.counts(); p != 0 {
+		t.Fatal("a Parked event was sent")
 	}
 }

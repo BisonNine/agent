@@ -34,15 +34,19 @@ func (e *NoModelError) Error() string {
 
 func (e *NoModelError) Unwrap() error { return ErrNoModelAvailable }
 
-// Candidate is one model of a chain.
+// Candidate is one model of a chain. Spec and ProviderSpec are copies of the
+// model's definition and its provider's (secrets resolved), for a caller
+// that builds its own client for the model (Chain.Do).
 type Candidate struct {
-	Name     string // model name
-	Provider string // provider name
-	Protocol string
-	Model    string // wire model id
-	Priority int
-	Settings any
-	Limits   modelspec.Limits
+	Name         string // model name
+	Provider     string // provider name
+	Protocol     string
+	Model        string // wire model id
+	Priority     int
+	Settings     any // the assignment's (WithSettings)
+	Limits       modelspec.Limits
+	Spec         modelspec.Model
+	ProviderSpec modelspec.Provider
 }
 
 func candidateOf(g *generation, a assignment) Candidate {
@@ -51,7 +55,14 @@ func candidateOf(g *generation, a assignment) Candidate {
 		Name: a.name, Provider: e.prov.Name, Protocol: e.prov.Protocol, Model: e.def.Model,
 		Priority: a.priority, Settings: a.settings,
 		Limits: modelspec.ResolveLimits(&e.def, g.cfg.limitDefaults),
+		Spec:   cloneModel(e.def), ProviderSpec: e.prov,
 	}
+}
+
+// copied returns c with its own copy of the model definition.
+func (c Candidate) copied() Candidate {
+	c.Spec = cloneModel(c.Spec)
+	return c
 }
 
 // Attempt is one model a call passed over: one that failed, or one skipped
@@ -126,7 +137,13 @@ type Chain struct {
 }
 
 // Candidates returns the chain's models in the order they are tried.
-func (ch *Chain) Candidates() []Candidate { return slices.Clone(ch.cands) }
+func (ch *Chain) Candidates() []Candidate {
+	out := make([]Candidate, len(ch.cands))
+	for i, c := range ch.cands {
+		out[i] = c.copied()
+	}
+	return out
+}
 
 // Purpose returns the purpose whose models the chain holds: the one asked
 // for, or the one a fallback rule led to.
@@ -165,34 +182,99 @@ type Result struct {
 	Attempts  []Attempt
 }
 
-// CallOption configures one Chat call.
+// CallOption configures one call of a chain (Chat, Do, or a Caller's
+// Complete).
 type CallOption func(*callConfig)
 
 type callConfig struct {
-	prepare func(Candidate, spawnllm.LLMProvider, Request) Request
-	notify  func(passed []Attempt, next Candidate)
-	finish  func(Candidate, time.Duration, *spawnllm.LLMResponse, error)
+	prepare  func(Candidate, spawnllm.LLMProvider, Request) Request
+	notify   func(passed []Attempt, next Candidate)
+	finish   func(Candidate, time.Duration, *spawnllm.LLMResponse, error)
+	classify func(err error, c Candidate) Verdict
+}
+
+func newCallConfig(opts []CallOption) *callConfig {
+	cfg := &callConfig{}
+	for _, o := range opts {
+		o(cfg)
+	}
+	return cfg
 }
 
 // WithPrepare shapes the request for each model before it is called, e.g. its
 // own max_tokens or dropping images a model cannot take. fn is given the
-// model, its client and the request as passed to Chat, and must not change
-// the latter's slices or map in place.
+// model, its client and the request as passed in, and must not change the
+// latter's slices or map in place. Chat and Complete; Do has no request.
 func WithPrepare(fn func(c Candidate, client spawnllm.LLMProvider, req Request) Request) CallOption {
 	return func(c *callConfig) { c.prepare = fn }
 }
 
-// WithNotify is called each time the call moves past one or more models to
-// try next: the attempts just passed (one failure, or a run of skipped
-// models) and the model tried next. It is not called for a model that ends
-// the call.
+// WithNotify is called as the call moves past models. For Chat and Do: each
+// time it moves past one or more models to try next, with the attempts just
+// passed (one failure, or a run of skipped models) and the model tried next;
+// not for a model that ends the call. For Complete: for each model passed
+// (skipped or failed) as it is passed, with that one attempt and the model
+// considered next, or the zero Candidate when none is left; with a notify
+// hook, Complete logs none of these itself.
 func WithNotify(fn func(passed []Attempt, next Candidate)) CallOption {
 	return func(c *callConfig) { c.notify = fn }
 }
 
-// WithFinish is called after each model call with its outcome.
+// WithFinish is called after each model call with its outcome. For Do, resp
+// is nil.
 func WithFinish(fn func(c Candidate, elapsed time.Duration, resp *spawnllm.LLMResponse, err error)) CallOption {
 	return func(c *callConfig) { c.finish = fn }
+}
+
+// Verdict is how a call treats a model's failure.
+type Verdict struct {
+	Reason     spawnllm.FailoverReason // the failure's reason, for attempts and health ("" when unknown)
+	Status     int                     // its HTTP status, which decides the cooldown
+	RetryAfter time.Duration           // a server's Retry-After, which replaces the computed cooldown
+	Record     bool                    // count it against the model's health
+	Next       bool                    // try the next model; false ends the call with this failure
+	Wait       time.Duration           // > 0: wait this long and call the same model once more first (its first failure only)
+}
+
+// DefaultVerdict is spawnllm's classification: a failure spawnllm cannot
+// classify ends the call and is not recorded; a classified one is recorded
+// and the next model is tried, after one more call to the same model when a
+// Retry-After of at most 3 seconds came with it.
+func DefaultVerdict(err error, c Candidate) Verdict {
+	fe := spawnllm.ClassifyError(err, c.Provider, c.Model)
+	if fe == nil {
+		return Verdict{}
+	}
+	v := Verdict{Reason: fe.Reason, Status: fe.Status, RetryAfter: fe.RetryAfter, Record: true, Next: fe.IsRetriable()}
+	if fe.RetryAfter > 0 && fe.RetryAfter <= maxSameModelRetryWait {
+		v.Wait = fe.RetryAfter
+	}
+	return v
+}
+
+// WithClassify replaces DefaultVerdict for one call: fn decides, for each
+// failure (never for one caused by the caller's context ending), whether it
+// counts against the model's health and whether the next model is tried.
+func WithClassify(fn func(err error, c Candidate) Verdict) CallOption {
+	return func(c *callConfig) { c.classify = fn }
+}
+
+func (cfg *callConfig) verdict(err error, c Candidate) Verdict {
+	if cfg.classify != nil {
+		return cfg.classify(err, c)
+	}
+	return DefaultVerdict(err, c)
+}
+
+// failed is the error an attempt records for a failure with verdict v.
+func failed(err error, c Candidate, v Verdict) error {
+	if v.Reason == "" {
+		return err
+	}
+	if fe, ok := errors.AsType[*spawnllm.FailoverError](err); ok && fe.Reason == v.Reason && fe.Status == v.Status {
+		return fe
+	}
+	return &spawnllm.FailoverError{Reason: v.Reason, Provider: c.Provider, Model: c.Model, Status: v.Status, RetryAfter: v.RetryAfter, Wrapped: err}
 }
 
 // skip returns the attempt of a model the chain must not call now: disabled
@@ -233,28 +315,38 @@ func (ch *Chain) disabled(i int) bool {
 
 func (ch *Chain) clock() clock.Clock { return clock.Or(ch.gen.cfg.clock) }
 
-// call makes one call to candidate c.
-func (ch *Chain) call(ctx context.Context, id accounting.Identity, c Candidate, req Request, cfg *callConfig) (*spawnllm.LLMResponse, error) {
-	client, release, err := ch.client(c)
+// chatOnce makes one chat call to candidate c.
+func (ch *Chain) chatOnce(ctx context.Context, id accounting.Identity, c Candidate, req Request, cfg *callConfig) (*spawnllm.LLMResponse, error) {
+	client, release, err := ch.clientOf(c.Name)
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	if cfg != nil && cfg.prepare != nil {
-		req = cfg.prepare(c, client, req)
+	if cfg.prepare != nil {
+		req = cfg.prepare(c.copied(), client, req)
 	}
 	start := ch.clock().Now()
 	resp, err := client.Chat(ctx, id, req.Messages, req.Tools, c.Model, req.Options)
-	if cfg != nil && cfg.finish != nil {
-		cfg.finish(c, ch.clock().Since(start), resp, err)
+	if cfg.finish != nil {
+		cfg.finish(c.copied(), ch.clock().Since(start), resp, err)
 	}
 	return resp, err
 }
 
-// client returns the client to call c with, and the function that ends the
-// call.
-func (ch *Chain) client(c Candidate) (spawnllm.LLMProvider, func(), error) {
-	e := ch.gen.models[c.Name]
+// Client returns the chat client of model name as this chain has it: from
+// the contents it pinned, isolated if the chain is. It reads and records no
+// health and ignores the enable switches. The client stays usable until
+// release is called, which must be done exactly once when the caller is
+// done with it; a client Adopt replaced is closed only after that.
+func (ch *Chain) Client(name string) (client spawnllm.LLMProvider, release func(), err error) {
+	return ch.clientOf(name)
+}
+
+func (ch *Chain) clientOf(name string) (spawnllm.LLMProvider, func(), error) {
+	e, ok := ch.gen.models[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("models: unknown model %q", name)
+	}
 	if ch.isolated && !e.registered && modelspec.CLIAgentByProtocol(e.prov.Protocol) != nil {
 		if strings.TrimSpace(ch.workspace) == "" {
 			return nil, nil, errors.New("models: an isolated CLI client needs a workspace")
@@ -268,59 +360,90 @@ func (ch *Chain) client(c Candidate) (spawnllm.LLMProvider, func(), error) {
 	return e.slot.acquire()
 }
 
-// Chat runs one chat call for id on the chain: each model in turn, skipping
-// disabled and parked ones, until one answers.
-//
-//   - When ctx ends (cancelled or past its deadline) the call stops with
-//     ctx.Err(): no further model is called, the failure of a call cut short
-//     is not recorded against the model, and no FellBack or Exhausted event
-//     is sent. A model's own request timeout, with ctx still live, is an
-//     ordinary failure.
-//   - An error spawnllm cannot classify ends the call; a classified one moves
-//     on to the next model, once the failure is recorded against the model's
-//     health. A Retry-After of up to 3 seconds is waited out and the same
-//     model tried once more first.
-//   - An answer clears the model's failures.
-//   - When every model failed or was skipped the error is an
-//     *ExhaustedError; when every one was disabled, or there are none, a
-//     *NoModelError.
+// Chat runs one chat call for id on the chain: Do, calling each model's chat
+// client with req.
 func (ch *Chain) Chat(ctx context.Context, id accounting.Identity, req Request, opts ...CallOption) (*Result, error) {
 	if _, err := id.Normalize(); err != nil {
 		return nil, fmt.Errorf("models: %w", err)
 	}
-	cfg := &callConfig{}
-	for _, o := range opts {
-		o(cfg)
-	}
-	res, err := ch.chat(ctx, id, req, cfg)
-	ch.report(ctx, res, err)
+	cfg := newCallConfig(opts)
+	var resp *spawnllm.LLMResponse
+	c, attempts, err := ch.run(ctx, cfg, func(ctx context.Context, c Candidate) error {
+		r, err := ch.chatOnce(ctx, id, c, req, cfg)
+		resp = r
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	return res, nil
+	return &Result{Response: resp, Candidate: c, Attempts: attempts}, nil
 }
 
-func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, cfg *callConfig) (*Result, error) {
+// Do runs fn for each model of the chain in turn until one succeeds, with
+// the rules of every call of a chain; it is how a caller makes a call that
+// is not a chat call (speech, images) with its own client for the model
+// (Candidate.Spec and ProviderSpec), sharing health, switches, fallback and
+// events with chat. It returns the model that succeeded and the attempts
+// passed over before it.
+//
+//   - Disabled and parked models are skipped.
+//   - When ctx ends (cancelled or past its deadline) the call stops with
+//     ctx.Err(): no further model is called, nothing is recorded against a
+//     model, and no FellBack or Exhausted event is sent. A model's own
+//     timeout, with ctx still live, is an ordinary failure.
+//   - Each other failure is judged by its Verdict (DefaultVerdict, or
+//     WithClassify): recorded against the model's health or not, waited out
+//     and retried once on the same model, then the next model tried, or the
+//     call ended with it.
+//   - A success clears the model's failures.
+//   - When every model failed or was skipped the error is an
+//     *ExhaustedError; when every one was disabled, or there are none, a
+//     *NoModelError.
+//
+// fn is given a copy of the candidate and ctx; it must not keep either.
+func (ch *Chain) Do(ctx context.Context, fn func(ctx context.Context, c Candidate) error, opts ...CallOption) (Candidate, []Attempt, error) {
+	cfg := newCallConfig(opts)
+	return ch.run(ctx, cfg, func(ctx context.Context, c Candidate) error {
+		start := ch.clock().Now()
+		err := fn(ctx, c.copied())
+		if cfg.finish != nil {
+			cfg.finish(c.copied(), ch.clock().Since(start), nil, err)
+		}
+		return err
+	})
+}
+
+// run is Do's walk, reported as what is serving now and to the observer.
+func (ch *Chain) run(ctx context.Context, cfg *callConfig, fn func(context.Context, Candidate) error) (Candidate, []Attempt, error) {
+	c, attempts, err := ch.walk(ctx, cfg, fn)
+	ch.report(ctx, c, attempts, err)
+	if err != nil {
+		return Candidate{}, attempts, err
+	}
+	return c.copied(), attempts, nil
+}
+
+func (ch *Chain) walk(ctx context.Context, cfg *callConfig, fn func(context.Context, Candidate) error) (Candidate, []Attempt, error) {
 	if len(ch.cands) == 0 {
-		return &Result{}, &NoModelError{Purpose: ch.purpose}
+		return Candidate{}, nil, &NoModelError{Purpose: ch.purpose}
 	}
 	obs := ch.gen.cfg.observer
-	result := &Result{Attempts: make([]Attempt, 0, len(ch.cands))}
+	attempts := make([]Attempt, 0, len(ch.cands))
 	var pending []Attempt // skips not yet announced
 	called := false
 	notify := func(passed []Attempt, next Candidate) {
 		if cfg.notify != nil {
-			cfg.notify(passed, next)
+			cfg.notify(passed, next.copied())
 		}
-		obs.FellBack(FellBack{Set: ch.set, Purpose: ch.purpose, Scope: ch.scope, Passed: slices.Clone(passed), Next: next})
+		obs.FellBack(FellBack{Set: ch.set, Purpose: ch.purpose, Scope: ch.scope, Passed: slices.Clone(passed), Next: next.copied()})
 	}
 	for i, c := range ch.cands {
 		if err := ctx.Err(); err != nil {
-			return result, err
+			return Candidate{}, attempts, err
 		}
 		if a, skipped := ch.skip(i); skipped {
 			called = called || !a.Disabled
-			result.Attempts = append(result.Attempts, a)
+			attempts = append(attempts, a)
 			pending = append(pending, a)
 			continue
 		}
@@ -331,78 +454,73 @@ func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, 
 		pending = nil
 
 		var (
-			resp    *spawnllm.LLMResponse
 			err     error
-			fe      *spawnllm.FailoverError
+			v       Verdict
 			elapsed time.Duration
 		)
 		for n := 1; ; n++ {
 			start := ch.clock().Now()
-			resp, err = ch.call(ctx, id, c, req, cfg)
+			err = fn(ctx, c)
 			elapsed = ch.clock().Since(start)
 			if err == nil {
-				if ev, ok := ch.gen.health.success(c.Name, c.Provider, c.Model); ok {
-					obs.Recovered(ev)
-				}
-				result.Response, result.Candidate = resp, c
-				return result, nil
+				ch.gen.health.success(c.Name, c.Provider, c.Model)
+				return c, attempts, nil
 			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				// The caller gave up: this is not the model's failure.
-				result.Attempts = append(result.Attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: err, Duration: elapsed})
-				return result, ctxErr
+				attempts = append(attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: err, Duration: elapsed})
+				return Candidate{}, attempts, ctxErr
 			}
-			fe = spawnllm.ClassifyError(err, c.Provider, c.Model)
-			if fe == nil {
-				result.Attempts = append(result.Attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: err, Duration: elapsed})
-				return result, fmt.Errorf("fallback: unclassified error from %s/%s: %w", c.Provider, c.Model, err)
+			v = cfg.verdict(err, c)
+			if !v.Next {
+				attempts = append(attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: failed(err, c, v), Reason: v.Reason, Duration: elapsed})
+				if v.Record {
+					ch.gen.health.failure(c.Name, c.Provider, c.Model, v.Reason, v.Status, v.RetryAfter)
+				}
+				if v.Reason == "" {
+					return Candidate{}, attempts, fmt.Errorf("fallback: unclassified error from %s/%s: %w", c.Provider, c.Model, err)
+				}
+				return Candidate{}, attempts, failed(err, c, v)
 			}
-			if !fe.IsRetriable() {
-				result.Attempts = append(result.Attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: fe, Reason: fe.Reason, Duration: elapsed})
-				return result, fe
-			}
-			if n == 1 && fe.RetryAfter > 0 && fe.RetryAfter <= maxSameModelRetryWait {
+			if n == 1 && v.Wait > 0 {
 				select {
-				case <-ch.clock().After(fe.RetryAfter):
+				case <-ch.clock().After(v.Wait):
 				case <-ctx.Done():
-					if ev, ok := ch.gen.health.failure(c.Name, c.Provider, c.Model, fe.Reason, fe.Status, fe.RetryAfter); ok {
-						obs.Parked(ev)
-					}
-					result.Attempts = append(result.Attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: fe, Reason: fe.Reason, Duration: elapsed})
-					return result, ctx.Err()
+					// The caller gave up while waiting: nothing is recorded.
+					attempts = append(attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: failed(err, c, v), Reason: v.Reason, Duration: elapsed})
+					return Candidate{}, attempts, ctx.Err()
 				}
 				continue
 			}
 			break
 		}
-		if ev, ok := ch.gen.health.failure(c.Name, c.Provider, c.Model, fe.Reason, fe.Status, fe.RetryAfter); ok {
-			obs.Parked(ev)
+		if v.Record {
+			ch.gen.health.failure(c.Name, c.Provider, c.Model, v.Reason, v.Status, v.RetryAfter)
 		}
-		result.Attempts = append(result.Attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: fe, Reason: fe.Reason, Duration: elapsed})
+		attempts = append(attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: failed(err, c, v), Reason: v.Reason, Duration: elapsed})
 		if i == len(ch.cands)-1 {
-			return result, &ExhaustedError{Purpose: ch.purpose, Attempts: result.Attempts}
+			return Candidate{}, attempts, &ExhaustedError{Purpose: ch.purpose, Attempts: slices.Clone(attempts)}
 		}
-		notify(result.Attempts[len(result.Attempts)-1:], ch.cands[i+1])
+		notify(attempts[len(attempts)-1:], ch.cands[i+1])
 	}
 	if !called {
-		return result, &NoModelError{Purpose: ch.purpose, Detail: "every model is disabled"}
+		return Candidate{}, attempts, &NoModelError{Purpose: ch.purpose, Detail: "every model is disabled"}
 	}
-	return result, &ExhaustedError{Purpose: ch.purpose, Attempts: result.Attempts}
+	return Candidate{}, attempts, &ExhaustedError{Purpose: ch.purpose, Attempts: slices.Clone(attempts)}
 }
 
-// report records the outcome of a Chat call as what is serving now, and tells
-// the observer when the call found no answer.
-func (ch *Chain) report(ctx context.Context, res *Result, err error) {
+// report records the outcome of a call as what is serving now, and tells the
+// observer when the call found no answer.
+func (ch *Chain) report(ctx context.Context, answered Candidate, attempts []Attempt, err error) {
 	k := selKey{set: ch.set, purpose: ch.purpose, scope: ch.scope}
 	now := ch.clock().Now()
 	if err == nil {
-		ch.cat.state.served(k, res.Candidate.Name, firstReason(ch, res.Attempts, res.Candidate.Name), res.Attempts, now)
+		ch.cat.state.served(k, answered.Name, firstReason(ch, attempts, answered.Name), attempts, now)
 		return
 	}
 	if ctx.Err() != nil {
 		return // the caller gave up; nothing about the models to report
 	}
-	attempts := res.Attempts
 	ch.cat.state.served(k, "", firstReason(ch, attempts, ""), attempts, now)
 	ch.gen.cfg.observer.Exhausted(Exhausted{Set: ch.set, Purpose: ch.purpose, Scope: ch.scope, Attempts: slices.Clone(attempts), Err: err})
 }

@@ -27,7 +27,7 @@ func TestCallerComplete(t *testing.T) {
 	f.fake.Script("claude-sonnet", modelstest.Fail(errors.New("completely unknown internal error")))
 	f.fake.Script("claude-opus", modelstest.Step{Response: &spawnllm.LLMResponse{Content: "{}", FinishReason: "stop"}})
 
-	caller := set.Caller(models.Chat, alice)
+	caller := set.Caller(models.Chat, alice, "")
 	reply, err := caller.Complete(t.Context(), models.CompleteRequest{System: "sys", User: "usr", JSONObject: true})
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +87,7 @@ func TestSetCallerFollowsSelection(t *testing.T) {
 	if r, err := caller.Complete(t.Context(), models.CompleteRequest{}); err != nil || r.Model != "claude-haiku" {
 		t.Fatalf("after select = %+v, %v", r, err)
 	}
-	if _, err := f.cat.Default().Caller(models.Chat, accounting.Identity{}).Complete(context.Background(), models.CompleteRequest{}); err == nil {
+	if _, err := f.cat.Default().Caller(models.Chat, accounting.Identity{}, "").Complete(context.Background(), models.CompleteRequest{}); err == nil {
 		t.Fatal("a call without an agent was made")
 	}
 }

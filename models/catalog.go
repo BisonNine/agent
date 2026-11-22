@@ -81,7 +81,7 @@ func New(opts ...Option) *Catalog {
 		providers: make(map[string]modelspec.Provider),
 		models:    make(map[string]*modelEntry),
 		sets:      make(map[string]*setData),
-		health:    newHealth(cfg.clock, newPolicy(cfg.cooldown), c.book),
+		health:    newHealth(cfg.clock, newPolicy(cfg.cooldown), c.book, cfg.observer),
 		warned:    &sync.Map{},
 	})
 	return c
@@ -91,15 +91,27 @@ func New(opts ...Option) *Catalog {
 // and publishes the copy when fn succeeds. Slots fn returns are retired after
 // the lock is released.
 func (c *Catalog) update(fn func(g *generation) ([]*clientSlot, error)) error {
+	_, err := c.change(fn)
+	return err
+}
+
+// change is update, returning the selections the change reverted. The
+// selections it affected are written to the store after the lock is
+// released.
+func (c *Catalog) change(fn func(g *generation) ([]*clientSlot, error)) ([]Reverted, error) {
 	c.mu.Lock()
 	if c.spent.Load() {
 		c.mu.Unlock()
-		return ErrAdopted
+		return nil, ErrAdopted
 	}
-	next := c.gen.Load().clone()
+	prev := c.gen.Load()
+	next := prev.clone()
 	retire, err := fn(next)
+	var saves []selSave
+	var reverted []Reverted
 	if err == nil {
 		c.gen.Store(next)
+		saves, reverted = c.state.reconcile(prev, next)
 	}
 	c.mu.Unlock()
 	if errors.Is(err, errUnchanged) {
@@ -108,7 +120,8 @@ func (c *Catalog) update(fn func(g *generation) ([]*clientSlot, error)) error {
 	for _, s := range retire {
 		s.retire()
 	}
-	return err
+	writeSelections(next.cfg, saves)
+	return reverted, err
 }
 
 // AddProvider adds a provider. Its name must be new and its protocol valid
@@ -198,7 +211,6 @@ func (c *Catalog) Remove(name string) error {
 				g.sets[id] = sd.without(name)
 			}
 		}
-		c.state.prune(g)
 		return []*clientSlot{e.slot}, nil
 	})
 }
@@ -393,7 +405,7 @@ func (c *Catalog) Adopt(next *Catalog) Diff {
 	}
 	old := c.gen.Load()
 	ng = ng.clone()
-	ng.health = newHealth(ng.cfg.clock, newPolicy(ng.cfg.cooldown), c.book)
+	ng.health = newHealth(ng.cfg.clock, newPolicy(ng.cfg.cooldown), c.book, ng.cfg.observer)
 	ng.warned = &sync.Map{}
 	for _, name := range ng.order {
 		ne := ng.models[name]
@@ -434,13 +446,13 @@ func (c *Catalog) Adopt(next *Catalog) Diff {
 		}
 	}
 	c.gen.Store(ng)
-	for _, k := range c.state.prune(ng) {
-		diff.Reverted = append(diff.Reverted, Reverted{Set: k.key.set, Purpose: k.key.purpose, Scope: k.key.scope, Model: k.model})
-	}
+	saves, reverted := c.state.reconcile(old, ng)
+	diff.Reverted = reverted
 	c.mu.Unlock()
 	for _, s := range retire {
 		s.retire()
 	}
+	writeSelections(ng.cfg, saves)
 	return diff
 }
 

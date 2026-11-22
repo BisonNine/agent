@@ -311,7 +311,7 @@ func TestIsolatedChain(t *testing.T) {
 	if _, isoErr := c.Begin(Chat).Isolated(" ").Chat(context.Background(), alice, Request{}); isoErr == nil {
 		t.Fatal("an isolated call without a workspace was made")
 	}
-	cl, rel, err := c.Begin(Chat).client(Candidate{Name: "cc"})
+	cl, rel, err := c.Begin(Chat).Client("cc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestIsolatedChain(t *testing.T) {
 	if _, guarded := cl.(*declinedGuard); guarded {
 		t.Fatal("bypass on: the shared client is guarded")
 	}
-	iso, rel2, err := ch.client(Candidate{Name: "cc"})
+	iso, rel2, err := ch.Client("cc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,7 +333,7 @@ func TestIsolatedChain(t *testing.T) {
 
 	h := httpCatalog(t, modelspec.Model{ModelName: "http", Model: "gpt", Provider: "p"})
 	shared := builtClient(t, h, "http")
-	got, rel3, err := h.Begin(Chat).Isolated("/tmp/ws").client(Candidate{Name: "http"})
+	got, rel3, err := h.Begin(Chat).Isolated("/tmp/ws").Client("http")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
+	"go.bison9.com/agent/spawnllm"
 )
 
 // Purpose is what a model is used for. It is an open set: a host adds its
@@ -211,10 +213,99 @@ func (s *Set) Unassign(p Purpose, name string) bool {
 		}
 		g.sets[s.id] = n
 		removed = true
-		s.cat.state.prune(g)
 		return nil
 	})
 	return err == nil && removed
+}
+
+// Assignment is one model of a purpose's list for Replace: its name and
+// its per-assignment options. A list is in priority order.
+type Assignment struct {
+	Name    string
+	Options []AssignOption
+}
+
+// Replace replaces purpose p's whole list (an empty list removes it); it is
+// ReplaceAll for one purpose.
+func (s *Set) Replace(p Purpose, list ...Assignment) ([]Reverted, error) {
+	return s.ReplaceAll(map[Purpose][]Assignment{p: list})
+}
+
+// ReplaceAll replaces the lists of the purposes given, all in one step: a
+// host reloading an agent replaces every one of its purposes together, so no
+// turn sees some purposes old and some new. Purposes not given are left as
+// they are; an empty list removes the purpose. Each list is in priority order
+// (its position is the priority).
+//
+// Everything is validated first (an unknown model or a name twice in a list
+// is an error, and nothing changes). Readers see the old lists or the new
+// ones, never a mix. A selection, and what is serving, whose model is still in
+// its new list is kept; a selection whose model is gone reverts to the
+// default and is returned. The store is written as for every list change
+// (see SelectionStore). Lists identical to the current ones change nothing.
+func (s *Set) ReplaceAll(lists map[Purpose][]Assignment) ([]Reverted, error) {
+	return s.cat.change(func(g *generation) ([]*clientSlot, error) {
+		sd := g.sets[s.id].clone()
+		changed := false
+		for p, list := range lists {
+			if err := checkPurpose(p); err != nil {
+				return nil, err
+			}
+			out := make([]assignment, 0, len(list))
+			for i, a := range list {
+				if _, ok := g.models[a.Name]; !ok {
+					return nil, fmt.Errorf("models: unknown model %q", a.Name)
+				}
+				if slices.ContainsFunc(out, func(x assignment) bool { return x.name == a.Name }) {
+					return nil, fmt.Errorf("models: model %q is listed twice for %s", a.Name, p)
+				}
+				n := assignment{name: a.Name, priority: i, seq: i}
+				for _, o := range a.Options {
+					o(&n)
+				}
+				out = append(out, n)
+			}
+			if sameAssignments(sd.lists[p], out) {
+				continue
+			}
+			changed = true
+			if len(out) == 0 {
+				delete(sd.lists, p)
+				continue
+			}
+			for i := range out {
+				out[i].seq = sd.seq
+				sd.seq++
+			}
+			sd.lists[p] = out
+		}
+		if !changed {
+			return nil, errUnchanged
+		}
+		g.sets[s.id] = sd
+		return nil, nil
+	})
+}
+
+// sameAssignments reports whether two lists are the same models in the same
+// order with the same priorities, switches and settings.
+func sameAssignments(cur, next []assignment) bool {
+	return slices.EqualFunc(cur, next, func(a, b assignment) bool {
+		return a.name == b.name && a.priority == b.priority && a.off == b.off && sameSettings(a.settings, b.settings)
+	})
+}
+
+// sameSettings compares opaque settings: equal when both are nil or the same
+// comparable value.
+func sameSettings(a, b any) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	if ta != tb || !ta.Comparable() {
+		return false
+	}
+	return a == b
 }
 
 // Reorder sets the order of purpose p's models: names must be exactly the
@@ -329,10 +420,26 @@ func (s *Set) Enabled(name string) bool {
 }
 
 // SelectionStore persists selections (Set.Select), so they survive a
-// restart. The catalogue reads a selection the first time it needs it and
-// writes each change through; it holds no lock across either call. An empty
-// name means no selection. A write error is logged and the selection is kept
-// in memory.
+// restart. An empty name means no selection.
+//
+// LoadSelection is called the first time a selection is needed. An error
+// means "cannot load now": the default is used for that use and the
+// selection is read again next time.
+//
+// SaveSelection is called, after the change is published and with no lock
+// held, whenever a selection held in memory may mean something different in
+// the store:
+//   - Select and Reset;
+//   - a selection reverted because its model no longer serves the purpose
+//     (Remove, Unassign, Replace, ReplaceAll, Adopt): saved as "";
+//   - a selection kept by name whose purpose list changed in members or
+//     order (Assign, Unassign, Reorder, Replace, ReplaceAll, Remove, Adopt):
+//     saved again with the same name, so a store that keeps a position in
+//     the list rather than the name can re-save it (the new list is already
+//     what Set.List returns).
+//
+// A selection never loaded in this process is not written. A write error is
+// logged and the selection is kept in memory.
 type SelectionStore interface {
 	LoadSelection(set string, p Purpose, scope Scope) (string, error)
 	SaveSelection(set string, p Purpose, scope Scope, name string) error
@@ -379,12 +486,21 @@ func (s *Set) Reset(p Purpose, scope ...Scope) {
 }
 
 func (s *Set) save(g *generation, k selKey, name string) {
-	if g.cfg.store == nil {
+	writeSelections(g.cfg, []selSave{{key: k, name: name}})
+}
+
+// writeSelections writes selections to the store, if there is one. It is
+// called with no lock held.
+func writeSelections(cfg *settings, saves []selSave) {
+	if cfg.store == nil {
 		return
 	}
-	if err := g.cfg.store.SaveSelection(k.set, k.purpose, k.scope, name); err != nil {
-		g.cfg.logger.Warn("model selection not stored; it is kept until restart",
-			"component", component, "set", k.set, "purpose", string(k.purpose), "scope", string(k.scope), "error", err.Error())
+	for _, sv := range saves {
+		k := sv.key
+		if err := cfg.store.SaveSelection(k.set, k.purpose, k.scope, sv.name); err != nil {
+			cfg.logger.Warn("model selection not stored; it is kept until restart",
+				"component", component, "set", k.set, "purpose", string(k.purpose), "scope", string(k.scope), "error", err.Error())
+		}
 	}
 }
 
@@ -482,11 +598,30 @@ func (s *Set) Begin(p Purpose, scope ...Scope) *Chain {
 	return ch
 }
 
-// Caller returns a Caller for purpose p: each Complete begins a new chain,
-// so it follows selections and Adopt. Its calls are made for id.
-func (s *Set) Caller(p Purpose, id accounting.Identity, scope ...Scope) Caller {
-	sc := scopeOf(scope)
-	return callerFunc(func() (*Chain, accounting.Identity) { return s.Begin(p, sc), id })
+// Caller returns a Caller for purpose p in scope ("" for the set's default):
+// each Complete begins a new chain, so it follows selections and Adopt. Its
+// calls are made for id, with the call options given.
+func (s *Set) Caller(p Purpose, id accounting.Identity, scope Scope, opts ...CallOption) Caller {
+	return &caller{chain: func() *Chain { return s.Begin(p, scope) }, id: id, opts: opts}
+}
+
+// Client returns the chat client of model name from the catalogue's current
+// contents. It reads and records no health and ignores the enable switches.
+// The client stays usable until release is called, which must be done
+// exactly once when the caller is done with it; a client Adopt or
+// RegisterClient replaced is closed only after that. For a CLI model's
+// isolated client, use Begin(...).Isolated(workspace).Client(name).
+func (s *Set) Client(name string) (client spawnllm.LLMProvider, release func(), err error) {
+	return s.cat.Client(name)
+}
+
+// Client is Set.Client.
+func (c *Catalog) Client(name string) (client spawnllm.LLMProvider, release func(), err error) {
+	e, ok := c.gen.Load().models[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("models: unknown model %q", name)
+	}
+	return e.slot.acquire()
 }
 
 // The catalogue's own methods for its default set.
@@ -559,9 +694,10 @@ func (r *runState) get(k selKey, cfg *settings) string {
 	}
 	stored, err := cfg.store.LoadSelection(k.set, k.purpose, k.scope)
 	if err != nil {
-		cfg.logger.Warn("model selection could not be read; using the default",
+		// Left unloaded: it is read again on the next use.
+		cfg.logger.Warn("model selection could not be read; using the default for now",
 			"component", component, "set", k.set, "purpose", string(k.purpose), "scope", string(k.scope), "error", err.Error())
-		stored = ""
+		return ""
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -616,39 +752,51 @@ func (r *runState) served(k selKey, answered string, reason string, attempts []A
 	r.serve[k] = s
 }
 
-type prunedSel struct {
-	key   selKey
-	model string
+// selSave is one selection to write to the store ("" clears it).
+type selSave struct {
+	key  selKey
+	name string
 }
 
-// prune drops the selections whose model no longer serves their purpose in
-// g, and the serving records of models g no longer has, and returns the
-// selections it dropped.
-func (r *runState) prune(g *generation) []prunedSel {
+// reconcile brings the selections and serving records in memory in line with
+// next, after a change from prev. A selection whose model no longer serves its
+// purpose reverts to the default and is returned as reverted. A selection
+// still served, of a purpose whose list changed (members or order), is kept
+// and written again, so a store that keeps a position rather than a name can
+// re-save it. It returns what to write to the store, after the caller has
+// released its locks.
+func (r *runState) reconcile(prev, next *generation) (saves []selSave, reverted []Reverted) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	var out []prunedSel
 	for k, name := range r.selected {
-		list, _ := g.effective(k.set, k.purpose)
+		list, _ := next.effective(k.set, k.purpose)
 		if !slices.ContainsFunc(list, func(a assignment) bool { return a.name == name }) {
 			delete(r.selected, k)
-			out = append(out, prunedSel{key: k, model: name})
+			saves = append(saves, selSave{key: k})
+			reverted = append(reverted, Reverted{Set: k.set, Purpose: k.purpose, Scope: k.scope, Model: name})
+			continue
+		}
+		before, _ := prev.effective(k.set, k.purpose)
+		if !sameOrder(before, list) {
+			saves = append(saves, selSave{key: k, name: name})
 		}
 	}
 	for k, s := range r.serve {
-		if _, ok := g.models[s.Serving]; s.Serving != "" && !ok {
+		if _, ok := next.models[s.Serving]; s.Serving != "" && !ok {
 			delete(r.serve, k)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool {
-		a, b := out[i].key, out[j].key
-		if a.set != b.set {
-			return a.set < b.set
-		}
-		if a.purpose != b.purpose {
-			return a.purpose < b.purpose
-		}
-		return a.scope < b.scope
+	less := func(a, b selKey) int {
+		return strings.Compare(a.set+"\x00"+string(a.purpose)+"\x00"+string(a.scope), b.set+"\x00"+string(b.purpose)+"\x00"+string(b.scope))
+	}
+	slices.SortFunc(saves, func(a, b selSave) int { return less(a.key, b.key) })
+	slices.SortFunc(reverted, func(a, b Reverted) int {
+		return less(selKey{a.Set, a.Purpose, a.Scope}, selKey{b.Set, b.Purpose, b.Scope})
 	})
-	return out
+	return saves, reverted
+}
+
+// sameOrder reports whether two lists hold the same models in the same order.
+func sameOrder(a, b []assignment) bool {
+	return slices.EqualFunc(a, b, func(x, y assignment) bool { return x.name == y.name })
 }

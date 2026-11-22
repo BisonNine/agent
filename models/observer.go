@@ -7,9 +7,15 @@ import (
 )
 
 // Observer receives the catalogue's events. A host raises its alerts from
-// them, logs them, or ignores them. Each method is called on the goroutine
-// that made the model call, after the state it reports has been recorded and
-// with no lock held. It must not block.
+// them, logs them, or ignores them. Each method is called after the state it
+// reports has been recorded, with no lock held, and must not block.
+//
+// FellBack and Exhausted are called on the goroutine that made the call.
+// Parked and Recovered are delivered per model key (provider and wire model)
+// in the order the health changes they report happened: a Recovered always
+// comes after the Parked it answers. To keep that order without a lock
+// around the call, one goroutine at a time delivers a key's events, so one
+// may arrive on the goroutine of another call to the same model.
 type Observer interface {
 	// Parked is called each time a failure takes a model out of rotation.
 	Parked(e Parked)

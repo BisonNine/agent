@@ -14,7 +14,7 @@ var epoch = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
 func newTestHealth(c modelspec.Cooldown) (*health, *clock.Fake) {
 	f := clock.NewFake(epoch)
-	return newHealth(f, newPolicy(c), newParkedBook()), f
+	return newHealth(f, newPolicy(c), newParkedBook(), nil), f
 }
 
 func statusFor(r spawnllm.FailoverReason) int {

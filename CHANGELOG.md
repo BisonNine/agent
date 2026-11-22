@@ -8,6 +8,17 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `models`: `Chain.Do`, the chain walk for calls that are not chat calls,
+  with `Candidate.Spec` and `Candidate.ProviderSpec`; `WithClassify`,
+  `Verdict` and `DefaultVerdict` for a caller's own rule on which failures
+  count against a model; `Chain.Client`, `Set.Client` and `Catalog.Client`
+  for a model's chat client without health; call options on `Caller`
+  (`Set.Caller` now takes the scope explicitly); `Set.Replace` and
+  `Set.ReplaceAll` to replace whole purpose lists in one step. Parked and
+  Recovered events for one model are delivered in order. `SaveSelection` is
+  now also called when a list change reverts or moves a selection, and a
+  failed `LoadSelection` is retried. A call cancelled during a Retry-After
+  wait no longer counts against the model.
 - `models` package, the install-wide `Catalog` (`New`): providers and
   models (`AddProvider`, `Add`, `Remove`, `Get`, `Names`), their chat
   clients built on first use and shared (`RegisterClient` for a protocol the
