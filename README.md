@@ -18,6 +18,7 @@ the SDK never imports a host.
 | [`clock`](clock) | The time source for code whose timing is tested: the system clock and a fake one moved by hand, with deadline contexts. |
 | [`ident`](ident) | The agent id rule: valid ids, an id's identity, and when two ids name the same agent. |
 | [`hook`](hook) | The contract the agent loop is built on: callbacks, events, the run handle, the scope on a turn's context, cancel causes, tasks and limits. |
+| [`mcphost`](mcphost) | Serves an agent's tools over MCP to CLI models: the HTTP handler, the authentication seam, session tokens, and calls through the tool callbacks. |
 | [`fsmode`](fsmode) | The modes of the directories and files the packages create, taken by each as `WithFileModes`. |
 
 Each package has its own README.
@@ -34,6 +35,8 @@ enforces that:
 - `clock` imports only the standard library.
 - `ident` imports only the standard library.
 - `hook` imports `toolkit`, `spawnllm/protocoltypes` and `accounting`.
+- `mcphost` imports `toolkit`, `toolspec`, `hook` and mcp-go; it is the only
+  package that imports mcp-go, and nothing imports it.
 - `spawnllm` imports `toolspec`, `accounting` and `fsmode`.
 - `models` imports `modelspec`, `spawnllm`, `accounting`, `clock` and `fsmode`.
 - `ctxengine` imports `spawnllm`, `toolspec` and `fsmode`, never `cogmem`.

@@ -8,6 +8,25 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `mcphost` package: serves a `toolkit` registry over MCP streamable HTTP to
+  models that run their own tool loop (CLI models). `Endpoint` (`New`,
+  `Config`) is an `http.Handler` the host mounts where it likes: it lists
+  every granted, enabled tool (hidden ones included) under its published
+  name from a snapshot taken per request, sends `tools/list_changed` on
+  catalogue changes (`Watch` for a caller's own set), and runs each call
+  through `ExecuteGated` with the caller's `hook.Scope`, the host's `Gate`,
+  `CallContext` and `hook.Plugin` tool callbacks and events
+  (`ToolCallStarted`, `ToolCallFinished`); `AsyncResult` receives late
+  results. Credentials travel as a bearer header (`Bearer`, 401 when
+  refused) or as the `session_token` argument (`Argument`, injected into
+  every schema and stripped from every call); the host's `Authenticator`
+  decides who they are (`Caller`, `CallerOf`). `Store` issues, registers,
+  resolves, rescopes and revokes session tokens with an optional expiry; a
+  revoked or expired token stops at once, cancelling its calls in flight
+  (`ErrRevoked`). `CLIConfig.Access` and `TokenPrompt` give a CLI-model turn
+  its prompt text and MCP server entry. Logging is `Config.Logger` /
+  `WithLogger`, never with token values. Adds the dependency
+  `github.com/mark3labs/mcp-go` (v1.6.0), imported by `mcphost` alone.
 - `models`: `Catalog.Direct(name, model, opts...)`, a chain of one
   candidate that calls model `name`'s client with a wire model id the
   catalogue does not define, ignoring health and switches and recording
