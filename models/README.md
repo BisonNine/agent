@@ -257,6 +257,22 @@ The catalogue builds a model's client on first use and shares it.
   identity of the call, the model and the refused tools.
 - `WithLogger`, `WithLogContent`.
 
+## Errors
+
+Match errors with `errors.Is` and `errors.As`, not their text, so a host can
+show its own wording.
+
+- `*ClientError{Model, Provider, Protocol, Err}`: a model's client could not
+  be built or is not available (`Client`, `Chat`, `Caller`, an isolated
+  chain with no workspace). `Err` is the bare cause, with no `models:`
+  prefix. A model with no chat client (task-only or unknown protocol) is also
+  `ErrNoClient`.
+- `ErrUnknownModel`, `ErrUnknownProvider`, `ErrDuplicate`: a name not in the
+  catalogue, a model's provider not added, a provider or model name taken.
+- `ErrNoModelAvailable` (`*NoModelError` from a chain): a purpose with no
+  model to try, or, from `Build`, an empty assignment list.
+- `*ExhaustedError`, `*CLIDeclinedError`, `ErrClosed`, `ErrAdopted`.
+
 ## Locking
 
 The catalogue and its sets are immutable snapshots behind an atomic pointer;

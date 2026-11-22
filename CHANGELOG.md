@@ -24,6 +24,11 @@ project uses [Semantic Versioning](https://semver.org/).
   clients it built (never registered ones).
 - `models`: `Catalog.RemoveSet(id)` drops an agent's set and what is held for
   it in memory, without writing the selection store.
+- `models`: `*ClientError` (model, provider, protocol and the bare cause)
+  for every failure to build or obtain a model's client, still `ErrNoClient`
+  where it was; sentinels `ErrUnknownModel`, `ErrUnknownProvider` and
+  `ErrDuplicate`; `Build` reports an empty assignment list as
+  `ErrNoModelAvailable`.
 - `models` package, the install-wide `Catalog` (`New`): providers and
   models (`AddProvider`, `Add`, `Remove`, `Get`, `Names`), their chat
   clients built on first use and shared (`RegisterClient` for a protocol the

@@ -350,11 +350,11 @@ func (ch *Chain) Client(name string) (client spawnllm.LLMProvider, release func(
 func (ch *Chain) clientOf(name string) (spawnllm.LLMProvider, func(), error) {
 	e, ok := ch.gen.models[name]
 	if !ok {
-		return nil, nil, fmt.Errorf("models: unknown model %q", name)
+		return nil, nil, fmt.Errorf("models: %w %q", ErrUnknownModel, name)
 	}
 	if ch.isolated && !e.registered && modelspec.CLIAgentByProtocol(e.prov.Protocol) != nil {
 		if strings.TrimSpace(ch.workspace) == "" {
-			return nil, nil, errors.New("models: an isolated CLI client needs a workspace")
+			return nil, nil, &ClientError{Model: name, Provider: e.prov.Name, Protocol: e.prov.Protocol, Err: errors.New("an isolated CLI client needs a workspace")}
 		}
 		spec := isolatedCLISpec(ch.gen.cfg, &e.def, &e.prov, ch.workspace, func(name string) bool {
 			_, seen := ch.gen.warned.LoadOrStore(name, struct{}{})

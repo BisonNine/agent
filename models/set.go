@@ -125,7 +125,7 @@ func (g *generation) assign(id string, p Purpose, name string, priority int, opt
 		return err
 	}
 	if _, ok := g.models[name]; !ok {
-		return fmt.Errorf("models: unknown model %q", name)
+		return fmt.Errorf("models: %w %q", ErrUnknownModel, name)
 	}
 	sd := g.sets[id].clone()
 	if slices.ContainsFunc(sd.lists[p], func(a assignment) bool { return a.name == name }) {
@@ -265,7 +265,7 @@ func (s *Set) ReplaceAll(lists map[Purpose][]Assignment) ([]Reverted, error) {
 			out := make([]assignment, 0, len(list))
 			for i, a := range list {
 				if _, ok := g.models[a.Name]; !ok {
-					return nil, fmt.Errorf("models: unknown model %q", a.Name)
+					return nil, fmt.Errorf("models: %w %q", ErrUnknownModel, a.Name)
 				}
 				if slices.ContainsFunc(out, func(x assignment) bool { return x.name == a.Name }) {
 					return nil, fmt.Errorf("models: model %q is listed twice for %s", a.Name, p)
@@ -407,7 +407,7 @@ func (s *Set) setDisabled(names []string, off bool) error {
 	return s.update(func(g *generation) error {
 		for _, n := range names {
 			if _, ok := g.models[n]; !ok {
-				return fmt.Errorf("models: unknown model %q", n)
+				return fmt.Errorf("models: %w %q", ErrUnknownModel, n)
 			}
 		}
 		sd := g.sets[s.id].clone()
@@ -685,7 +685,7 @@ func (c *Catalog) Client(name string) (client spawnllm.LLMProvider, release func
 	e, ok := c.gen.Load().models[name]
 	if !ok {
 		c.life.leave()
-		return nil, nil, fmt.Errorf("models: unknown model %q", name)
+		return nil, nil, fmt.Errorf("models: %w %q", ErrUnknownModel, name)
 	}
 	client, release, err = e.slot.acquire()
 	return client, c.counted(release, err), err

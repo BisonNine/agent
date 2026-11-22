@@ -91,6 +91,13 @@ func TestBuildClientErrors(t *testing.T) {
 			if errors.Is(err, ErrNoClient) != tc.noChat {
 				t.Fatalf("errors.Is(err, ErrNoClient) = %v, want %v", !tc.noChat, tc.noChat)
 			}
+			ce, ok := errors.AsType[*ClientError](err)
+			if !ok || ce.Model != tc.model.ModelName || ce.Provider != tc.prov.Name || ce.Protocol != tc.prov.Protocol {
+				t.Fatalf("err = %#v, want a *ClientError for %s on %s (%s)", err, tc.model.ModelName, tc.prov.Name, tc.prov.Protocol)
+			}
+			if strings.Contains(ce.Err.Error(), "models:") {
+				t.Fatalf("ClientError.Err = %q, want the bare cause", ce.Err)
+			}
 		})
 	}
 }

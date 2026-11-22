@@ -47,7 +47,7 @@ func Build(doc modelspec.Document, opts ...Option) (*Catalog, error) {
 		set := c.Set(agent)
 		for purpose, list := range purposes {
 			if len(list) == 0 {
-				return nil, fmt.Errorf("models: agent %q: purpose %q has no model", agent, purpose)
+				return nil, fmt.Errorf("models: agent %q: purpose %q: %w", agent, purpose, ErrNoModelAvailable)
 			}
 			for i, a := range list {
 				if err := set.Assign(Purpose(purpose), a.Model, i, WithEnabled(a.IsEnabled())); err != nil {

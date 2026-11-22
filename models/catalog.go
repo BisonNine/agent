@@ -141,7 +141,7 @@ func (c *Catalog) AddProvider(p modelspec.Provider) error {
 	}
 	return c.update(func(g *generation) ([]*clientSlot, error) {
 		if _, dup := g.providers[p.Name]; dup {
-			return nil, fmt.Errorf("models: provider %q already exists", p.Name)
+			return nil, fmt.Errorf("models: provider %q %w", p.Name, ErrDuplicate)
 		}
 		g.providers[p.Name] = p
 		return nil, nil
@@ -177,11 +177,11 @@ func (c *Catalog) Add(m modelspec.Model, uses ...Use) error {
 	}
 	return c.update(func(g *generation) ([]*clientSlot, error) {
 		if _, dup := g.models[m.ModelName]; dup {
-			return nil, fmt.Errorf("models: model %q already exists", m.ModelName)
+			return nil, fmt.Errorf("models: model %q %w", m.ModelName, ErrDuplicate)
 		}
 		prov, ok := g.providers[m.Provider]
 		if !ok {
-			return nil, fmt.Errorf("models: model %q: unknown provider %q", m.ModelName, m.Provider)
+			return nil, fmt.Errorf("models: model %q: %w %q", m.ModelName, ErrUnknownProvider, m.Provider)
 		}
 		g.models[m.ModelName] = newEntry(g.cfg, m, prov)
 		g.order = append(g.order, m.ModelName)
@@ -207,7 +207,7 @@ func (c *Catalog) Remove(name string) error {
 	return c.update(func(g *generation) ([]*clientSlot, error) {
 		e, ok := g.models[name]
 		if !ok {
-			return nil, fmt.Errorf("models: unknown model %q", name)
+			return nil, fmt.Errorf("models: %w %q", ErrUnknownModel, name)
 		}
 		delete(g.models, name)
 		g.order = slices.DeleteFunc(g.order, func(n string) bool { return n == name })
@@ -294,7 +294,7 @@ func (c *Catalog) RegisterClient(name string, cl spawnllm.LLMProvider) error {
 	return c.update(func(g *generation) ([]*clientSlot, error) {
 		e, ok := g.models[name]
 		if !ok {
-			return nil, fmt.Errorf("models: unknown model %q", name)
+			return nil, fmt.Errorf("models: %w %q", ErrUnknownModel, name)
 		}
 		if e.registered && sameClient(e.slot.peek(), cl) {
 			return nil, errUnchanged
@@ -320,7 +320,7 @@ func (c *Catalog) setDisabled(names []string, off bool) error {
 	return c.update(func(g *generation) ([]*clientSlot, error) {
 		for _, n := range names {
 			if _, ok := g.models[n]; !ok {
-				return nil, fmt.Errorf("models: unknown model %q", n)
+				return nil, fmt.Errorf("models: %w %q", ErrUnknownModel, n)
 			}
 		}
 		for _, n := range names {

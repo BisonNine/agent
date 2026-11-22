@@ -21,8 +21,41 @@ import (
 
 // ErrNoClient reports a model the catalogue cannot build a chat client for:
 // a protocol it does not know, or a task-only one, with no client registered
-// for the model (Catalog.RegisterClient).
+// for the model (Catalog.RegisterClient). It is reached through the
+// *ClientError that reports it.
 var ErrNoClient = errors.New("models: no chat client for this model")
+
+// Sentinels of the catalogue's other operator-facing errors, matched with
+// errors.Is.
+var (
+	ErrUnknownModel    = errors.New("unknown model")    // no model by that name
+	ErrUnknownProvider = errors.New("unknown provider") // a model names a provider not added
+	ErrDuplicate       = errors.New("already exists")   // a provider or model name is taken
+)
+
+// ClientError reports that the client for a model could not be built or is
+// not available. Err is the cause with no "models:" prefix, for a host that
+// prints its own wording.
+type ClientError struct {
+	Model    string // the model's name in the catalogue
+	Provider string // its provider's name
+	Protocol string // the provider's protocol
+	Err      error  // the cause, without any "models:" prefix; never nil
+}
+
+func (e *ClientError) Error() string {
+	return fmt.Sprintf("models: model %q: provider %q: %v", e.Model, e.Provider, e.Err)
+}
+
+func (e *ClientError) Unwrap() error { return e.Err }
+
+// noChatError is the cause of a ClientError for a model with no chat client:
+// its text is the detail, and it unwraps to ErrNoClient.
+type noChatError struct{ detail string }
+
+func (e *noChatError) Error() string { return "no chat client: " + e.detail }
+
+func (e *noChatError) Unwrap() error { return ErrNoClient }
 
 // compatOpts are the openai_compat options of a model reached through prov:
 // the endpoint's knobs from the provider, the request's from the model.
@@ -71,10 +104,20 @@ func (s *settings) responseLogModes(path string) fsmode.Modes {
 	return s.modesFor(path)
 }
 
-// buildClient builds the chat client of model m reached through prov.
+// buildClient builds the chat client of model m reached through prov. Its
+// error is a *ClientError.
 func buildClient(s *settings, m *modelspec.Model, prov *modelspec.Provider) (spawnllm.LLMProvider, error) {
+	c, err := newClient(s, m, prov)
+	if err != nil {
+		return nil, &ClientError{Model: m.ModelName, Provider: prov.Name, Protocol: prov.Protocol, Err: err}
+	}
+	return c, nil
+}
+
+// newClient is buildClient; its error is the bare cause.
+func newClient(s *settings, m *modelspec.Model, prov *modelspec.Provider) (spawnllm.LLMProvider, error) {
 	if m.Model == "" {
-		return nil, errors.New("models: model is required")
+		return nil, errors.New("model is required")
 	}
 	switch prov.Protocol {
 	case "openai-chat":
@@ -87,7 +130,7 @@ func buildClient(s *settings, m *modelspec.Model, prov *modelspec.Provider) (spa
 	// Messages API.
 	case "anthropic", "anthropic-messages":
 		if prov.APIKey == "" {
-			return nil, fmt.Errorf("models: provider %q: api_key required for %s protocol", prov.Name, prov.Protocol)
+			return nil, fmt.Errorf("api_key required for %s protocol", prov.Protocol)
 		}
 		return anthropicmessages.NewProviderWithTimeout(prov.APIKey, prov.BaseURL, m.RequestTimeout, anthropicmessages.WithLogger(s.logger)), nil
 	}
@@ -95,9 +138,9 @@ func buildClient(s *settings, m *modelspec.Model, prov *modelspec.Provider) (spa
 		return newCLIClient(s, cliSpecFor(s, m, prov), prov.BypassRestrictions, m.ModelName), nil
 	}
 	if modelspec.TaskOnlyProtocol(prov.Protocol) {
-		return nil, fmt.Errorf("%w: provider %q: protocol %q serves task models only, not chat", ErrNoClient, prov.Name, prov.Protocol)
+		return nil, &noChatError{fmt.Sprintf("protocol %q serves task models only, not chat", prov.Protocol)}
 	}
-	return nil, fmt.Errorf("%w: provider %q: protocol %q", ErrNoClient, prov.Name, prov.Protocol)
+	return nil, &noChatError{fmt.Sprintf("unknown protocol %q", prov.Protocol)}
 }
 
 // cliSpec is everything a CLI client is started with: the command line
