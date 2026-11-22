@@ -6,11 +6,12 @@
 // What mcphost does:
 //
 //   - Endpoint is an http.Handler the host mounts at a path of its choosing.
-//     It lists a toolkit registry's tools (every granted, enabled tool,
-//     listed or hidden: discovery is never applied) under their published
-//     names, with their own descriptions and schemas, and sends
-//     tools/list_changed when the registry changes. Each list is built from
-//     a snapshot taken for that request, never from a cache.
+//     It lists its Catalogue's tools, or a bearer caller's own (every
+//     granted, enabled tool, listed or hidden: discovery is never applied),
+//     under the names its NameRule gives them, with their own descriptions
+//     and schemas, and sends tools/list_changed when they change. A
+//     catalogue made FromRegistry is read as it is at each request; one
+//     without a version changes on Refresh.
 //   - The caller's credential travels as a bearer header (Bearer) or as the
 //     session_token argument of every call (Argument). The host's
 //     Authenticator says who it is: the toolkit set to serve, the hook.Scope

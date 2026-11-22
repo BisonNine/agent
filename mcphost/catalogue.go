@@ -15,53 +15,175 @@ import (
 	"go.bison9.com/agent/toolkit"
 )
 
-// publishedTool is what is registered with mcp-go under one name, so a
-// sync can tell an unchanged tool from one whose description or schema
-// moved.
-type publishedTool struct {
-	desc   string
-	schema []byte
+// Catalogue is the endpoint-wide list of tools: the names a call may use (a
+// name it does not publish is answered with MCP's "tool not found" error),
+// what tools/list shows on an Argument endpoint, and the bound of what a
+// Bearer caller is shown.
+//
+// A Catalogue that also has Version (it never goes back, and moves whenever
+// Tools may have changed) is followed automatically: the endpoint reads it
+// again before a tools/list or tools/call once its version moved. One that
+// also has Subscribe sends tools/list_changed on its notices. A Catalogue
+// with neither changes what the endpoint publishes only when the host calls
+// Endpoint.Refresh.
+type Catalogue interface {
+	// Tools returns the tools offered now, sorted by internal name, each
+	// internal name once (as a toolkit snapshot lists them).
+	Tools() []toolkit.Info
 }
 
-func (p publishedTool) equal(o publishedTool) bool {
-	return p.desc == o.desc && bytes.Equal(p.schema, o.schema)
+type (
+	versioned    interface{ Version() uint64 }
+	subscribable interface {
+		Subscribe(fn func(toolkit.Change)) (unsubscribe func())
+	}
+)
+
+// FromRegistry returns a toolkit registry (a catalogue, a set or a view) as
+// a Catalogue: followed automatically, with a notice on each change.
+func FromRegistry(reg toolkit.Registry) Catalogue { return registryCatalogue{reg: reg} }
+
+type registryCatalogue struct{ reg toolkit.Registry }
+
+func (c registryCatalogue) Tools() []toolkit.Info { return c.reg.Snapshot().List() }
+func (c registryCatalogue) Version() uint64       { return c.reg.Version() }
+func (c registryCatalogue) Subscribe(fn func(toolkit.Change)) func() {
+	return c.reg.Subscribe(fn)
+}
+
+// Union returns a Catalogue over several registries (a host whose agents
+// each have their own toolkit catalogue): each internal name once, taken
+// from the first registry regs returns that offers it. It has no Version:
+// the host calls Endpoint.Refresh when a registry changes. regs is called on
+// every read.
+func Union(regs func() []toolkit.Registry) Catalogue { return unionCatalogue{regs: regs} }
+
+type unionCatalogue struct{ regs func() []toolkit.Registry }
+
+func (c unionCatalogue) Tools() []toolkit.Info {
+	seen := map[string]bool{}
+	var out []toolkit.Info
+	for _, reg := range c.regs() {
+		if reg == nil {
+			continue
+		}
+		for _, info := range reg.Snapshot().List() {
+			if !seen[info.Name] {
+				seen[info.Name] = true
+				out = append(out, info)
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b toolkit.Info) int { return cmp.Compare(a.Name, b.Name) })
+	return out
+}
+
+// NameRule is how an endpoint names the tools it publishes. Tools are taken
+// in internal-name order; a tool whose name is already taken is left out.
+type NameRule int
+
+const (
+	// PublishedNames publishes each tool under toolkit's Info.Published: its
+	// ExternalName unless that would shadow another tool, else its name.
+	PublishedNames NameRule = iota
+	// ExternalFirst publishes each tool under its ExternalName when it has
+	// one, else its name, whatever it shadows; of two tools wanting one
+	// name the first by internal name keeps it.
+	ExternalFirst
+)
+
+// published is one tool as an endpoint publishes it.
+type published struct {
+	name string
+	info toolkit.Info
+}
+
+// publish names infos (sorted by internal name) by the endpoint's rule.
+func (e *Endpoint) publish(infos []toolkit.Info) []published {
+	out := make([]published, 0, len(infos))
+	taken := make(map[string]bool, len(infos))
+	for _, info := range infos {
+		name := info.Published
+		if e.cfg.Names == ExternalFirst {
+			name = info.Name
+			if en, ok := info.Tool.(toolkit.ExternalNamer); ok {
+				name = en.ExternalName()
+			}
+		}
+		if name == "" {
+			name = info.Name
+		}
+		if taken[name] {
+			e.logger.Debug("Skipping tool: published name already taken", "tool", info.Name, "published", name)
+			continue
+		}
+		taken[name] = true
+		out = append(out, published{name: name, info: info})
+	}
+	return out
+}
+
+// registered is what is registered with mcp-go under one published name.
+type registered struct {
+	internal string
+	desc     string
+	schema   []byte
+	tool     mcp.Tool
+}
+
+func (r registered) equal(o registered) bool {
+	return r.internal == o.internal && r.desc == o.desc && bytes.Equal(r.schema, o.schema)
+}
+
+// catalogueState is one immutable result of a sync.
+type catalogueState struct {
+	byName map[string]registered
+	tools  []mcp.Tool // sorted by published name
+}
+
+// autoSync syncs a catalogue that reports a version; one that does not
+// changes only on Refresh.
+func (e *Endpoint) autoSync() {
+	if e.versioned != nil {
+		e.sync()
+	}
 }
 
 // sync brings the tools registered with mcp-go in step with the catalogue:
-// a tool that appeared is added, one whose description or schema changed is
-// replaced, one that went is deleted. mcp-go sends tools/list_changed for
-// the adds and for the deletes. A sync whose catalogue version was already
-// synced does nothing.
-func (e *Endpoint) sync() {
-	if e.synced.Load() && e.cfg.Catalogue.Version() == e.seen.Load() {
-		return
+// a tool that appeared is added, one whose name mapping, description or
+// schema changed is replaced, one that went is deleted. mcp-go sends
+// tools/list_changed for the adds and for the deletes. It reports whether
+// anything changed. A versioned catalogue whose version was already synced
+// is not read again.
+func (e *Endpoint) sync() bool {
+	if e.versioned != nil && e.synced.Load() && e.versioned.Version() == e.seen.Load() {
+		return false
 	}
 	e.syncMu.Lock()
 	defer e.syncMu.Unlock()
-	snap := e.cfg.Catalogue.Snapshot()
-	if e.synced.Load() && snap.Version() <= e.version {
-		return // a later sync got here first
+	var version uint64
+	if e.versioned != nil {
+		version = e.versioned.Version()
+		if e.synced.Load() && version <= e.version {
+			return false // a later sync got here first
+		}
 	}
-
-	want := make(map[string]publishedTool, len(e.published))
+	cur := e.state.Load()
+	want := make(map[string]registered, len(cur.byName))
 	var add []server.ServerTool
-	for _, info := range snap.List() {
-		tool, pub, ok := e.describe(info)
+	for _, p := range e.publish(e.cfg.Catalogue.Tools()) {
+		reg, ok := e.describe(p)
 		if !ok {
 			continue
 		}
-		if _, dup := want[tool.Name]; dup {
-			e.logger.Warn("Skipping tool: published name already taken", "tool", info.Name, "published", tool.Name)
+		want[p.name] = reg
+		if prior, ok := cur.byName[p.name]; ok && prior.equal(reg) {
 			continue
 		}
-		want[tool.Name] = pub
-		if prior, ok := e.published[tool.Name]; ok && prior.equal(pub) {
-			continue
-		}
-		add = append(add, server.ServerTool{Tool: tool, Handler: e.call})
+		add = append(add, server.ServerTool{Tool: reg.tool, Handler: e.call})
 	}
 	var del []string
-	for name := range e.published {
+	for name := range cur.byName {
 		if _, ok := want[name]; !ok {
 			del = append(del, name)
 		}
@@ -73,13 +195,20 @@ func (e *Endpoint) sync() {
 	if len(add) > 0 {
 		e.addTools(add)
 	}
-	e.published = want
-	e.version = snap.Version()
-	e.seen.Store(snap.Version())
+	tools := make([]mcp.Tool, 0, len(want))
+	for _, r := range want {
+		tools = append(tools, r.tool)
+	}
+	slices.SortFunc(tools, func(a, b mcp.Tool) int { return cmp.Compare(a.Name, b.Name) })
+	e.state.Store(&catalogueState{byName: want, tools: tools})
+	e.version = version
+	e.seen.Store(version)
 	e.synced.Store(true)
-	if len(add) > 0 || len(del) > 0 {
+	changed := len(add) > 0 || len(del) > 0
+	if changed {
 		e.logger.Info("MCP catalogue updated", "added", len(add), "deleted", len(del), "tools", len(want))
 	}
+	return changed
 }
 
 // addTools registers tools in one batch (one tools/list_changed). mcp-go
@@ -106,12 +235,12 @@ func (e *Endpoint) tryAdd(tools ...server.ServerTool) (ok bool) {
 	return true
 }
 
-// describe returns the MCP form of one tool: its published name, its
+// describe returns the MCP form of one published tool: its name, its
 // description, and its schema with free-form objects opened (and the
 // TokenArgument added on an Argument endpoint). ok is false, logged, for a
 // schema that cannot be encoded.
-func (e *Endpoint) describe(info toolkit.Info) (mcp.Tool, publishedTool, bool) {
-	params := toolkit.OpenObjectProperties(info.Tool.Parameters())
+func (e *Endpoint) describe(p published) (registered, bool) {
+	params := toolkit.OpenObjectProperties(p.info.Tool.Parameters())
 	if params == nil {
 		params = map[string]any{"type": "object", "properties": map[string]any{}}
 	}
@@ -120,58 +249,64 @@ func (e *Endpoint) describe(info toolkit.Info) (mcp.Tool, publishedTool, bool) {
 	}
 	schema, err := json.Marshal(params)
 	if err != nil {
-		e.logger.Warn("Skipping tool: schema cannot be encoded", "tool", info.Name, "error", err.Error())
-		return mcp.Tool{}, publishedTool{}, false
+		e.logger.Warn("Skipping tool: schema cannot be encoded", "tool", p.info.Name, "error", err.Error())
+		return registered{}, false
 	}
-	pub := publishedTool{desc: info.Tool.Description(), schema: schema}
-	return mcp.NewToolWithRawSchema(info.Published, pub.desc, schema), pub, true
+	desc := p.info.Tool.Description()
+	return registered{
+		internal: p.info.Name,
+		desc:     desc,
+		schema:   schema,
+		tool:     mcp.NewToolWithRawSchema(p.name, desc, schema),
+	}, true
 }
 
-// afterList replaces the list mcp-go built with one from snapshots taken
-// now: the catalogue's on an Argument endpoint; on a Bearer endpoint the
-// caller's set, limited to the catalogue. A list is never older than the
-// registries at the time of the request.
+// afterList replaces the list mcp-go built: on an Argument endpoint the
+// catalogue as published; on a Bearer endpoint the caller's own tools, named
+// and described from the caller's own set alone (from a snapshot taken
+// now), limited to the names the catalogue publishes.
 func (e *Endpoint) afterList(ctx context.Context, _ any, _ *mcp.ListToolsRequest, result *mcp.ListToolsResult) {
 	if result == nil {
 		return
 	}
-	infos := e.cfg.Catalogue.Snapshot().List()
-	if e.cfg.Transport == Bearer {
-		infos = e.callerTools(ctx, infos)
-	}
-	tools := make([]mcp.Tool, 0, len(infos))
-	seen := make(map[string]bool, len(infos))
-	for _, info := range infos {
-		tool, _, ok := e.describe(info)
-		if !ok || seen[tool.Name] {
-			continue
-		}
-		seen[tool.Name] = true
-		tools = append(tools, tool)
-	}
-	slices.SortFunc(tools, func(a, b mcp.Tool) int { return cmp.Compare(a.Name, b.Name) })
-	result.Tools = tools
+	e.autoSync()
+	st := e.state.Load()
 	result.NextCursor = ""
-}
-
-// callerTools returns the tools of the caller on ctx whose published names
-// the catalogue offers; none without a caller.
-func (e *Endpoint) callerTools(ctx context.Context, catalogue []toolkit.Info) []toolkit.Info {
+	if e.cfg.Transport == Argument {
+		result.Tools = slices.Clone(st.tools)
+		return
+	}
+	result.Tools = []mcp.Tool{}
 	c, ok := CallerOf(ctx)
 	if !ok || c.Set == nil || c.revoked() {
-		return nil
+		return
 	}
-	offered := make(map[string]bool, len(catalogue))
-	for _, info := range catalogue {
-		offered[info.Published] = true
-	}
-	var out []toolkit.Info
-	for _, info := range c.Set.Snapshot().List() {
-		if offered[info.Published] {
-			out = append(out, info)
+	for _, p := range e.publish(c.Set.Snapshot().List()) {
+		if _, offered := st.byName[p.name]; !offered {
+			continue
+		}
+		if reg, ok := e.describe(p); ok {
+			result.Tools = append(result.Tools, reg.tool)
 		}
 	}
-	return out
+	slices.SortFunc(result.Tools, func(a, b mcp.Tool) int { return cmp.Compare(a.Name, b.Name) })
+}
+
+// resolve finds the tool a call of the published name runs for caller. On
+// a Bearer endpoint it is the tool the caller is listed under that name.
+// Otherwise, and for a name the caller's own listing lacks, it is the tool
+// the catalogue publishes under the name, found in the caller's set by
+// internal name, enabled or not, so that toolkit refuses a disabled one as
+// it does. ok is false when the caller's set does not hold it at all.
+func (e *Endpoint) resolve(caller Caller, name string) (toolkit.Info, bool) {
+	if e.cfg.Transport == Bearer {
+		for _, p := range e.publish(caller.Set.Snapshot().List()) {
+			if p.name == name {
+				return p.info, true
+			}
+		}
+	}
+	return caller.Set.Get(e.internalName(name))
 }
 
 // injectTokenArgument returns a copy of params with the TokenArgument added
@@ -216,4 +351,13 @@ func requiredNames(v any) []string {
 		return out
 	}
 	return nil
+}
+
+// internalName is the internal name the catalogue publishes under name, or
+// name itself.
+func (e *Endpoint) internalName(name string) string {
+	if reg, ok := e.state.Load().byName[name]; ok {
+		return reg.internal
+	}
+	return name
 }

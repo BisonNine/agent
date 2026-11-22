@@ -13,16 +13,19 @@ mcp-go: a host that serves no CLI model never links it.
   choosing. It knows no listener, path, TLS or Host-header rule. It is
   stateless (no MCP session ids) and answers both the 2025 protocol (with
   the GET notification stream CLIs use) and the current one.
-- **Tools.** `Config.Catalogue` (a `toolkit.Registry`) is what a call may
-  name and what `tools/list` shows; on a `Bearer` endpoint each caller sees
-  its own set, limited to the catalogue. Every granted, enabled tool is
-  listed, hidden ones included (discovery is never applied), under
-  `Info.Published`, with its description and its schema (free-form object
-  arguments declared open, as `toolkit.ToolToSchema` does). Each list is
-  built from snapshots taken for that request, so a client that lists right
-  after a change sees it. A catalogue change sends `tools/list_changed`;
-  `Watch` sends it (to every client: stateless HTTP cannot address
-  one) for changes of a caller's own set.
+- **Tools.** `Config.Catalogue` is what a call may name and what
+  `tools/list` shows on an `Argument` endpoint: `FromRegistry` of a toolkit
+  catalogue, set or view (followed automatically: each list and call sees
+  the registry as it is), or `Union` of several agents' own catalogues
+  (changed by `Endpoint.Refresh`). On a `Bearer` endpoint each caller is
+  listed and described from its own set alone, limited to the names the
+  catalogue publishes. Every granted, enabled tool is listed, hidden ones
+  included (discovery is never applied), under the name `Config.Names`
+  gives it, with its description and its schema (free-form object
+  arguments declared open, as `toolkit.ToolToSchema` does). A call runs
+  exactly the tool published under the name it uses. A change sends
+  `tools/list_changed`; `Watch` sends it (to every client: stateless HTTP
+  cannot address one) for changes of a caller's own set.
 - **Credentials.** `Transport` is `Bearer` (an `Authorization: Bearer`
   header; a request without one or with a refused one is answered 401 with
   `WWW-Authenticate: Bearer realm="<Config.Realm>"`) or `Argument` (the
@@ -43,8 +46,8 @@ mcp-go: a host that serves no CLI model never links it.
   error flag. `ToolCallFinished` carries the whole result (`ForUser`,
   `Media`, ...) and `Config.AsyncResult` a background tool's late one; the
   host delivers them, mcphost publishes nothing. The call's context ends
-  with the MCP request, except a background tool's (an `AsyncExecutor`
-  with `AsyncResult` set), whose work outlives the request.
+  with the MCP request (a background tool's too, unless
+  `DetachBackground`).
 - **`Store`** holds session tokens: `Issue` (64 hex characters from
   crypto/rand, or the host's `WithGenerator`), `Register`, `Resolve`,
   `Rescope`, `Revoke`, `RevokeFunc`, and an optional expiry per grant. A
@@ -57,6 +60,25 @@ mcp-go: a host that serves no CLI model never links it.
   URL, and the bearer header for `Bearer`), as plain values the host turns
   into its CLI's flags. The server name, URL and the tool prefix the CLI
   shows are the host's.
+
+## Matching an existing server
+
+Each default follows the SDK's own rules; these options reproduce a server
+that behaved otherwise, exchange for exchange (`wire_test.go` replays 48
+exchanges recorded from one):
+
+| Behaviour | Default | Option |
+| --- | --- | --- |
+| One toolkit catalogue per agent | `FromRegistry(cat)` | `Catalogue: Union(func() []toolkit.Registry {...})`, agents in the order whose descriptions the `Argument` list uses |
+| Notices only where the host says | automatic for `FromRegistry` | `Union` plus `Endpoint.Refresh(ctx)` where the host refreshed before; it returns whether a notice was sent |
+| Published names | `PublishedNames` (toolkit's no-shadow rule) | `Names: ExternalFirst` (external name always; a later tool by internal name wanting a taken name is left out) |
+| A panicking tool | error result "Tool x failed with an internal error." | `PanicAsProtocolError: true` (-32603 "panic recovered in x tool handler: …", after the callbacks and events) |
+| Session key | on every call (`hook.WithScope`) | `ToolContext` returning `toolkit.WithSessionKey(ctx, "")` for tools that are not `SessionScoped` |
+| Background tools | the request's context | `DetachBackground: true` |
+| Revocation | `Caller.Done` cancels calls in flight | leave `Done` nil: a call in flight finishes |
+| Refusal texts | the Authenticator's errors | the same: they are the tool error text (`Argument`); 401 bodies are "missing bearer token" and "invalid bearer token" |
+| 401 challenge, token schema, handshake | | `Realm`, `TokenDescription`, `Name` and `Version` |
+| Redaction, access policy | | an `AfterTool` plugin; the caller's set (a `View` with the policy's grant) |
 
 ## What the host supplies
 
@@ -96,7 +118,7 @@ ep, err := mcphost.New(mcphost.Config{
 	Name: "example-host", Version: "1.0.0",
 	Transport:     mcphost.Bearer,
 	Authenticator: auth,
-	Catalogue:     cat,
+	Catalogue:     mcphost.FromRegistry(cat),
 	Realm:         "example",
 	Plugins:       []hook.Plugin{audit, redact},
 	Logger:        logger,

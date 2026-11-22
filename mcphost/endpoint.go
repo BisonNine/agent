@@ -40,14 +40,14 @@ type Config struct {
 	Transport Transport
 	// Authenticator says who a credential is. Required.
 	Authenticator Authenticator
-	// Catalogue is the endpoint's tools: what a call may name (a name it
-	// does not offer is answered with MCP's "tool not found" error), what
-	// tools/list shows on an Argument endpoint, and the bound of what it
-	// shows a caller on a Bearer endpoint (the caller's set, limited to
-	// these). A host with one toolkit.Catalog passes it, or a View of it
-	// holding the tools this endpoint may publish. Its changes send
-	// tools/list_changed. Required.
-	Catalogue toolkit.Registry
+	// Catalogue is the endpoint's tools (see Catalogue). A host with one
+	// toolkit.Catalog passes FromRegistry of it, or of a View holding the
+	// tools this endpoint may publish; a host whose agents each have their
+	// own catalogue passes Union of them. Required.
+	Catalogue Catalogue
+	// Names is how published names are chosen. The default, PublishedNames,
+	// is toolkit's rule.
+	Names NameRule
 
 	// Realm is the realm of the WWW-Authenticate header of a 401 (Bearer).
 	// Empty sends no realm.
@@ -65,6 +65,13 @@ type Config struct {
 	// and the caller are on it and before the callbacks, the Gate and the
 	// tool see it.
 	CallContext func(ctx context.Context, c Caller) context.Context
+	// ToolContext, when set, adjusts a call's context for the tool it
+	// resolved to (info), after CallContext and before the callbacks, the
+	// Gate and the tool see it: to give the session key only to
+	// session-scoped tools, it returns toolkit.WithSessionKey(ctx, "") for
+	// the others. The call's scope (hook.ScopeOf, the events) is not
+	// changed by it.
+	ToolContext func(ctx context.Context, c Caller, info toolkit.Info) context.Context
 	// Plugins are the host's callbacks, in order. Their BeforeTool,
 	// AfterTool and OnToolError run on every call, as the turn engine runs
 	// them; OnEvent receives ToolCallStarted and ToolCallFinished. Other
@@ -73,6 +80,17 @@ type Config struct {
 	// AsyncResult receives the late results of background tools. Nil runs
 	// every tool synchronously (an AsyncExecutor's Execute).
 	AsyncResult AsyncResultFunc
+	// DetachBackground gives a background tool (an AsyncExecutor, with
+	// AsyncResult set) a context that does not end with the MCP request, so
+	// its work outlives a client that goes away. Off, it runs on the
+	// request's context like every other tool.
+	DetachBackground bool
+	// PanicAsProtocolError answers a call whose tool panicked with MCP's
+	// protocol error (-32603 "panic recovered in <name> tool handler: <value>")
+	// instead of the error result "Tool <name> failed with an internal
+	// error.". The callbacks and events run as for any panic first. A panic
+	// in a callback is always an error result.
+	PanicAsProtocolError bool
 
 	// Logger is the endpoint's logger; records carry component=mcphost.
 	// Nil discards. Token values and tool arguments are never logged.
@@ -89,12 +107,15 @@ type Endpoint struct {
 	srv    *server.MCPServer
 	http   http.Handler
 
-	// syncMu serialises sync; published and version are under it.
-	syncMu    sync.Mutex
-	published map[string]publishedTool // published name → what was registered
-	version   uint64
-	synced    atomic.Bool   // a sync has completed
-	seen      atomic.Uint64 // the catalogue version of the last sync
+	versioned versioned // the Catalogue's Version, or nil
+
+	// syncMu serialises sync; version is under it. state is replaced, never
+	// changed.
+	syncMu  sync.Mutex
+	state   atomic.Pointer[catalogueState]
+	version uint64
+	synced  atomic.Bool   // a sync has completed
+	seen    atomic.Uint64 // the catalogue version of the last sync
 
 	inflight  atomic.Int64
 	closeOnce sync.Once
@@ -122,16 +143,21 @@ func New(cfg Config) (*Endpoint, error) {
 		logger = discardLogger()
 	}
 	e := &Endpoint{
-		cfg:       cfg,
-		logger:    logger.With("component", component),
-		published: map[string]publishedTool{},
+		cfg:    cfg,
+		logger: logger.With("component", component),
+		unsub:  func() {},
+	}
+	e.state.Store(&catalogueState{byName: map[string]registered{}})
+	if v, ok := cfg.Catalogue.(versioned); ok {
+		e.versioned = v
 	}
 
 	hooks := &server.Hooks{}
 	hooks.AddAfterListTools(e.afterList)
 	// A call is routed by the names registered with mcp-go: bring them in
-	// step with the catalogue first, so a tool added a moment ago is found.
-	hooks.AddBeforeCallTool(func(context.Context, any, *mcp.CallToolRequest) { e.sync() })
+	// step with a followed catalogue first, so a tool added a moment ago is
+	// found.
+	hooks.AddBeforeCallTool(func(context.Context, any, *mcp.CallToolRequest) { e.autoSync() })
 	e.srv = server.NewMCPServer(cfg.Name, cfg.Version,
 		server.WithToolCapabilities(true),
 		server.WithRecovery(),
@@ -140,9 +166,24 @@ func New(cfg Config) (*Endpoint, error) {
 	e.http = server.NewStreamableHTTPServer(e.srv, server.WithStateLess(true))
 
 	// Subscribe before the first sync, so no change falls between them.
-	e.unsub = cfg.Catalogue.Subscribe(func(toolkit.Change) { e.sync() })
+	if s, ok := cfg.Catalogue.(subscribable); ok {
+		e.unsub = s.Subscribe(func(toolkit.Change) { e.sync() })
+	}
 	e.sync()
 	return e, nil
+}
+
+// Refresh reads the catalogue again and brings what the endpoint publishes
+// in step with it, synchronously, sending tools/list_changed only when what
+// is published changed since the last notice. It reports whether a notice
+// was sent. A host whose Catalogue has no Version calls it after each
+// change; for one that has, it is not needed.
+func (e *Endpoint) Refresh(ctx context.Context) bool {
+	changed := e.sync()
+	if changed {
+		e.logger.InfoContext(ctx, "MCP catalogue refreshed")
+	}
+	return changed
 }
 
 // Close stops following the catalogue (a registry passed to Watch is

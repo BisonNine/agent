@@ -62,6 +62,19 @@ project uses [Semantic Versioning](https://semver.org/).
   its prompt text and MCP server entry. Logging is `Config.Logger` /
   `WithLogger`, never with token values. Adds the dependency
   `github.com/mark3labs/mcp-go` (v1.6.0), imported by `mcphost` alone.
+- `mcphost`: options to reproduce an existing server's wire behaviour.
+  `Config.Catalogue` is now a `Catalogue` (`FromRegistry` for a toolkit
+  registry, followed automatically; `Union` for agents that each have their
+  own catalogue, changed by `Endpoint.Refresh`, which reports whether it sent
+  `tools/list_changed`). `Config.Names` (`PublishedNames`, the default, or
+  `ExternalFirst`) chooses published names, and a call now runs exactly the
+  tool published under its name. `Config.ToolContext` adjusts a call's
+  context for the tool it resolved to (the session key for session-scoped
+  tools only). `Config.PanicAsProtocolError` answers a panicking tool with
+  the protocol error. A background tool now runs on the request's context
+  unless `Config.DetachBackground`. A tool the caller's set does not hold is
+  refused with `NotEnabledMessage`. A bearer caller is listed and described
+  from its own set alone.
 - `ctxengine/memory`: `ArchiveStore.Update` runs one write transaction
   (`StateTx`) that holds the file's write lock from its start, so state read
   in it cannot change before its writes commit.

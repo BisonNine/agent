@@ -185,7 +185,7 @@ func newFixture(t *testing.T, opts ...fixtureConfig) *fixture {
 	build := func(tr Transport) *Endpoint {
 		cfg := Config{
 			Name: "test-host", Version: "1.2.3", Transport: tr,
-			Authenticator: auth, Catalogue: f.cat, Realm: "test-realm",
+			Authenticator: auth, Catalogue: FromRegistry(f.cat), Realm: "test-realm",
 		}
 		for _, o := range opts {
 			o(&cfg)

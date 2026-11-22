@@ -24,7 +24,7 @@ import (
 func TestNew_RequiresItsInputs(t *testing.T) {
 	cat := toolkit.New()
 	auth := AuthenticatorFunc(func(context.Context, string) (Caller, error) { return Caller{}, nil })
-	good := Config{Name: "n", Version: "1.0.0", Transport: Argument, Authenticator: auth, Catalogue: cat}
+	good := Config{Name: "n", Version: "1.0.0", Transport: Argument, Authenticator: auth, Catalogue: FromRegistry(cat)}
 	cases := map[string]func(*Config){
 		"no name":          func(c *Config) { c.Name = "" },
 		"no version":       func(c *Config) { c.Version = "" },
