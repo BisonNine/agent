@@ -320,7 +320,9 @@ project uses [Semantic Versioning](https://semver.org/).
   such a handle, and `DeleteSession` are refused with `*memory.KeyCollisionError`
   (`memory.ErrKeyCollision`), and its stored key is never overwritten.
   `ListSessions` and `ListPendingSessions` list the file under the key it
-  holds. File names are unchanged.
+  holds. The first write through a keyed handle stores the key even when it
+  only appends to the archive, so a file written only by the manager's
+  archive is claimed too (and is then listed). File names are unchanged.
 - `ctxengine/memory`: a session key containing `?` opened a different file
   (the path ended at the `?`), and a read-only open of one containing `#` or
   `%` could too. The path is now escaped in the SQLite URI, so the file

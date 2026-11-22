@@ -37,7 +37,8 @@ var ErrKeyCollision = errors.New("memory: session file holds another session")
 // KeyCollisionError is returned when a session's file already holds a
 // different session: two keys that SanitizeSessionKey maps to one file name
 // (a:b, a/b and a_b), or that a case-insensitive file system treats as one.
-// Nothing is read from or written to the file, and its stored key is kept.
+// Nothing is read from or written to the file beyond opening it and reading
+// its key, and its stored key is kept.
 type KeyCollisionError struct {
 	Requested string // the key the caller asked for
 	Stored    string // the key the file holds
@@ -408,10 +409,12 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 
 // OpenSession is Open for the session key's file under dir (ArchivePath).
 // When the file holds a different session it returns a *KeyCollisionError
-// and an unavailable store, having written nothing. The returned store
-// checks the key again in every Update, inside the transaction, so a file
-// another handle gave to a different session in the meantime is not
-// written either.
+// and an unavailable store, having written nothing to it. The returned
+// store checks the key again in every read and write, inside the
+// transaction, so a file another handle gave to a different session in the
+// meantime is neither read nor written. Its first write to a file that holds
+// no key yet (an archive Append as much as an Update) stores the key, so the
+// file is claimed even when nothing else writes the session's state.
 func OpenSession(dir, key string, opts ...OpenOption) (*ArchiveStore, error) {
 	return openArchive(ArchivePath(dir, key), key, opts)
 }
@@ -455,8 +458,29 @@ func openArchive(path, key string, opts []OpenOption) (*ArchiveStore, error) {
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
+	// Refuse a file that holds another session before the schema, the FTS
+	// check and the legacy summaries import, all of which can write to it.
+	// storedKey reads a file without session_state as holding no key.
+	if key != "" {
+		if err := retryBusy(start, func() error { return checkKey(db, path, key) }); err != nil {
+			iox.CloseQuietly(log, db)
+			log.Warn("archive refused",
+				"path", path, "error", err.Error())
+			return &ArchiveStore{path: path, unavailable: true}, err
+		}
+	}
+
 	// Create schema in one transaction, so a reader sees all of it or none.
-	if err := exec("BEGIN IMMEDIATE;" + archiveSchema + "COMMIT;"); err != nil {
+	// A failed attempt is rolled back so a retry can begin again.
+	if err := retryBusy(start, func() error {
+		_, err := db.Exec("BEGIN IMMEDIATE;" + archiveSchema + "COMMIT;")
+		if err != nil {
+			if _, rbErr := db.Exec("ROLLBACK"); rbErr != nil {
+				log.Debug("archive schema rollback", "path", path, "error", rbErr.Error())
+			}
+		}
+		return err
+	}); err != nil {
 		iox.CloseQuietly(log, db)
 		log.Warn("archive schema failed",
 			"path", path, "error", err.Error())
@@ -472,17 +496,6 @@ func openArchive(path, key string, opts []OpenOption) (*ArchiveStore, error) {
 			log.Warn("archive FTS5 rebuild failed",
 				"path", path, "error", rebuildErr.Error())
 			return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
-		}
-	}
-
-	// Refuse a file that holds another session before anything is written
-	// to it (the legacy summaries import below writes).
-	if key != "" {
-		if err := retryBusy(start, func() error { return checkKey(db, path, key) }); err != nil {
-			iox.CloseQuietly(log, db)
-			log.Warn("archive refused",
-				"path", path, "error", err.Error())
-			return &ArchiveStore{path: path, unavailable: true}, err
 		}
 	}
 

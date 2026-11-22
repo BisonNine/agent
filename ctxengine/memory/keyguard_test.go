@@ -383,3 +383,31 @@ func TestOpenSessionReadOnly_DuringFirstOpen(t *testing.T) {
 		}
 	}
 }
+
+// TestArchiveOnlyWriteClaimsFile writes two colliding keys' archives through
+// handles that never write the session state (a manager archiving beside a
+// store that keeps no file): the first append claims the file, the second
+// key's append is refused, and the first key's archive is intact.
+func TestArchiveOnlyWriteClaimsFile(t *testing.T) {
+	dir := t.TempDir()
+	alice, err := OpenSession(dir, "a:b")
+	noErr(t, err)
+	defer func() { noErr(t, alice.Close()) }()
+	bob, err := OpenSession(dir, "a/b")
+	noErr(t, err)
+	defer func() { noErr(t, bob.Close()) }()
+
+	noErr(t, alice.Append(1, spawnllm.Message{Role: "user", Content: "alice"}, time.Now()))
+	wantCollision(t, bob.Append(1, spawnllm.Message{Role: "user", Content: "bob"}, time.Now()), "a/b", "a:b")
+
+	got, err := alice.QueryRange(1, 1)
+	noErr(t, err)
+	if len(got) != 1 || got[0].Content != "alice" {
+		t.Errorf("alice's archive = %+v", got)
+	}
+	st, err := alice.State()
+	noErr(t, err)
+	if st.Key != "a:b" || st.NextSeq != 0 {
+		t.Errorf("state = %+v, want key a:b and nothing else", st)
+	}
+}

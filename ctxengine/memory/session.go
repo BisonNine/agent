@@ -128,7 +128,10 @@ func ListSessions(dir string, logger *slog.Logger) ([]string, error) {
 // missing file is not an error. Any open handle on the database must be
 // closed first (session.SQLiteStore.ForgetSession). A file that holds another
 // session is not removed: DeleteSession returns a *KeyCollisionError. A file
-// whose key cannot be read (a damaged one) is removed.
+// whose key cannot be read (a damaged one) is removed; one that stays locked
+// past the busy timeout is not, and the error is returned. The check and the
+// removal are not one step: the caller must keep other handles off the key's
+// file meanwhile, as it must for any open handle.
 func DeleteSession(dir, key string) error {
 	path := ArchivePath(dir, key)
 	if err := refuseOtherSession(path, key); err != nil {
@@ -143,8 +146,9 @@ func DeleteSession(dir, key string) error {
 }
 
 // refuseOtherSession returns a *KeyCollisionError when the file at path
-// exists and holds a session other than key, and nil otherwise, including
-// when the key cannot be read.
+// exists and holds a session other than key, the busy error when the file
+// stayed locked past the busy timeout, and nil otherwise, including when the
+// key cannot be read (a damaged file).
 func refuseOtherSession(path, key string) error {
 	if _, err := os.Stat(path); err != nil {
 		return nil
@@ -154,9 +158,9 @@ func refuseOtherSession(path, key string) error {
 		return nil
 	}
 	defer iox.CloseQuietly(slog.New(slog.DiscardHandler), db)
-	var collision *KeyCollisionError
-	if err := retryBusy(time.Now(), func() error { return checkKey(db, path, key) }); errors.As(err, &collision) {
-		return collision
+	err = retryBusy(time.Now(), func() error { return checkKey(db, path, key) })
+	if errors.As(err, new(*KeyCollisionError)) || isBusy(err) {
+		return err
 	}
 	return nil
 }
@@ -410,7 +414,7 @@ func (a *ArchiveStore) inTx(fn func(tx txConn) error) error {
 		}
 	}()
 	if a.key != "" {
-		if err := checkKey(tx, a.path, a.key); err != nil {
+		if err := claimKey(tx, a.path, a.key); err != nil {
 			return err
 		}
 	}
@@ -422,6 +426,20 @@ func (a *ArchiveStore) inTx(fn func(tx txConn) error) error {
 	}
 	committed = true
 	return nil
+}
+
+// claimKey checks, inside a write transaction, that the file holds key or
+// none, and stores key when it holds none, so the first keyed write claims
+// the file whether it writes the session state or only the archive. A new
+// row takes the column defaults for everything but the key.
+func claimKey(tx txConn, path, key string) error {
+	if err := checkKey(tx, path, key); err != nil {
+		return err
+	}
+	_, err := tx.Exec(
+		`INSERT INTO session_state (id, key) VALUES (1, ?)
+		 ON CONFLICT(id) DO UPDATE SET key = excluded.key WHERE key = ''`, key)
+	return err
 }
 
 // rollback ends tx's failed transaction. When SQLite has already rolled it
