@@ -22,9 +22,11 @@ defer accounting.Close()
   `Close`, or a `Start`, waits until that is done.
 
 Without a running sink (before `Start`, after `Close`), or when a write to the
-file fails, the record goes to the shared logger instead: an info event of
-component `accounting`, message `accounting record`, whose field `accounting`
-holds the record's JSON. A failed write is also logged as an error.
+file fails, the record goes to the logger set with `SetLogger` instead: an
+info record with the attribute `component` `accounting`, message
+`accounting record`, whose attribute `accounting` holds the record's JSON. A
+failed write is also logged as an error. Without `SetLogger` (or after
+`SetLogger(nil)`) those records are discarded.
 
 ## Identity
 

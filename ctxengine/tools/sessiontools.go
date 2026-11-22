@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.bison9.com/agent/ctxengine/memory"
@@ -67,9 +68,9 @@ type Host struct {
 	// SessionInfo reports the live state of a session. Nil means the info tool
 	// is unavailable.
 	SessionInfo func(ctx context.Context, sessionKey string) (*SessionInfo, error)
-	// Log receives diagnostics; level is one of "debug", "info", "warn",
-	// "error". Nil means silent.
-	Log func(level, message string, fields map[string]any)
+	// Logger receives diagnostics, tagged with the attribute component
+	// "tools" ("memory" for the archives the tools open). Nil means silent.
+	Logger *slog.Logger
 }
 
 // Definitions returns the session tool definitions bound to h.
@@ -98,10 +99,13 @@ func Definitions(h Host) []toolspec.ToolDefinition {
 	}
 }
 
-func (h Host) log(level, message string, fields map[string]any) {
-	if h.Log != nil {
-		h.Log(level, message, fields)
+// log returns the host's logger tagged with the component "tools", or one
+// that discards when the host has none.
+func (h Host) log() *slog.Logger {
+	if h.Logger == nil {
+		return slog.New(slog.DiscardHandler)
 	}
+	return h.Logger.With("component", "tools")
 }
 
 func errResult(message string) *toolspec.Result {
@@ -134,7 +138,7 @@ func (h Host) openArchive(call *toolspec.ToolCall) (*memory.ArchiveStore, string
 	if r != nil {
 		return nil, "", r
 	}
-	a, err := memory.OpenReadOnly(memory.ArchivePath(h.SessionsDir, key))
+	a, err := memory.OpenReadOnly(memory.ArchivePath(h.SessionsDir, key), h.Logger)
 	if err != nil {
 		return nil, "", h.archiveError("archive open error", key, err)
 	}
@@ -147,10 +151,10 @@ func (h Host) openArchive(call *toolspec.ToolCall) (*memory.ArchiveStore, string
 // prefixed with the failing stage.
 func (h Host) archiveError(stage, key string, err error) *toolspec.Result {
 	if errors.Is(err, memory.ErrArchiveUnavailable) {
-		h.log("debug", "session archive unavailable", map[string]any{"session": key, "stage": stage})
+		h.log().Debug("session archive unavailable", "session", key, "stage", stage)
 		return textResult(archiveUnavailableText)
 	}
-	h.log("warn", "session archive error", map[string]any{"session": key, "stage": stage, "error": err.Error()})
+	h.log().Warn("session archive error", "session", key, "stage", stage, "error", err.Error())
 	return errResult(fmt.Sprintf("%s: %v", stage, err))
 }
 

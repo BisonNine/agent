@@ -10,7 +10,7 @@
 #   lint    golangci-lint run ./...
 #   tests   go test -race -count=1 ./...
 #
-# Every package is covered: toolspec, logger, spawnllm, ctxengine and cogmem,
+# Every package is covered: toolspec, accounting, spawnllm, ctxengine and cogmem,
 # including the import-guard tests that keep the layering between them.
 #
 # Usage:

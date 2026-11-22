@@ -65,7 +65,7 @@ func TestReadOnlyConnections_WaitOutLock(t *testing.T) {
 	})
 	defer release.Stop()
 
-	ro, err := OpenReadOnly(path)
+	ro, err := OpenReadOnly(path, nil)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}

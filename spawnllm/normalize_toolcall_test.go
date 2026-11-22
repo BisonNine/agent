@@ -14,7 +14,7 @@ func TestNormalizeToolCall_NameFromFunction(t *testing.T) {
 			Arguments: `{"location":"NYC"}`,
 		},
 	}
-	result := NormalizeToolCall(tc)
+	result := NormalizeToolCall(tc, nil)
 	if result.Name != "get_weather" {
 		t.Errorf("Name = %q, want %q", result.Name, "get_weather")
 	}
@@ -36,7 +36,7 @@ func TestNormalizeToolCall_ArgumentsFromFunctionString(t *testing.T) {
 			Arguments: `{"path":"/tmp"}`,
 		},
 	}
-	result := NormalizeToolCall(tc)
+	result := NormalizeToolCall(tc, nil)
 	if result.Arguments["path"] != "/tmp" {
 		t.Errorf("Arguments[path] = %v, want /tmp", result.Arguments["path"])
 	}
@@ -49,7 +49,7 @@ func TestNormalizeToolCall_NilFunctionCreated(t *testing.T) {
 		Name:      "read_file",
 		Arguments: map[string]any{"path": "foo.txt"},
 	}
-	result := NormalizeToolCall(tc)
+	result := NormalizeToolCall(tc, nil)
 	if result.Function == nil {
 		t.Fatal("Function should not be nil after normalization")
 	}
@@ -71,7 +71,7 @@ func TestNormalizeToolCall_NilArgumentsInitialized(t *testing.T) {
 		ID:   "call_4",
 		Name: "no_args_tool",
 	}
-	result := NormalizeToolCall(tc)
+	result := NormalizeToolCall(tc, nil)
 	if result.Arguments == nil {
 		t.Error("Arguments should not be nil after normalization")
 	}
@@ -87,7 +87,7 @@ func TestNormalizeToolCall_ExistingArgumentsPreserved(t *testing.T) {
 			Arguments: `{"query":"old"}`, // should not override existing Arguments
 		},
 	}
-	result := NormalizeToolCall(tc)
+	result := NormalizeToolCall(tc, nil)
 	// Since Arguments is already set, it should not be overwritten from Function.Arguments
 	if result.Arguments["query"] != "golang" {
 		t.Errorf("Arguments[query] = %v, want golang (pre-set arguments should be preserved)", result.Arguments["query"])
@@ -104,7 +104,7 @@ func TestNormalizeToolCall_FunctionNameFallback(t *testing.T) {
 			Arguments: `{}`,
 		},
 	}
-	result := NormalizeToolCall(tc)
+	result := NormalizeToolCall(tc, nil)
 	if result.Name != "calculate" {
 		t.Errorf("Name = %q, want calculate", result.Name)
 	}
@@ -120,7 +120,7 @@ func TestNormalizeToolCall_InvalidFunctionArguments(t *testing.T) {
 			Arguments: `not-valid-json`,
 		},
 	}
-	result := NormalizeToolCall(tc)
+	result := NormalizeToolCall(tc, nil)
 	// Arguments should be initialized to empty map, not panic
 	if result.Arguments == nil {
 		t.Error("Arguments should not be nil")

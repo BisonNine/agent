@@ -17,20 +17,21 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"strings"
 	"time"
 
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/launch"
 )
 
 // Call describes one request for logging and error reporting.
 type Call struct {
-	// Component is the logger component ("speech", "imagegen").
-	Component string
+	// Logger receives the call's debug records; the caller tags it with its
+	// component ("speech", "imagegen"). Nil discards them.
+	Logger *slog.Logger
 	// Backend names the API in the log ("openai", "gemini", …).
 	Backend string
 	// Model is the model requested, for the log.
@@ -76,35 +77,40 @@ func NewPost(ctx context.Context, url string, body []byte, contentType string) (
 // accounting.
 func Do(client *http.Client, req *http.Request, c Call) (*Response, error) {
 	start := time.Now()
-	logger.DebugCF(c.Component, "Sending request", map[string]any{
-		"backend":    c.Backend,
-		"model":      c.Model,
-		"url":        req.URL.Scheme + "://" + req.URL.Host + req.URL.Path,
-		"bytes_sent": req.ContentLength,
-	})
+	ctx := req.Context()
+	log := c.Logger
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	log.DebugContext(ctx, "Sending request",
+		"backend", c.Backend,
+		"model", c.Model,
+		"url", req.URL.Scheme+"://"+req.URL.Host+req.URL.Path,
+		"bytes_sent", req.ContentLength,
+	)
 
 	resp, err := client.Do(req) //nolint:gosec // G704: the URL is the host-configured API endpoint
 	if err != nil {
-		logger.DebugCF(c.Component, "Request failed", map[string]any{
-			"backend": c.Backend, "model": c.Model, "error": err.Error(),
-			"duration_ms": time.Since(start).Milliseconds(),
-		})
+		log.DebugContext(ctx, "Request failed",
+			"backend", c.Backend, "model", c.Model, "error", err.Error(),
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	launch.HTTPStatus(req.Context(), resp.StatusCode)
+	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, drainLimit)) //nolint:errcheck // best effort
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.DebugCF(c.Component, "closing response body", map[string]any{"error": closeErr.Error()})
+			log.DebugContext(ctx, "closing response body", "error", closeErr.Error())
 		}
 	}()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		respErr := common.HandleErrorResponse(resp, c.APIBase)
-		logger.DebugCF(c.Component, "Request failed", map[string]any{
-			"backend": c.Backend, "model": c.Model, "status_code": resp.StatusCode,
-			"duration_ms": time.Since(start).Milliseconds(),
-		})
+		log.DebugContext(ctx, "Request failed",
+			"backend", c.Backend, "model", c.Model, "status_code", resp.StatusCode,
+			"duration_ms", time.Since(start).Milliseconds(),
+		)
 		return nil, respErr
 	}
 
@@ -127,13 +133,13 @@ func Do(client *http.Client, req *http.Request, c Call) (*Response, error) {
 		}
 	}
 
-	logger.DebugCF(c.Component, "Received response", map[string]any{
-		"backend":        c.Backend,
-		"model":          c.Model,
-		"status_code":    resp.StatusCode,
-		"bytes_received": len(body),
-		"duration_ms":    time.Since(start).Milliseconds(),
-	})
+	log.DebugContext(ctx, "Received response",
+		"backend", c.Backend,
+		"model", c.Model,
+		"status_code", resp.StatusCode,
+		"bytes_received", len(body),
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	return &Response{StatusCode: resp.StatusCode, Header: resp.Header, Body: body}, nil
 }
 

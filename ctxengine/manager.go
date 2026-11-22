@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"strings"
 	"sync"
@@ -17,7 +18,6 @@ import (
 
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -33,6 +33,7 @@ type Manager struct {
 	sessionKey string
 	store      session.SessionStore
 	cfg        managerConfig
+	log        *slog.Logger // cfg.logger tagged with the component "llmcontext"
 
 	// lastChannel/lastChatID are the conversation of the most recent Assemble,
 	// remembered so the automatic compaction path can deliver its report.
@@ -133,6 +134,7 @@ func New(
 	for _, o := range opts {
 		o(&cfg)
 	}
+	log := componentLog(cfg.logger, "llmcontext")
 
 	// (a) Zero percent thresholds → replace with defaults.
 	if cfg.minPercent == 0 {
@@ -147,14 +149,14 @@ func New(
 
 	// (b) safety ≤ normal → WARN only; safety net will never fire.
 	if cfg.safetyPercent <= cfg.normalPercent {
-		logger.WarnCF("llmcontext", "compress_safety_percent <= compress_normal_percent; safety net will never fire",
-			map[string]any{"safety": cfg.safetyPercent, "normal": cfg.normalPercent})
+		log.Warn("compress_safety_percent <= compress_normal_percent; safety net will never fire",
+			"safety", cfg.safetyPercent, "normal", cfg.normalPercent)
 	}
 
 	// (c) min ≥ normal → WARN + clamp to normal/2.
 	if cfg.minPercent >= cfg.normalPercent {
-		logger.WarnCF("llmcontext", "compress_min_percent >= compress_normal_percent; clamping min to normal/2",
-			map[string]any{"min": cfg.minPercent, "normal": cfg.normalPercent})
+		log.Warn("compress_min_percent >= compress_normal_percent; clamping min to normal/2",
+			"min", cfg.minPercent, "normal", cfg.normalPercent)
 		cfg.minPercent = cfg.normalPercent / 2
 	}
 
@@ -167,8 +169,8 @@ func New(
 	// never getting smaller. The tail must land clearly below the floor so each
 	// pass buys real headroom.
 	if cfg.retainTokenPercent >= cfg.minPercent {
-		logger.WarnCF("llmcontext", "compress retain_token_percent >= trigger min_percent; clamping retain to min/2 (equal values pin the session to the floor and compact on every message)",
-			map[string]any{"retain": cfg.retainTokenPercent, "min": cfg.minPercent})
+		log.Warn("compress retain_token_percent >= trigger min_percent; clamping retain to min/2 (equal values pin the session to the floor and compact on every message)",
+			"retain", cfg.retainTokenPercent, "min", cfg.minPercent)
 		cfg.retainTokenPercent = cfg.minPercent / 2
 	}
 
@@ -181,12 +183,12 @@ func New(
 	if cfg.triggerDays > 0 && cfg.retainMaxAgeDays > 0 {
 		switch {
 		case cfg.triggerDays < cfg.retainMaxAgeDays:
-			logger.WarnCF("llmcontext", "compress trigger.days < retain.max_age_days; clamping trigger up (it would fire with nothing old enough to summarize)",
-				map[string]any{"trigger_days": cfg.triggerDays, "retain_max_age_days": cfg.retainMaxAgeDays})
+			log.Warn("compress trigger.days < retain.max_age_days; clamping trigger up (it would fire with nothing old enough to summarize)",
+				"trigger_days", cfg.triggerDays, "retain_max_age_days", cfg.retainMaxAgeDays)
 			cfg.triggerDays = cfg.retainMaxAgeDays
 		case cfg.triggerDays == cfg.retainMaxAgeDays:
-			logger.WarnCF("llmcontext", "compress trigger.days == retain.max_age_days; the session will re-compact as soon as the tail ages, set trigger.days higher for hysteresis",
-				map[string]any{"days": cfg.triggerDays})
+			log.Warn("compress trigger.days == retain.max_age_days; the session will re-compact as soon as the tail ages, set trigger.days higher for hysteresis",
+				"days", cfg.triggerDays)
 		}
 	}
 
@@ -197,18 +199,18 @@ func New(
 	// unbounded and compaction can never shrink the window, which presents as
 	// "compaction is broken" rather than as a configuration choice.
 	if cfg.retainTokenPercent <= 0 && cfg.retainMaxTokens <= 0 && cfg.retainMaxAgeDays <= 0 {
-		logger.WarnCF("llmcontext", "every compression retain bound is disabled; the live window is unbounded and compaction cannot shrink it",
-			map[string]any{
-				"retain_token_percent": cfg.retainTokenPercent,
-				"retain_max_tokens":    cfg.retainMaxTokens,
-				"retain_max_age_days":  cfg.retainMaxAgeDays,
-			})
+		log.Warn("every compression retain bound is disabled; the live window is unbounded and compaction cannot shrink it",
+			"retain_token_percent", cfg.retainTokenPercent,
+			"retain_max_tokens", cfg.retainMaxTokens,
+			"retain_max_age_days", cfg.retainMaxAgeDays,
+		)
 	}
 
 	m := &Manager{
 		sessionKey: sessionKey,
 		store:      store,
 		cfg:        cfg,
+		log:        log,
 		caller:     cfg.caller,
 	}
 
@@ -271,18 +273,18 @@ func (m *Manager) updateCompactionState(op string, apply func(st *memory.Compact
 	}
 	st, err := cs.GetCompactionState(m.sessionKey)
 	if err != nil {
-		logger.WarnCF("llmcontext", op+": failed to load compaction state", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.Warn(op+": failed to load compaction state",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 		return
 	}
 	apply(&st)
 	if err := cs.SetCompactionState(m.sessionKey, st); err != nil {
-		logger.WarnCF("llmcontext", op+": failed to persist compaction state", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.Warn(op+": failed to persist compaction state",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 	}
 }
 
@@ -309,10 +311,10 @@ func (m *Manager) AddUserMessage(ctx context.Context, msg spawnllm.Message) (int
 	}
 	if err := m.triggerCheck(ctx); err != nil {
 		// Automatic triggers log and continue — do not block the LLM call.
-		logger.WarnCF("llmcontext", "compression error on AddUserMessage (continuing)", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.WarnContext(ctx, "compression error on AddUserMessage (continuing)",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 	}
 	return seq, nil
 }
@@ -327,10 +329,10 @@ func (m *Manager) AddAssistantMessage(ctx context.Context, msg spawnllm.Message)
 	}
 	if err := m.triggerCheck(ctx); err != nil {
 		// Automatic triggers log and continue — do not block the LLM call.
-		logger.WarnCF("llmcontext", "compression error on AddAssistantMessage (continuing)", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.WarnContext(ctx, "compression error on AddAssistantMessage (continuing)",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 	}
 	return seq, nil
 }
@@ -409,10 +411,10 @@ func (m *Manager) emergencyCompactOnHistory(ctx context.Context) bool {
 		return false
 	}
 	if err := m.compress(ctx, true, CompactionStart{Reason: CompactionReasonSafetyNet, Blocking: true}); err != nil && !errors.Is(err, ErrNothingToCompress) {
-		logger.WarnCF("llmcontext", "pre-build safety compaction failed (continuing)", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.WarnContext(ctx, "pre-build safety compaction failed (continuing)",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 		return false
 	}
 	return true
@@ -432,10 +434,10 @@ func (m *Manager) emergencyCompactOnBuilt(ctx context.Context, built []spawnllm.
 		return false
 	}
 	if err := m.compress(ctx, true, CompactionStart{Reason: CompactionReasonSafetyNet, Blocking: true}); err != nil && !errors.Is(err, ErrNothingToCompress) {
-		logger.WarnCF("llmcontext", "post-build safety compaction failed (continuing)", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.WarnContext(ctx, "post-build safety compaction failed (continuing)",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 		return false
 	}
 	return true
@@ -583,15 +585,15 @@ func (m *Manager) ObserveUsage(estimatedPromptTokens, actualPromptTokens int) {
 		m.usageRatio += calibrationAlpha * (ratio - m.usageRatio)
 	}
 	m.usageObservations++
-	logger.DebugCF("llmcontext", "token estimate calibrated from provider usage", map[string]any{
-		"session_key":  m.sessionKey,
-		"estimated":    estimatedPromptTokens,
-		"actual":       actualPromptTokens,
-		"ratio":        ratio,
-		"ewma_ratio":   m.usageRatio,
-		"observations": m.usageObservations,
-		"margin":       m.tokenMargin(),
-	})
+	m.log.Debug("token estimate calibrated from provider usage",
+		"session_key", m.sessionKey,
+		"estimated", estimatedPromptTokens,
+		"actual", actualPromptTokens,
+		"ratio", ratio,
+		"ewma_ratio", m.usageRatio,
+		"observations", m.usageObservations,
+		"margin", m.tokenMargin(),
+	)
 }
 
 // SetContextWindow changes the context window the manager measures against.
@@ -624,11 +626,11 @@ func (m *Manager) SetContextWindow(tokens int) error {
 	m.cfg.contextWindow = tokens
 	m.cooling = false
 	m.coolingSinceCount = 0
-	logger.InfoCF("llmcontext", "context window changed", map[string]any{
-		"session_key": m.sessionKey,
-		"previous":    previous,
-		"current":     tokens,
-	})
+	m.log.Info("context window changed",
+		"session_key", m.sessionKey,
+		"previous", previous,
+		"current", tokens,
+	)
 	return nil
 }
 
@@ -731,13 +733,14 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 	path := memory.ArchivePath(m.cfg.archiveDir, m.sessionKey)
 	store, err := memory.Open(path,
 		memory.WithFolderPermissions(m.cfg.folderPerm),
-		memory.WithFilePermissions(m.cfg.filePerm))
+		memory.WithFilePermissions(m.cfg.filePerm),
+		memory.WithLogger(m.cfg.logger))
 	if err != nil && !errors.Is(err, memory.ErrArchiveUnavailable) {
-		logger.WarnCF("llmcontext", "archive open failed", map[string]any{
-			"session_key": m.sessionKey,
-			"path":        path,
-			"error":       err.Error(),
-		})
+		m.log.Warn("archive open failed",
+			"session_key", m.sessionKey,
+			"path", path,
+			"error", err.Error(),
+		)
 	}
 	m.archive = store
 	// Apply retention once per manager lifecycle, on the path that actually opens
@@ -758,40 +761,40 @@ func (m *Manager) pruneArchive(a *memory.ArchiveStore) {
 
 	if n := m.cfg.archiveMessageCount; n > 0 {
 		if err := a.PruneMessagesToCount(n); err != nil {
-			logger.WarnCF("llmcontext", "archive prune messages to count failed", map[string]any{
-				"session_key": m.sessionKey,
-				"count":       n,
-				"error":       err.Error(),
-			})
+			m.log.Warn("archive prune messages to count failed",
+				"session_key", m.sessionKey,
+				"count", n,
+				"error", err.Error(),
+			)
 		}
 	}
 	if d := m.cfg.archiveDays; d > 0 {
 		cutoff := time.Now().AddDate(0, 0, -d)
 		if err := a.PruneMessagesBefore(cutoff); err != nil {
-			logger.WarnCF("llmcontext", "archive prune messages before failed", map[string]any{
-				"session_key": m.sessionKey,
-				"days":        d,
-				"error":       err.Error(),
-			})
+			m.log.Warn("archive prune messages before failed",
+				"session_key", m.sessionKey,
+				"days", d,
+				"error", err.Error(),
+			)
 		}
 	}
 	if n := m.cfg.summaryMaxCount; n > 0 {
 		if err := a.PruneSummariesToCount(n); err != nil {
-			logger.WarnCF("llmcontext", "archive prune summaries to count failed", map[string]any{
-				"session_key": m.sessionKey,
-				"count":       n,
-				"error":       err.Error(),
-			})
+			m.log.Warn("archive prune summaries to count failed",
+				"session_key", m.sessionKey,
+				"count", n,
+				"error", err.Error(),
+			)
 		}
 	}
 	if d := m.cfg.summaryRetentionDays; d > 0 {
 		cutoff := time.Now().AddDate(0, 0, -d)
 		if err := a.PruneSummariesBefore(cutoff); err != nil {
-			logger.WarnCF("llmcontext", "archive prune summaries before failed", map[string]any{
-				"session_key": m.sessionKey,
-				"days":        d,
-				"error":       err.Error(),
-			})
+			m.log.Warn("archive prune summaries before failed",
+				"session_key", m.sessionKey,
+				"days", d,
+				"error", err.Error(),
+			)
 		}
 	}
 }
@@ -821,19 +824,19 @@ func (m *Manager) archiveAppend(seq int64, msg spawnllm.Message) {
 		return
 	}
 	if seq <= 0 {
-		logger.WarnCF("llmcontext", "archive append skipped: non-positive seq", map[string]any{
-			"session_key": m.sessionKey,
-			"seq":         seq,
-		})
+		m.log.Warn("archive append skipped: non-positive seq",
+			"session_key", m.sessionKey,
+			"seq", seq,
+		)
 		return
 	}
 	msg = archiveTruncateContent(msg, m.archiveContentLimit())
 	if err := a.Append(seq, msg, time.Now()); err != nil {
-		logger.WarnCF("llmcontext", "archive append failed", map[string]any{
-			"session_key": m.sessionKey,
-			"seq":         seq,
-			"error":       err.Error(),
-		})
+		m.log.Warn("archive append failed",
+			"session_key", m.sessionKey,
+			"seq", seq,
+			"error", err.Error(),
+		)
 	}
 }
 
@@ -938,24 +941,24 @@ func (m *Manager) compress(ctx context.Context, safetyNet bool, start Compaction
 	// optional normal path from hammering a failing model; the emergency path
 	// is not optional.
 	if !safetyNet && m.autoCompactionSuppressed() {
-		logger.InfoCF("llmcontext", "automatic compaction suppressed by circuit breaker", map[string]any{
-			"session_key":          m.sessionKey,
-			"consecutive_failures": m.consecutiveCompactFailures,
-			"resume_at_msg_count":  m.breakerTrippedUntilCount,
-		})
+		m.log.InfoContext(ctx, "automatic compaction suppressed by circuit breaker",
+			"session_key", m.sessionKey,
+			"consecutive_failures", m.consecutiveCompactFailures,
+			"resume_at_msg_count", m.breakerTrippedUntilCount,
+		)
 		return nil
 	}
 
 	history := m.store.GetHistory(m.sessionKey)
-	logger.InfoCF("llmcontext", "compression triggered", map[string]any{
-		"session_key":     m.sessionKey,
-		"safety_net":      safetyNet,
-		"reason":          string(start.Reason),
-		"context_pct":     m.contextPercent(history),
-		"history_tokens":  m.estTokens(history),
-		"overhead_tokens": m.nonHistoryTokens(),
-		"msg_count":       m.msgCount,
-	})
+	m.log.InfoContext(ctx, "compression triggered",
+		"session_key", m.sessionKey,
+		"safety_net", safetyNet,
+		"reason", string(start.Reason),
+		"context_pct", m.contextPercent(history),
+		"history_tokens", m.estTokens(history),
+		"overhead_tokens", m.nonHistoryTokens(),
+		"msg_count", m.msgCount,
+	)
 	if m.compressHook != nil {
 		m.compressedAtCount = m.msgCount
 		m.ageCompactionDue = false
@@ -1002,11 +1005,11 @@ func (m *Manager) recordCompactionOutcome(err error) {
 		m.consecutiveCompactFailures++
 		if m.consecutiveCompactFailures >= defaultMaxConsecutiveCompactFailures && m.breakerTrippedUntilCount == 0 {
 			m.breakerTrippedUntilCount = m.msgCount + defaultCompactFailureCooldownMessages
-			logger.WarnCF("llmcontext", "compaction circuit breaker tripped; suppressing automatic compaction", map[string]any{
-				"session_key":          m.sessionKey,
-				"consecutive_failures": m.consecutiveCompactFailures,
-				"resume_at_msg_count":  m.breakerTrippedUntilCount,
-			})
+			m.log.Warn("compaction circuit breaker tripped; suppressing automatic compaction",
+				"session_key", m.sessionKey,
+				"consecutive_failures", m.consecutiveCompactFailures,
+				"resume_at_msg_count", m.breakerTrippedUntilCount,
+			)
 			if m.cfg.breakerTrippedHook != nil {
 				m.cfg.breakerTrippedHook(m.sessionKey, m.consecutiveCompactFailures)
 			}
@@ -1044,12 +1047,12 @@ func (m *Manager) triggerCheck(ctx context.Context) error {
 	ageFired := m.ageTriggered(stored)
 	reason := m.turnBoundaryReason(contextPct)
 	if ageFired {
-		logger.InfoCF("llmcontext", "compaction age trigger fired", map[string]any{
-			"session_key":  m.sessionKey,
-			"trigger_days": m.cfg.triggerDays,
-			"context_pct":  contextPct,
-			"deferred":     reason == "",
-		})
+		m.log.InfoContext(ctx, "compaction age trigger fired",
+			"session_key", m.sessionKey,
+			"trigger_days", m.cfg.triggerDays,
+			"context_pct", contextPct,
+			"deferred", reason == "",
+		)
 		if reason == "" {
 			m.ageCompactionDue = true
 			return nil
@@ -1113,17 +1116,17 @@ func (m *Manager) CompactIfDue(ctx context.Context) (bool, error) {
 	if m.autoCompactionSuppressed() {
 		// The breaker is not a reason to forget the age: it resumes after enough
 		// new messages, and the next call after that runs the pass.
-		logger.InfoCF("llmcontext", "deferred age compaction suppressed by circuit breaker", map[string]any{
-			"session_key":          m.sessionKey,
-			"consecutive_failures": m.consecutiveCompactFailures,
-			"resume_at_msg_count":  m.breakerTrippedUntilCount,
-		})
+		m.log.InfoContext(ctx, "deferred age compaction suppressed by circuit breaker",
+			"session_key", m.sessionKey,
+			"consecutive_failures", m.consecutiveCompactFailures,
+			"resume_at_msg_count", m.breakerTrippedUntilCount,
+		)
 		return false, nil
 	}
-	logger.InfoCF("llmcontext", "running deferred age compaction", map[string]any{
-		"session_key":  m.sessionKey,
-		"trigger_days": m.cfg.triggerDays,
-	})
+	m.log.InfoContext(ctx, "running deferred age compaction",
+		"session_key", m.sessionKey,
+		"trigger_days", m.cfg.triggerDays,
+	)
 	err := m.compress(ctx, false, CompactionStart{Reason: CompactionReasonAge})
 	m.noteAgeTriggerBoundary()
 	return true, err
@@ -1171,11 +1174,11 @@ func (m *Manager) noteAgeTriggerBoundary() {
 		return
 	}
 	m.ageTriggerFloor = oldest
-	logger.InfoCF("llmcontext", "compaction left a message older than the trigger; suppressing the age trigger until the window moves past it", map[string]any{
-		"session_key":  m.sessionKey,
-		"trigger_days": m.cfg.triggerDays,
-		"oldest_age":   time.Since(oldest).Round(time.Hour).String(),
-	})
+	m.log.Info("compaction left a message older than the trigger; suppressing the age trigger until the window moves past it",
+		"session_key", m.sessionKey,
+		"trigger_days", m.cfg.triggerDays,
+		"oldest_age", time.Since(oldest).Round(time.Hour).String(),
+	)
 }
 
 // SetTestCompressHook sets a hook function that is called whenever compress()
@@ -1279,18 +1282,17 @@ func (m *Manager) build(req AssembleRequest) ([]spawnllm.Message, error) {
 	if system != "" {
 		msgs = append(msgs, spawnllm.Message{Role: "system", Content: system})
 	}
-	msgs = append(msgs, sanitizeHistoryForProvider(history)...)
+	msgs = append(msgs, sanitizeHistoryForProvider(history, m.log)...)
 	if routed := routedInjection(req.Injections); routed != "" {
 		msgs = append(msgs, spawnllm.Message{Role: "user", Content: routed})
 	}
-
-	logger.DebugCF("llmcontext", "request assembled", map[string]any{
-		"session_key":  m.sessionKey,
-		"layers":       len(req.Layers),
-		"system_chars": len(system),
-		"history":      len(history),
-		"messages":     len(msgs),
-	})
+	m.log.Debug("request assembled",
+		"session_key", m.sessionKey,
+		"layers", len(req.Layers),
+		"system_chars", len(system),
+		"history", len(history),
+		"messages", len(msgs),
+	)
 
 	// Record what this build added on top of raw history so the history-only
 	// trigger paths can charge for it. Build is read-only with respect to the
@@ -1415,12 +1417,12 @@ func (m *Manager) ForceCompress(ctx context.Context) error {
 	m.compressedAtCount = m.msgCount
 
 	_, after := splitSystemMessage(m.store.GetHistoryWithSeqs(m.sessionKey))
-	logger.WarnCF("llmcontext", "force compression executed", map[string]any{
-		"session_key":  m.sessionKey,
-		"summarized":   m.caller != nil,
-		"removed_msgs": before - len(after),
-		"new_count":    len(after),
-	})
+	m.log.WarnContext(ctx, "force compression executed",
+		"session_key", m.sessionKey,
+		"summarized", m.caller != nil,
+		"removed_msgs", before-len(after),
+		"new_count", len(after),
+	)
 	if m.contextPercent(storedToPlain(after)) >= float64(m.cfg.safetyPercent) {
 		return fmt.Errorf("%w: current turn group alone exceeds context window (%d tokens)",
 			ErrCompressionFailed, m.cfg.contextWindow)
@@ -1481,10 +1483,10 @@ func (m *Manager) Close(ctx context.Context) error {
 	})
 	if _, ok := m.store.(CompactionStateStore); ok {
 		if err := m.store.Save(m.sessionKey); err != nil {
-			logger.WarnCF("llmcontext", "Close: failed to save session", map[string]any{
-				"session_key": m.sessionKey,
-				"error":       err.Error(),
-			})
+			m.log.WarnContext(ctx, "Close: failed to save session",
+				"session_key", m.sessionKey,
+				"error", err.Error(),
+			)
 		}
 	}
 
@@ -1493,10 +1495,10 @@ func (m *Manager) Close(ctx context.Context) error {
 	defer m.archiveMu.Unlock()
 	if m.archive != nil {
 		if err := m.archive.Close(); err != nil {
-			logger.WarnCF("llmcontext", "Close: archive close failed", map[string]any{
-				"session_key": m.sessionKey,
-				"error":       err.Error(),
-			})
+			m.log.WarnContext(ctx, "Close: archive close failed",
+				"session_key", m.sessionKey,
+				"error", err.Error(),
+			)
 		}
 		m.archive = nil
 	}
@@ -1524,10 +1526,10 @@ func (m *Manager) Reset(ctx context.Context) error {
 
 	// 2. Clear the pending-turn flag so no stale flag survives the reset.
 	if err := m.store.ClearPendingTurn(m.sessionKey); err != nil {
-		logger.WarnCF("llmcontext", "Reset: ClearPendingTurn failed", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.WarnContext(ctx, "Reset: ClearPendingTurn failed",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 	}
 
 	// 3. Wipe the active history window and the current rolling summary. The

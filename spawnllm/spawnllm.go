@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.bison9.com/agent/accounting"
@@ -57,7 +58,10 @@ type Event struct {
 // *http.Client across them (WithHTTPClient on the provider, host-side) if you
 // want connection reuse.
 type Worker struct {
-	provider      LLMProvider
+	provider LLMProvider
+	// spec is the provider to build in New when WithProvider was the last
+	// provider option, so it is built with the Worker's logger.
+	spec          *ProviderSpec
 	model         string
 	tools         []toolspec.ToolDefinition
 	toolByName    map[string]toolspec.ToolDefinition
@@ -71,6 +75,11 @@ type Worker struct {
 	// accountingID names the agent and project each provider call is
 	// accounted to.
 	accountingID accounting.Identity
+
+	// logger is the host's logger (nil discards); logContent lets the
+	// providers built from a spec log message content.
+	logger     *slog.Logger
+	logContent bool
 }
 
 // Result is the outcome of a Run.
@@ -87,23 +96,40 @@ type Result struct {
 type Option func(*Worker) error
 
 // WithProvider builds the provider from a resolved spec. This is the primary way
-// to supply a provider.
+// to supply a provider. The provider is built by New, after every option, with
+// the Worker's logger and content setting (WithLogger, WithLogContent).
 func WithProvider(spec ProviderSpec) Option {
 	return func(w *Worker) error {
-		p, model, err := buildProvider(spec)
-		if err != nil {
-			return err
-		}
-		w.provider, w.model = p, model
+		w.spec, w.provider, w.model = &spec, nil, ""
 		return nil
 	}
 }
 
 // WithProviderInstance injects an already-constructed provider. Useful for tests
-// and advanced hosts that build their own clients.
+// and advanced hosts that build their own clients. Such a provider keeps the
+// logger it was built with.
 func WithProviderInstance(p LLMProvider, model string) Option {
 	return func(w *Worker) error {
-		w.provider, w.model = p, model
+		w.spec, w.provider, w.model = nil, p, model
+		return nil
+	}
+}
+
+// WithLogger sets the logger the Worker, and the provider WithProvider builds,
+// write to. Records carry the attribute component. Without it, or with nil,
+// nothing is logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(w *Worker) error {
+		w.logger = l
+		return nil
+	}
+}
+
+// WithLogContent sets whether the provider WithProvider builds may log
+// message content (a CLI's stdout and stderr). Off by default.
+func WithLogContent(v bool) Option {
+	return func(w *Worker) error {
+		w.logContent = v
 		return nil
 	}
 }
@@ -174,6 +200,13 @@ func New(opts ...Option) (*Worker, error) {
 		if err := o(w); err != nil {
 			return nil, err
 		}
+	}
+	if w.spec != nil {
+		p, model, err := buildProvider(*w.spec, w.logger, w.logContent)
+		if err != nil {
+			return nil, err
+		}
+		w.provider, w.model = p, model
 	}
 	if w.provider == nil {
 		return nil, errors.New("spawnllm: no provider configured (use WithProvider or WithProviderInstance)")
@@ -260,7 +293,7 @@ func (w *Worker) execTool(ctx context.Context, tc ToolCall) string {
 	}
 	res, err := def.Handler(&toolspec.ToolCall{
 		Ctx:     ctx,
-		Args:    common.ToolCallInput(tc),
+		Args:    common.ToolCallInput(tc, w.logger),
 		AgentID: w.agentID,
 		Session: w.session,
 		Channel: w.channel,
@@ -277,37 +310,53 @@ func (w *Worker) execTool(ctx context.Context, tc ToolCall) string {
 
 // buildProvider constructs the LLM client for a resolved spec. Host config →
 // rich per-provider option mapping stays in the host; spawnllm applies the
-// universal knobs (timeout, model label).
-func buildProvider(spec ProviderSpec) (LLMProvider, string, error) {
+// universal knobs (timeout, model label) and the logger and content setting.
+func buildProvider(spec ProviderSpec, log *slog.Logger, logContent bool) (LLMProvider, string, error) {
 	secs := int(spec.Timeout / time.Second)
 	switch spec.Kind {
 	case "openai-chat":
 		return NewHTTPProviderWithOptions(spec.APIKey, spec.BaseURL, spec.Proxy,
 			openai_compat.WithRequestTimeout(spec.Timeout),
 			openai_compat.WithModelLabel(spec.Model),
+			openai_compat.WithLogger(log),
 		), spec.Model, nil
 	case "openai-responses":
 		return openai_responses.NewProvider(spec.APIKey, spec.BaseURL, spec.Proxy,
 			openai_responses.WithRequestTimeout(spec.Timeout),
 			openai_responses.WithModelLabel(spec.Model),
+			openai_responses.WithLogger(log),
 		), spec.Model, nil
 	case "azure":
-		return azure.NewProviderWithTimeout(spec.APIKey, spec.BaseURL, spec.Proxy, secs), spec.Model, nil
+		return azure.NewProviderWithTimeout(spec.APIKey, spec.BaseURL, spec.Proxy, secs,
+			azure.WithLogger(log)), spec.Model, nil
 	// Anthropic has one wire format, the Messages API, so "anthropic" and
 	// "anthropic-messages" name the same client.
 	case "anthropic", "anthropic-messages":
-		return anthropicmessages.NewProviderWithTimeout(spec.APIKey, spec.BaseURL, secs), spec.Model, nil
+		return anthropicmessages.NewProviderWithTimeout(spec.APIKey, spec.BaseURL, secs,
+			anthropicmessages.WithLogger(log)), spec.Model, nil
 	case "claude-cli":
-		return NewClaudeCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env), spec.Model, nil
+		p := NewClaudeCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env)
+		p.SetLogger(log)
+		p.SetLogContent(logContent)
+		return p, spec.Model, nil
 	case "codex-cli":
-		return NewCodexCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env), spec.Model, nil
+		p := NewCodexCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env)
+		p.SetLogger(log)
+		p.SetLogContent(logContent)
+		return p, spec.Model, nil
 	case "cursor-cli":
-		return NewCursorCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env), spec.Model, nil
+		p := NewCursorCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env)
+		p.SetLogger(log)
+		p.SetLogContent(logContent)
+		return p, spec.Model, nil
 	// "gemini-cli" is accepted as an alias: Google deprecated the Gemini CLI in
 	// favour of Antigravity, so an existing config naming it keeps working and
 	// runs agy instead.
 	case "antigravity-cli", "gemini-cli":
-		return NewAntigravityCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env), spec.Model, nil
+		p := NewAntigravityCliProviderWithTimeout(spec.CLIPath, spec.Workspace, spec.Timeout, spec.ExtraArgs, spec.Env)
+		p.SetLogger(log)
+		p.SetLogContent(logContent)
+		return p, spec.Model, nil
 	default:
 		return nil, "", fmt.Errorf("spawnllm: unknown provider kind %q", spec.Kind)
 	}

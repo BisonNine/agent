@@ -46,7 +46,7 @@ func (h Host) compact(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	message := stringArg(call.Args, "message")
 
-	h.log("info", "session compaction requested by tool", map[string]any{"session": key})
+	h.log().InfoContext(call.Ctx, "session compaction requested by tool", "session", key)
 	report, summary, err := h.Compact(call.Ctx, key)
 
 	var b strings.Builder
@@ -57,7 +57,7 @@ func (h Host) compact(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	case errors.Is(err, ctxengine.ErrNothingToCompress):
 		b.WriteString("Session is already compact — nothing to summarize.")
 	case err != nil:
-		h.log("warn", "session compaction failed", map[string]any{"session": key, "error": err.Error()})
+		h.log().WarnContext(call.Ctx, "session compaction failed", "session", key, "error", err.Error())
 		return errResult(fmt.Sprintf("compaction failed: %v", err)), nil
 	default:
 		b.WriteString("Session compacted successfully.")
@@ -96,8 +96,8 @@ func (h Host) info(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	info, err := h.SessionInfo(call.Ctx, key)
 	if err != nil {
-		h.log("warn", "session info lookup failed", map[string]any{"session": key, "error": err.Error()})
-		return errResult("session info error: " + err.Error()), nil //nolint:nilerr // tool failures reach the model as an error result; the Go error is for dispatch failures
+		h.log().WarnContext(call.Ctx, "session info lookup failed", "session", key, "error", err.Error())
+		return errResult("session info error: " + err.Error()), nil
 	}
 	if info == nil {
 		return errResult("session info error: no session information returned"), nil
@@ -146,10 +146,10 @@ func (h Host) clear(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	message := stringArg(call.Args, "message")
 	if err := h.Clear(call.Ctx, key, message); err != nil {
-		h.log("warn", "session clear refused", map[string]any{"session": key, "error": err.Error()})
+		h.log().WarnContext(call.Ctx, "session clear refused", "session", key, "error", err.Error())
 		return errResult(err.Error()), nil
 	}
-	h.log("info", "session clear queued by tool", map[string]any{"session": key, "has_note": message != ""})
+	h.log().InfoContext(call.Ctx, "session clear queued by tool", "session", key, "has_note", message != "")
 	text := "Context clear queued. End your turn now — your active conversation will be reset " +
 		"and a new turn will begin"
 	if message != "" {

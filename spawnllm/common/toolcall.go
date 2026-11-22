@@ -2,9 +2,8 @@ package common
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strings"
-
-	"go.bison9.com/agent/logger"
 )
 
 // A ToolCall carries its name and arguments in two places: Name/Arguments
@@ -30,16 +29,16 @@ func ToolCallName(tc ToolCall) string {
 // Function.Arguments parsed as a JSON object. It never returns nil: an absent,
 // empty or unparsable argument string gives an empty object (Anthropic
 // requires tool_use input to be an object); an unparsable one is logged at
-// DEBUG.
-func ToolCallInput(tc ToolCall) map[string]any {
+// DEBUG on log (nil discards).
+func ToolCallInput(tc ToolCall, log *slog.Logger) map[string]any {
 	if len(tc.Arguments) > 0 {
 		return tc.Arguments
 	}
 	if tc.Function != nil && strings.TrimSpace(tc.Function.Arguments) != "" {
 		var parsed map[string]any
 		if err := json.Unmarshal([]byte(tc.Function.Arguments), &parsed); err != nil {
-			logger.DebugCF("common", "tool call arguments are not a JSON object; sending {}",
-				map[string]any{"tool": ToolCallName(tc), "id": tc.ID, "error": err.Error()})
+			commonLog(log).Debug("tool call arguments are not a JSON object; sending {}",
+				"tool", ToolCallName(tc), "id", tc.ID, "error", err.Error())
 		} else if parsed != nil {
 			return parsed
 		}
@@ -49,8 +48,9 @@ func ToolCallInput(tc ToolCall) map[string]any {
 
 // ToolCallArgumentsJSON returns the call's arguments as a JSON object string
 // for the OpenAI wire: Function.Arguments verbatim when set, else Arguments
-// encoded, else "{}".
-func ToolCallArgumentsJSON(tc ToolCall) string {
+// encoded, else "{}". Arguments that cannot be encoded are logged at DEBUG on
+// log (nil discards).
+func ToolCallArgumentsJSON(tc ToolCall, log *slog.Logger) string {
 	if tc.Function != nil && strings.TrimSpace(tc.Function.Arguments) != "" {
 		return tc.Function.Arguments
 	}
@@ -59,16 +59,17 @@ func ToolCallArgumentsJSON(tc ToolCall) string {
 		if err == nil {
 			return string(b)
 		}
-		logger.DebugCF("common", "tool call arguments are not JSON-encodable; sending {}",
-			map[string]any{"tool": ToolCallName(tc), "id": tc.ID, "error": err.Error()})
+		commonLog(log).Debug("tool call arguments are not JSON-encodable; sending {}",
+			"tool", ToolCallName(tc), "id", tc.ID, "error", err.Error())
 	}
 	return "{}"
 }
 
 // WireToolCalls returns copies of calls with Function filled in from
 // Name/Arguments where it is missing, so a call serialises to the OpenAI wire
-// form whichever form it was built in. The input slice is not modified.
-func WireToolCalls(calls []ToolCall) []ToolCall {
+// form whichever form it was built in. The input slice is not modified. log
+// is passed to ToolCallArgumentsJSON.
+func WireToolCalls(calls []ToolCall, log *slog.Logger) []ToolCall {
 	if len(calls) == 0 {
 		return calls
 	}
@@ -80,7 +81,7 @@ func WireToolCalls(calls []ToolCall) []ToolCall {
 			fn = *tc.Function
 		}
 		fn.Name = ToolCallName(tc)
-		fn.Arguments = ToolCallArgumentsJSON(tc)
+		fn.Arguments = ToolCallArgumentsJSON(tc, log)
 		out[i].Function = &fn
 		if out[i].Type == "" {
 			out[i].Type = "function"

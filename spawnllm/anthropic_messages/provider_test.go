@@ -187,9 +187,9 @@ func TestBuildRequestBody(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildRequestBody(tt.messages, tt.tools, tt.model, tt.options)
+			got, err := buildRequestBody(tt.messages, tt.tools, tt.model, tt.options, nil)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("buildRequestBody() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("buildRequestBody(, nil) error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if !reflect.DeepEqual(got, tt.want) {
@@ -201,7 +201,7 @@ func TestBuildRequestBody(t *testing.T) {
 				if err != nil {
 					t.Fatalf("marshal: %v", err)
 				}
-				t.Errorf("buildRequestBody() mismatch:\ngot:\n%s\nwant:\n%s", gotJSON, wantJSON)
+				t.Errorf("buildRequestBody(, nil) mismatch:\ngot:\n%s\nwant:\n%s", gotJSON, wantJSON)
 			}
 		})
 	}
@@ -332,9 +332,9 @@ func TestParseResponseBody(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseResponseBody(tt.body)
+			got, err := parseResponseBody(tt.body, nil)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseResponseBody() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("parseResponseBody(, nil) error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if err != nil {
@@ -506,9 +506,9 @@ func TestBuildRequestBodyEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := buildRequestBody(tt.messages, tt.tools, tt.model, tt.options)
+			got, err := buildRequestBody(tt.messages, tt.tools, tt.model, tt.options, nil)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("buildRequestBody() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("buildRequestBody(, nil) error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if err != nil {
@@ -517,7 +517,7 @@ func TestBuildRequestBodyEdgeCases(t *testing.T) {
 
 			// Verify basic structure
 			if got == nil {
-				t.Error("buildRequestBody() returned nil")
+				t.Error("buildRequestBody(, nil) returned nil")
 				return
 			}
 			if got["model"] != tt.model {
@@ -588,9 +588,9 @@ func TestParseResponseBodyEdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := parseResponseBody(tt.body)
+			got, err := parseResponseBody(tt.body, nil)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("parseResponseBody() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("parseResponseBody(, nil) error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if tt.check != nil && err == nil {
@@ -648,9 +648,9 @@ func TestParseResponseBody_PopulatesDispatchStatus(t *testing.T) {
 			"cache_read_input_tokens": 1024
 		}
 	}`)
-	got, err := parseResponseBody(body)
+	got, err := parseResponseBody(body, nil)
 	if err != nil {
-		t.Fatalf("parseResponseBody() error = %v", err)
+		t.Fatalf("parseResponseBody(, nil) error = %v", err)
 	}
 	if got.Status == nil {
 		t.Fatal("expected non-nil Status")

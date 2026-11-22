@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -55,6 +56,15 @@ type OpenAI struct {
 	apiKey     string
 	httpClient *http.Client
 	openRouter bool
+	logger     *slog.Logger
+}
+
+// log returns the client's logger tagged with the package's component.
+func (c *OpenAI) log() *slog.Logger {
+	if c.logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return c.logger.With("component", component)
 }
 
 // NewOpenAI returns a client for an OpenAI-style base URL. apiKey is sent as
@@ -66,6 +76,7 @@ func NewOpenAI(baseURL, apiKey string, opts ...Option) *OpenAI {
 		apiKey:     apiKey,
 		httpClient: o.httpClient,
 		openRouter: isOpenRouter(baseURL),
+		logger:     o.logger,
 	}
 }
 
@@ -217,7 +228,7 @@ func (c *OpenAI) send(httpReq *http.Request, model string) (*Result, error) {
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 	}
 	resp, err := httpcall.Do(c.httpClient, httpReq,
-		httpcall.Call{Component: component, Backend: "openai", Model: model, APIBase: c.baseURL, JSON: true})
+		httpcall.Call{Logger: c.log(), Backend: "openai", Model: model, APIBase: c.baseURL, JSON: true})
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +237,7 @@ func (c *OpenAI) send(httpReq *http.Request, model string) (*Result, error) {
 		return nil, err
 	}
 
-	collector := common.NewImageCollector(model)
+	collector := common.NewImageCollector(model, c.logger)
 	for _, item := range parsed.Data {
 		switch {
 		case item.B64JSON != "" && item.MediaType != "":

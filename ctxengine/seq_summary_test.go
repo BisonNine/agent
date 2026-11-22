@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -234,7 +235,7 @@ func TestSeqAware_PromptContainsToolMetadata(t *testing.T) {
 		response: buildSeqSummaryJSON("tool metadata", 50, 51),
 	}
 
-	mgr := &Manager{sessionKey: "test", caller: llm}
+	mgr := &Manager{sessionKey: "test", caller: llm, log: slog.New(slog.DiscardHandler)}
 	if _, ok := mgr.callModel(context.Background(), nil, stored, 1, 100, false, "", 0, &compactionRecorder{sessionKey: "test"}); !ok {
 		t.Fatal("expected callModel to accept fake summary")
 	}
@@ -282,7 +283,7 @@ func TestSeqAware_OutOfRangeRetrievableHistoryStripped(t *testing.T) {
 		"covered_seq_end": 20
 	}`
 
-	s, err := validateAndUnmarshalLLMResponse(summaryWithBadEntries)
+	s, err := validateAndUnmarshalLLMResponse(summaryWithBadEntries, discardLog)
 	if err != nil {
 		t.Fatalf("validateAndUnmarshalLLMResponse failed: %v", err)
 	}

@@ -43,7 +43,7 @@ func (h Host) summaryList(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if r != nil {
 		return r, nil
 	}
-	defer iox.CloseQuietly("tools", a)
+	defer iox.CloseQuietly(h.log(), a)
 
 	metas, listErr := a.ListSummaries()
 	if listErr != nil {
@@ -124,7 +124,7 @@ func (h Host) summaryGet(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if r != nil {
 		return r, nil
 	}
-	defer iox.CloseQuietly("tools", a)
+	defer iox.CloseQuietly(h.log(), a)
 
 	rec, found, getErr := a.GetSummary(id)
 	if getErr != nil {

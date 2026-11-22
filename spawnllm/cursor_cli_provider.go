@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
@@ -18,6 +17,8 @@ import (
 // the Claude CLI's ({type, subtype, is_error, result, usage}); the usage field
 // names differ (camelCase: inputTokens/outputTokens/cacheReadTokens/cacheWriteTokens).
 type CursorCliProvider struct {
+	logging
+
 	command   string
 	workspace string
 	timeout   time.Duration
@@ -80,7 +81,7 @@ func (p *CursorCliProvider) chat(
 	_ = tools
 	// Fortify the stdin payload at the tail so JSON-only directives are the
 	// last thing the CLI reads before generating its reply.
-	prompt := applyCLIOptions("cursor-cli", p.buildStdinPrompt(messages), options)
+	prompt := applyCLIOptions(p.log(), "cursor-cli", p.buildStdinPrompt(messages), options)
 
 	// The prompt is piped on stdin (as in `echo … | cursor-agent -p …`), which
 	// avoids exposing it in the argument list and sidesteps ARG_MAX. Approval-
@@ -101,6 +102,7 @@ func (p *CursorCliProvider) chat(
 		baseEnv:   p.baseEnv,
 		env:       p.env,
 		model:     model,
+		logging:   p.logging,
 		parse:     p.parseCursorCliResponse,
 	})
 }
@@ -198,13 +200,11 @@ func (p *CursorCliProvider) parseCursorCliResponse(output string) (*LLMResponse,
 		Usage:        usage,
 		Status:       status,
 	}
-
-	logger.DebugCF("provider", "cursor-cli response",
-		map[string]any{
-			"subtype":       resp.Subtype,
-			"duration_ms":   resp.DurationMS,
-			"content_chars": len(strings.TrimSpace(content)),
-		})
+	p.log().Debug("cursor-cli response",
+		"subtype", resp.Subtype,
+		"duration_ms", resp.DurationMS,
+		"content_chars", len(strings.TrimSpace(content)),
+	)
 
 	return result, nil
 }

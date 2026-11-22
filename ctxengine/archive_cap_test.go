@@ -40,7 +40,7 @@ func TestArchive_StoresLargeToolResultWhole(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	a, err := memory.OpenReadOnly(memory.ArchivePath(dir, "sess"))
+	a, err := memory.OpenReadOnly(memory.ArchivePath(dir, "sess"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

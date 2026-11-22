@@ -7,6 +7,7 @@ package session
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,6 @@ import (
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
 	"go.bison9.com/agent/ctxengine/memory"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -37,10 +37,30 @@ type SQLiteStore struct {
 	// files the store creates.
 	folderPerm os.FileMode
 	filePerm   os.FileMode
+	// logger is the host's logger; nil discards. log is it tagged with the
+	// component "session".
+	logger *slog.Logger
+	log    *slog.Logger
 }
 
 // StoreOption configures NewSQLiteStore.
 type StoreOption func(*SQLiteStore)
+
+// WithLogger sets the logger the store writes to; its records carry the
+// attribute component ("session", and "memory" for the archives). Without it,
+// or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) StoreOption {
+	return func(s *SQLiteStore) { s.logger = l }
+}
+
+// componentLog returns l, the host's logger, tagged with component; a nil l
+// gives a logger that discards.
+func componentLog(l *slog.Logger, component string) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", component)
+}
 
 // WithFolderPermissions sets the mode of the sessions directory when
 // NewSQLiteStore creates it (default memory.DefaultFolderPermissions). An
@@ -90,6 +110,7 @@ func NewSQLiteStore(dir string, opts ...StoreOption) (*SQLiteStore, error) {
 	for _, o := range opts {
 		o(s)
 	}
+	s.log = componentLog(s.logger, "session")
 	if err := iox.EnsureDir(dir, s.folderPerm); err != nil {
 		return nil, fmt.Errorf("session: %w", err)
 	}
@@ -101,6 +122,7 @@ func (s *SQLiteStore) openOptions() []memory.OpenOption {
 	return []memory.OpenOption{
 		memory.WithFolderPermissions(s.folderPerm),
 		memory.WithFilePermissions(s.filePerm),
+		memory.WithLogger(s.logger),
 	}
 }
 
@@ -160,8 +182,8 @@ func state(a *memory.ArchiveStore, key string) (memory.SessionState, error) {
 	return st, nil
 }
 
-func warn(op, key string, err error) {
-	logger.WarnCF("session", op, map[string]any{"session": key, "error": err.Error()})
+func (s *SQLiteStore) warn(op, key string, err error) {
+	s.log.Warn(op, "session", key, "error", err.Error())
 }
 
 func (s *SQLiteStore) AddMessage(sessionKey, role, content string) error {
@@ -207,15 +229,13 @@ func (s *SQLiteStore) AddFullMessage(sessionKey string, msg spawnllm.Message) (i
 
 		// Update noise cache after computing isNoisy.
 		h.noise.Record(stored, noise)
-
-		logger.DebugCF("memory", "message_stored",
-			map[string]any{
-				"seq":     seq,
-				"length":  len(msg.Content),
-				"counted": !isNoisy,
-				"role":    msg.Role,
-				"session": sessionKey,
-			})
+		componentLog(s.logger, "memory").Debug("message_stored",
+			"seq", seq,
+			"length", len(msg.Content),
+			"counted", !isNoisy,
+			"role", msg.Role,
+			"session", sessionKey,
+		)
 		return nil
 	})
 	if err != nil {
@@ -241,7 +261,7 @@ func (s *SQLiteStore) GetHistoryWithSeqs(key string) []memory.StoredMessage {
 		return err
 	})
 	if err != nil {
-		warn("get history", key, err)
+		s.warn("get history", key, err)
 		return []memory.StoredMessage{}
 	}
 	return stored
@@ -255,7 +275,7 @@ func (s *SQLiteStore) GetSummary(key string) string {
 		return err
 	})
 	if err != nil {
-		warn("get summary", key, err)
+		s.warn("get summary", key, err)
 		return ""
 	}
 	return summary
@@ -432,7 +452,7 @@ func (s *SQLiteStore) ListPendingSessions() ([]string, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".archive.db") {
 			continue
 		}
-		a, err := memory.OpenReadOnly(filepath.Join(s.dir, entry.Name()))
+		a, err := memory.OpenReadOnly(filepath.Join(s.dir, entry.Name()), s.logger)
 		if err != nil {
 			continue
 		}
@@ -456,7 +476,7 @@ func (s *SQLiteStore) GetArchiveBounds(sessionKey string) (minSeq, maxSeq int64)
 		return err
 	})
 	if err != nil {
-		warn("get archive bounds", sessionKey, err)
+		s.warn("get archive bounds", sessionKey, err)
 		return 0, 0
 	}
 	return minSeq, maxSeq
@@ -507,12 +527,12 @@ func (s *SQLiteStore) ForgetSession(key string) {
 	if !ok {
 		return
 	}
-	closeHandle(key, h)
+	s.closeHandle(key, h)
 }
 
 // closeHandle marks h dropped and closes its database once any in-flight
 // operation has finished.
-func closeHandle(key string, h *sessionHandle) {
+func (s *SQLiteStore) closeHandle(key string, h *sessionHandle) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.closed = true
@@ -520,7 +540,7 @@ func closeHandle(key string, h *sessionHandle) {
 		return
 	}
 	if err := h.archive.Close(); err != nil {
-		warn("close", key, err)
+		s.warn("close", key, err)
 	}
 	h.archive = nil
 }
@@ -532,7 +552,7 @@ func (s *SQLiteStore) Close() error {
 	s.sessions = make(map[string]*sessionHandle)
 	s.mu.Unlock()
 	for key, h := range handles {
-		closeHandle(key, h)
+		s.closeHandle(key, h)
 	}
 	return nil
 }

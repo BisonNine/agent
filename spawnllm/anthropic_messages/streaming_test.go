@@ -106,7 +106,7 @@ func TestChat_StreamingReconstructsWholeBody(t *testing.T) {
 	}
 
 	// Reconstructed response must equal a non-streaming parse of the whole body.
-	want, err := parseResponseBody([]byte(equivalentWholeBody()))
+	want, err := parseResponseBody([]byte(equivalentWholeBody()), nil)
 	if err != nil {
 		t.Fatalf("parse equivalent body: %v", err)
 	}

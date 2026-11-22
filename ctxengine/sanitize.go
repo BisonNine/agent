@@ -6,7 +6,8 @@
 package ctxengine
 
 import (
-	"go.bison9.com/agent/logger"
+	"log/slog"
+
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -38,7 +39,7 @@ const interruptedToolResult = "[interrupted — the gateway restarted before thi
 // a long time before a strict one answers 400 on every turn. Sanitising on
 // every dispatch means such a session recovers by itself. The result is a new
 // slice; the stored history and its seqs are never touched.
-func sanitizeHistoryForProvider(history []spawnllm.Message) []spawnllm.Message {
+func sanitizeHistoryForProvider(history []spawnllm.Message, log *slog.Logger) []spawnllm.Message {
 	if len(history) == 0 {
 		return history
 	}
@@ -75,7 +76,7 @@ func sanitizeHistoryForProvider(history []spawnllm.Message) []spawnllm.Message {
 		}
 	}
 
-	drops.log(len(out))
+	drops.log(log, len(out))
 	return out
 }
 
@@ -129,18 +130,18 @@ type sanitizeDrops struct {
 	synthesized                                       int // interrupted results added to complete a group
 }
 
-func (d sanitizeDrops) log(kept int) {
+func (d sanitizeDrops) log(log *slog.Logger, kept int) {
 	n := d.system + d.orphanResult + d.strayResult + d.badPredecessor
 	if n == 0 && d.synthesized == 0 {
 		return
 	}
-	logger.DebugCF("llmcontext", "sanitized history for provider", map[string]any{
-		"dropped_total":       n,
-		"system":              d.system,
-		"orphan_result":       d.orphanResult,
-		"stray_result":        d.strayResult,
-		"bad_predecessor":     d.badPredecessor,
-		"synthesized_results": d.synthesized,
-		"kept":                kept,
-	})
+	log.Debug("sanitized history for provider",
+		"dropped_total", n,
+		"system", d.system,
+		"orphan_result", d.orphanResult,
+		"stray_result", d.strayResult,
+		"bad_predecessor", d.badPredecessor,
+		"synthesized_results", d.synthesized,
+		"kept", kept,
+	)
 }

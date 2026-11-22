@@ -26,7 +26,7 @@ func TestBuildProvider_KindSelectsClient(t *testing.T) {
 				APIKey:  "test-key",
 				Model:   "test-model",
 				Timeout: 30 * time.Second,
-			})
+			}, nil, false)
 			if err != nil {
 				t.Fatalf("buildProvider(%q) error: %v", tt.kind, err)
 			}

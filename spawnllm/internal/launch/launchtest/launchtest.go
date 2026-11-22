@@ -4,70 +4,126 @@
  ******************************************************************************/
 
 // Package launchtest captures the accounting records spawnllm's providers
-// report, for tests. The accounting sink is never started in tests, so every
-// record reaches the logger; Capture installs a logger backend that keeps
-// them. Each test package runs in its own process, so captures in different
-// packages cannot see each other's records.
+// report, and the log records of the code under test, for tests. The
+// accounting sink is never started in tests, so every record reaches the
+// accounting logger; Capture sets one that keeps them.
 package launchtest
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 )
+
+// Entry is one captured log record: its level, message and attributes, the
+// ones added with Logger.With included.
+type Entry struct {
+	Level   slog.Level
+	Message string
+	Attrs   map[string]any
+}
+
+// Logs is a slog handler that keeps every record it receives. It is safe for
+// concurrent use.
+type Logs struct {
+	mu      sync.Mutex
+	entries []Entry
+}
+
+// Logger returns a logger writing to l.
+func (l *Logs) Logger() *slog.Logger { return slog.New(logsHandler{l: l}) }
+
+// Entries returns the records captured so far.
+func (l *Logs) Entries() []Entry {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]Entry(nil), l.entries...)
+}
+
+// Find returns the first record with message msg.
+func (l *Logs) Find(msg string) (Entry, bool) {
+	for _, e := range l.Entries() {
+		if e.Message == msg {
+			return e, true
+		}
+	}
+	return Entry{}, false
+}
+
+type logsHandler struct {
+	l     *Logs
+	attrs []slog.Attr
+}
+
+func (logsHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h logsHandler) Handle(_ context.Context, r slog.Record) error {
+	e := Entry{Level: r.Level, Message: r.Message, Attrs: map[string]any{}}
+	for _, a := range h.attrs {
+		e.Attrs[a.Key] = a.Value.Any()
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		e.Attrs[a.Key] = a.Value.Any()
+		return true
+	})
+	h.l.mu.Lock()
+	defer h.l.mu.Unlock()
+	h.l.entries = append(h.l.entries, e)
+	return nil
+}
+
+func (h logsHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return logsHandler{l: h.l, attrs: append(slices.Clip(h.attrs), attrs...)}
+}
+
+func (h logsHandler) WithGroup(string) slog.Handler { return h }
 
 // Recorder keeps the accounting records logged while it is installed.
 type Recorder struct {
-	t       testing.TB
-	mu      sync.Mutex
-	records []accounting.Record
+	t    testing.TB
+	logs Logs
 }
 
-// Capture installs a Recorder as the logger backend for the rest of the test.
-// Tests using it must not run in parallel with other tests that log.
+// Capture sets a Recorder as the accounting logger for the rest of the test.
+// The accounting logger is process-wide, so tests using it must not run in
+// parallel with other tests that report accounting records.
 func Capture(tb testing.TB) *Recorder {
 	tb.Helper()
 	r := &Recorder{t: tb}
-	logger.SetBackend(r)
-	tb.Cleanup(func() { logger.SetBackend(nil) })
+	accounting.SetLogger(r.logs.Logger())
+	tb.Cleanup(func() { accounting.SetLogger(nil) })
 	return r
 }
 
-// Log implements logger.Backend.
-func (r *Recorder) Log(_, component, message string, fields map[string]any) {
-	if component != "accounting" || message != "accounting record" {
-		return
-	}
-	raw, ok := fields["accounting"].(string)
-	if !ok {
-		r.t.Errorf("accounting record without a string accounting field: %v", fields)
-		return
-	}
-	var rec accounting.Record
-	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
-		r.t.Errorf("accounting record is not valid JSON: %v: %s", err, raw)
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.records = append(r.records, rec)
-}
-
-// LogMessageContent implements logger.Backend.
-func (r *Recorder) LogMessageContent() bool { return false }
-
 // Records returns the records captured so far.
 func (r *Recorder) Records() []accounting.Record {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]accounting.Record(nil), r.records...)
+	var out []accounting.Record
+	for _, e := range r.logs.Entries() {
+		if e.Attrs["component"] != "accounting" || e.Message != "accounting record" {
+			continue
+		}
+		raw, ok := e.Attrs["accounting"].(string)
+		if !ok {
+			r.t.Errorf("accounting record without a string accounting attribute: %v", e.Attrs)
+			continue
+		}
+		var rec accounting.Record
+		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+			r.t.Errorf("accounting record is not valid JSON: %v: %s", err, raw)
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
 }
 
 // One returns the only record captured, failing the test unless exactly one

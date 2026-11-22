@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
@@ -36,9 +36,11 @@ const (
 // It handles Azure-specific authentication (api-key header), URL construction
 // (deployment-based), and request body formatting (max_completion_tokens, no model field).
 type Provider struct {
-	apiKey     string
-	apiBase    string
-	httpClient *http.Client
+	apiKey         string
+	apiBase        string
+	httpClient     *http.Client
+	requestTimeout time.Duration // set by WithRequestTimeout; zero keeps the client default
+	logger         *slog.Logger  // the host's logger; nil discards
 }
 
 // Option configures the Azure Provider.
@@ -48,17 +50,30 @@ type Option func(*Provider)
 func WithRequestTimeout(timeout time.Duration) Option {
 	return func(p *Provider) {
 		if timeout > 0 {
-			p.httpClient.Timeout = timeout
+			p.requestTimeout = timeout
 		}
 	}
+}
+
+// WithLogger sets the logger the provider writes to; its records carry the
+// attribute component. Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(p *Provider) { p.logger = l }
+}
+
+// log returns the provider's logger tagged with its component.
+func (p *Provider) log() *slog.Logger {
+	if p.logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return p.logger.With("component", "azure")
 }
 
 // NewProvider creates a new Azure OpenAI provider.
 func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	p := &Provider{
-		apiKey:     apiKey,
-		apiBase:    strings.TrimRight(apiBase, "/"),
-		httpClient: common.NewHTTPClient(proxy),
+		apiKey:  apiKey,
+		apiBase: strings.TrimRight(apiBase, "/"),
 	}
 
 	for _, opt := range opts {
@@ -66,15 +81,20 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 			opt(p)
 		}
 	}
+	p.httpClient = common.NewHTTPClient(proxy, p.logger)
+	if p.requestTimeout > 0 {
+		p.httpClient.Timeout = p.requestTimeout
+	}
 
 	return p
 }
 
-// NewProviderWithTimeout creates a new Azure OpenAI provider with a custom request timeout in seconds.
-func NewProviderWithTimeout(apiKey, apiBase, proxy string, requestTimeoutSeconds int) *Provider {
+// NewProviderWithTimeout creates a new Azure OpenAI provider with a custom
+// request timeout in seconds. opts are applied after the timeout.
+func NewProviderWithTimeout(apiKey, apiBase, proxy string, requestTimeoutSeconds int, opts ...Option) *Provider {
 	return NewProvider(
 		apiKey, apiBase, proxy,
-		WithRequestTimeout(time.Duration(requestTimeoutSeconds)*time.Second),
+		append([]Option{WithRequestTimeout(time.Duration(requestTimeoutSeconds) * time.Second)}, opts...)...,
 	)
 }
 
@@ -137,7 +157,7 @@ func (p *Provider) chat(
 
 	// Build request body — no "model" field (Azure infers from deployment URL)
 	requestBody := map[string]any{
-		"messages": common.SerializeMessages(messages),
+		"messages": common.SerializeMessages(messages, p.logger),
 	}
 
 	// Streaming is opt-in: only when the caller supplied a non-nil delta
@@ -192,7 +212,7 @@ func (p *Provider) chat(
 	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.DebugCF("azure", "closing response body", map[string]any{"error": closeErr.Error()})
+			p.log().DebugContext(ctx, "closing response body", "error", closeErr.Error())
 		}
 	}()
 
@@ -205,7 +225,7 @@ func (p *Provider) chat(
 		return p.readStream(resp, streamCB, tools, model, bytesSent, start)
 	}
 
-	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase, common.ToolNameSet(tools))
+	out, bytesReceived, err := common.ReadParseAndMeasure(resp, p.apiBase, common.ToolNameSet(tools), common.WithLogger(p.logger))
 	durationMs := time.Since(start).Milliseconds()
 	if err != nil {
 		return azureErrorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err
@@ -238,7 +258,7 @@ func (p *Provider) readStream(
 	start time.Time,
 ) (*LLMResponse, error) {
 	counter := &countingReader{r: resp.Body}
-	out, _, err := common.AccumulateChatStream(counter, cb, common.ToolNameSet(tools))
+	out, _, err := common.AccumulateChatStream(counter, cb, common.ToolNameSet(tools), common.WithLogger(p.logger))
 	durationMs := time.Since(start).Milliseconds()
 
 	if err != nil {

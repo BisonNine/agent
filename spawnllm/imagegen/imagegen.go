@@ -21,6 +21,7 @@ package imagegen
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"go.bison9.com/agent/accounting"
@@ -96,6 +97,14 @@ type Option func(*options)
 
 type options struct {
 	httpClient *http.Client
+	logger     *slog.Logger
+}
+
+// WithLogger sets the logger the client writes to; its records carry the
+// attribute component "imagegen". Without it, or with nil, nothing is
+// logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(o *options) { o.logger = l }
 }
 
 // WithHTTPClient sets the HTTP client. The default is a client with no

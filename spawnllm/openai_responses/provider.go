@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -23,7 +24,6 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
@@ -59,6 +59,8 @@ type Provider struct {
 	logFileMode         fs.FileMode // mode for a newly created response log file
 	logDirMode          fs.FileMode // mode for response log parent directories the provider creates
 	httpClient          *http.Client
+	requestTimeout      time.Duration // set by WithRequestTimeout; zero keeps the client default
+	logger              *slog.Logger  // the host's logger; nil discards
 
 	logMu sync.Mutex
 }
@@ -72,7 +74,6 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:      apiKey,
 		apiBase:     strings.TrimRight(apiBase, "/"),
-		httpClient:  common.NewHTTPClient(proxy),
 		logFileMode: 0o600,
 		logDirMode:  0o700,
 	}
@@ -81,15 +82,33 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 			opt(p)
 		}
 	}
+	p.httpClient = common.NewHTTPClient(proxy, p.logger)
+	if p.requestTimeout > 0 {
+		p.httpClient.Timeout = p.requestTimeout
+	}
 	return p
 }
 
 func WithRequestTimeout(timeout time.Duration) Option {
 	return func(p *Provider) {
 		if timeout > 0 {
-			p.httpClient.Timeout = timeout
+			p.requestTimeout = timeout
 		}
 	}
+}
+
+// WithLogger sets the logger the provider writes to; its records carry the
+// attribute component. Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(p *Provider) { p.logger = l }
+}
+
+// log returns the provider's logger tagged with its component.
+func (p *Provider) log() *slog.Logger {
+	if p.logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return p.logger.With("component", "openai_responses")
 }
 
 func WithReasoningEffort(level string) Option {
@@ -209,7 +228,7 @@ func (p *Provider) chat(
 		tools = common.RequestTools(tools, messages)
 	}
 
-	instructions, input := buildInput(messages, search)
+	instructions, input := buildInput(messages, search, p.logger)
 
 	requestBody := map[string]any{
 		"model": model,
@@ -267,8 +286,8 @@ func (p *Provider) chat(
 		if p.responseFormatJSON || defaultSupportsResponseFormatJSON(p.protocol) {
 			requestBody["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
 		} else {
-			logger.DebugCF("openai_responses", "json_object format dropped: protocol not capable",
-				map[string]any{"protocol": p.protocol, "model": p.modelLabelOr(model)})
+			p.log().DebugContext(ctx, "json_object format dropped: protocol not capable",
+				"protocol", p.protocol, "model", p.modelLabelOr(model))
 		}
 	}
 
@@ -276,8 +295,8 @@ func (p *Provider) chat(
 	// then strip operator drop_params last so they win over everything.
 	for k, v := range p.extraBody {
 		if _, clash := requestBody[k]; clash {
-			logger.WarnCF("openai_responses", "extra_body key collides with managed request field; skipping",
-				map[string]any{"model": p.modelLabelOr(model), "key": k})
+			p.log().WarnContext(ctx, "extra_body key collides with managed request field; skipping",
+				"model", p.modelLabelOr(model), "key", k)
 			continue
 		}
 		requestBody[k] = v
@@ -314,7 +333,7 @@ func (p *Provider) chat(
 	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.DebugCF("openai_responses", "closing response body", map[string]any{"error": closeErr.Error()})
+			p.log().DebugContext(ctx, "closing response body", "error", closeErr.Error())
 		}
 	}()
 
@@ -342,7 +361,7 @@ func (p *Provider) chat(
 		return errorStatus(model, "error", durationMs, bytesSent, bytesReceived), respErr
 	}
 
-	out, err := parseResponse(raw, model, search.toolName())
+	out, err := parseResponse(raw, model, search.toolName(), p.logger)
 	if err != nil {
 		return errorStatus(model, "parse_error", durationMs, bytesSent, bytesReceived), err
 	}
@@ -422,7 +441,7 @@ func (p *Provider) readStream(
 			errors.New("stream ended without response.completed event")
 	}
 
-	out, err := parseResponse(completed, model, searchTool)
+	out, err := parseResponse(completed, model, searchTool, p.logger)
 	if err != nil {
 		return errorStatus(model, "parse_error", durationMs, bytesSent, counter.n), err
 	}
@@ -480,7 +499,7 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // following as a developer message), a call to a deferred
 // tool carries its namespace, and the result of any other tool that references
 // deferred tools is followed by an additional_tools item that loads them.
-func buildInput(messages []Message, search *toolSearch) (instructions string, input []any) {
+func buildInput(messages []Message, search *toolSearch, log *slog.Logger) (instructions string, input []any) {
 	var sys strings.Builder
 	input = make([]any, 0, len(messages))
 	for _, m := range messages {
@@ -526,14 +545,14 @@ func buildInput(messages []Message, search *toolSearch) (instructions string, in
 			}
 			for _, tc := range m.ToolCalls {
 				if search.matches(tc) {
-					input = append(input, search.callItem(tc))
+					input = append(input, search.callItem(tc, log))
 					continue
 				}
 				item := map[string]any{
 					"type":      "function_call",
 					"call_id":   tc.ID,
 					"name":      common.ToolCallName(tc),
-					"arguments": common.ToolCallArgumentsJSON(tc),
+					"arguments": common.ToolCallArgumentsJSON(tc, log),
 				}
 				if ns := search.namespace(common.ToolCallName(tc)); ns != "" {
 					item["namespace"] = ns
@@ -690,7 +709,7 @@ func argumentsJSON(raw json.RawMessage) string {
 // the name of the host's tool-search tool when it was sent as the client
 // tool_search tool (else ""): a client tool_search_call is reported as an
 // ordinary call to it.
-func parseResponse(raw []byte, model, searchTool string) (*LLMResponse, error) {
+func parseResponse(raw []byte, model, searchTool string, log *slog.Logger) (*LLMResponse, error) {
 	var env responseEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, fmt.Errorf("failed to parse Responses API body: %w", err)
@@ -700,7 +719,7 @@ func parseResponse(raw []byte, model, searchTool string) (*LLMResponse, error) {
 	var reasoning strings.Builder
 	var toolCalls []ToolCall
 	var reasoningItems []json.RawMessage
-	images := common.NewImageCollector(model)
+	images := common.NewImageCollector(model, log)
 	for _, raw := range env.Output {
 		var item responseOutputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -855,10 +874,10 @@ func (p *Provider) appendLog(dir, model string, status int, durationMs int64, bo
 	}
 	defer func() {
 		if closeErr := f.Close(); closeErr != nil {
-			logger.DebugCF("openai_responses", "closing response log", map[string]any{"error": closeErr.Error()})
+			p.log().Debug("closing response log", "error", closeErr.Error())
 		}
 	}()
 	if _, err := f.Write(append(data, '\n')); err != nil {
-		logger.DebugCF("openai_responses", "writing response log", map[string]any{"error": err.Error()})
+		p.log().Debug("writing response log", "error", err.Error())
 	}
 }

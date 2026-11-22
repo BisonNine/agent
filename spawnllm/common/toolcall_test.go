@@ -82,7 +82,7 @@ func TestToolCallNameAndInput(t *testing.T) {
 			if got := ToolCallName(tt.call); got != tt.wantName {
 				t.Errorf("ToolCallName = %q, want %q", got, tt.wantName)
 			}
-			got := ToolCallInput(tt.call)
+			got := ToolCallInput(tt.call, nil)
 			if got == nil {
 				t.Fatal("ToolCallInput returned nil, want an object")
 			}
@@ -107,7 +107,7 @@ func TestToolCallArgumentsJSON(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := ToolCallArgumentsJSON(tt.call); got != tt.want {
+			if got := ToolCallArgumentsJSON(tt.call, nil); got != tt.want {
 				t.Errorf("ToolCallArgumentsJSON = %s, want %s", got, tt.want)
 			}
 		})
@@ -119,7 +119,7 @@ func TestWireToolCalls_FillsFunctionWithoutMutatingInput(t *testing.T) {
 		{ID: "c1", Name: "get_weather", Arguments: map[string]any{"city": "Paris"}},
 		{ID: "c2", Type: "function", Function: &FunctionCall{Name: "ping", Arguments: `{}`, ThoughtSignature: "sig"}},
 	}
-	out := WireToolCalls(in)
+	out := WireToolCalls(in, nil)
 
 	if in[0].Function != nil {
 		t.Error("input call was modified")
@@ -134,8 +134,8 @@ func TestWireToolCalls_FillsFunctionWithoutMutatingInput(t *testing.T) {
 	if out[1].Function.Name != "ping" || out[1].Function.ThoughtSignature != "sig" {
 		t.Errorf("out[1].Function = %+v", out[1].Function)
 	}
-	if WireToolCalls(nil) != nil {
-		t.Error("WireToolCalls(nil) != nil")
+	if WireToolCalls(nil, nil) != nil {
+		t.Error("WireToolCalls(nil, nil) != nil")
 	}
 }
 
@@ -146,11 +146,11 @@ func TestSerializeMessages_ToolCallsInEitherForm(t *testing.T) {
 		calls []ToolCall
 	}{
 		{"direct name and arguments", direct},
-		{"reloaded from history", roundTrip(t, WireToolCalls(direct))},
+		{"reloaded from history", roundTrip(t, WireToolCalls(direct, nil))},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			b, err := json.Marshal(SerializeMessages([]Message{{Role: "assistant", ToolCalls: tt.calls}}))
+			b, err := json.Marshal(SerializeMessages([]Message{{Role: "assistant", ToolCalls: tt.calls}}, nil))
 			if err != nil {
 				t.Fatalf("marshal: %v", err)
 			}

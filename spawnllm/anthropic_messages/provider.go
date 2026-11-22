@@ -12,13 +12,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
@@ -47,7 +47,29 @@ type Provider struct {
 	apiKey     string
 	apiBase    string
 	httpClient *http.Client
+	logger     *slog.Logger // the host's logger; nil discards
 }
+
+// Option configures a Provider.
+type Option func(*Provider)
+
+// WithLogger sets the logger the provider writes to; its records carry the
+// attribute component. Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(p *Provider) { p.logger = l }
+}
+
+// componentLog returns l, the host's logger, tagged with the package's
+// component; a nil l gives a logger that discards.
+func componentLog(l *slog.Logger) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", "anthropic_messages")
+}
+
+// log returns the provider's logger tagged with its component.
+func (p *Provider) log() *slog.Logger { return componentLog(p.logger) }
 
 // SupportsThinking implements spawnllm.ThinkingCapable: the "thinking_level"
 // option turns on Anthropic adaptive thinking.
@@ -60,25 +82,31 @@ func (p *Provider) SupportsDeferredTools(model string) bool {
 }
 
 // NewProvider creates a new Anthropic Messages API provider.
-func NewProvider(apiKey, apiBase string) *Provider {
-	return NewProviderWithTimeout(apiKey, apiBase, 0)
+func NewProvider(apiKey, apiBase string, opts ...Option) *Provider {
+	return NewProviderWithTimeout(apiKey, apiBase, 0, opts...)
 }
 
 // NewProviderWithTimeout creates a provider with custom request timeout.
-func NewProviderWithTimeout(apiKey, apiBase string, timeoutSeconds int) *Provider {
+func NewProviderWithTimeout(apiKey, apiBase string, timeoutSeconds int, opts ...Option) *Provider {
 	baseURL := normalizeBaseURL(apiBase)
 	timeout := defaultRequestTimeout
 	if timeoutSeconds > 0 {
 		timeout = time.Duration(timeoutSeconds) * time.Second
 	}
 
-	return &Provider{
+	p := &Provider{
 		apiKey:  apiKey,
 		apiBase: baseURL,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(p)
+		}
+	}
+	return p
 }
 
 // Chat sends messages to the Anthropic Messages API and returns the
@@ -124,7 +152,7 @@ func (p *Provider) chat(
 	}
 
 	// Build request body
-	requestBody, err := buildRequestBody(messages, tools, model, options)
+	requestBody, err := buildRequestBody(messages, tools, model, options, p.logger)
 	if err != nil {
 		return nil, fmt.Errorf("building request body: %w", err)
 	}
@@ -174,7 +202,7 @@ func (p *Provider) chat(
 	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.DebugCF("anthropic_messages", "closing response body", map[string]any{"error": closeErr.Error()})
+			p.log().DebugContext(ctx, "closing response body", "error", closeErr.Error())
 		}
 	}()
 
@@ -214,7 +242,7 @@ func (p *Provider) chat(
 		}
 	}
 
-	out, err := parseResponseBody(body)
+	out, err := parseResponseBody(body, p.logger)
 	if err != nil {
 		return httpErrorResponse(model, "parse_error", durationMs, bytesSent, bytesReceived), err
 	}
@@ -248,7 +276,7 @@ func (p *Provider) readStream(
 		return httpErrorResponse(model, "error", durationMs, bytesSent, bytesReceived), streamErr
 	}
 
-	out, err := parseResponseBody(body)
+	out, err := parseResponseBody(body, p.logger)
 	if err != nil {
 		return httpErrorResponse(model, "parse_error", durationMs, bytesSent, bytesReceived), err
 	}
@@ -510,6 +538,7 @@ func buildRequestBody(
 	tools []ToolDefinition,
 	model string,
 	options map[string]any,
+	log *slog.Logger,
 ) (map[string]any, error) {
 	// max_tokens is required and guaranteed by agent loop
 	maxTokens, ok := asInt(options["max_tokens"])
@@ -526,8 +555,8 @@ func buildRequestBody(
 	// temperature is never sent: current Claude models refuse any value
 	// other than the default.
 	if temp, ok := options["temperature"]; ok {
-		logger.DebugCF("anthropic_messages", "temperature not sent to Anthropic",
-			map[string]any{"temperature": temp})
+		componentLog(log).Debug("temperature not sent to Anthropic",
+			"temperature", temp)
 	}
 
 	// Adaptive thinking. When it is on, the thinking blocks of earlier
@@ -596,7 +625,7 @@ func buildRequestBody(
 					"type":  "tool_use",
 					"id":    tc.ID,
 					"name":  common.ToolCallName(tc),
-					"input": common.ToolCallInput(tc),
+					"input": common.ToolCallInput(tc, log),
 				}
 				content = append(content, toolUse)
 			}
@@ -730,7 +759,7 @@ func toolResultBlocks(msg Message, native bool, sentTools map[string]bool) []map
 }
 
 // parseResponseBody parses Anthropic Messages API response.
-func parseResponseBody(body []byte) (*LLMResponse, error) {
+func parseResponseBody(body []byte, log *slog.Logger) (*LLMResponse, error) {
 	var resp anthropicMessageResponse
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("parsing JSON response: %w", err)
@@ -762,8 +791,8 @@ func parseResponseBody(body []byte) (*LLMResponse, error) {
 		case "tool_use":
 			argsJSON, err := json.Marshal(block.Input)
 			if err != nil {
-				logger.DebugCF("anthropic_messages", "tool_use input is not valid JSON",
-					map[string]any{"tool": block.Name, "error": err.Error()})
+				componentLog(log).Debug("tool_use input is not valid JSON",
+					"tool", block.Name, "error", err.Error())
 			}
 			toolCalls = append(toolCalls, ToolCall{
 				ID:        block.ID,

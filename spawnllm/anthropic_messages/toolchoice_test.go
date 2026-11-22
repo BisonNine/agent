@@ -34,9 +34,9 @@ func TestBuildRequestBody_ToolChoice(t *testing.T) {
 			if tt.choice != nil {
 				options[common.ToolChoiceOption] = tt.choice
 			}
-			body, err := buildRequestBody([]Message{{Role: "user", Content: "hi"}}, tt.tools, "claude-test", options)
+			body, err := buildRequestBody([]Message{{Role: "user", Content: "hi"}}, tt.tools, "claude-test", options, nil)
 			if err != nil {
-				t.Fatalf("buildRequestBody() error = %v", err)
+				t.Fatalf("buildRequestBody(, nil) error = %v", err)
 			}
 			got, set := body["tool_choice"]
 			if set != tt.wantSet {

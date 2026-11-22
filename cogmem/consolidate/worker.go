@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -17,7 +18,6 @@ import (
 	"github.com/google/uuid"
 
 	"go.bison9.com/agent/cogmem/store"
-	"go.bison9.com/agent/logger"
 )
 
 // leaseTTL bounds how long a single RunOnce may hold the per-archive lease.
@@ -91,6 +91,8 @@ type Worker struct {
 	modelName      string
 	folderMode     os.FileMode
 	fileMode       os.FileMode
+	logger         *slog.Logger // the host's logger; nil discards
+	log            *slog.Logger // logger tagged with the component "cogmem"
 
 	// Retention windows in days; 0 means keep forever. Applied on each run,
 	// because consolidation is already the regular sweep over a store and a
@@ -124,6 +126,19 @@ func WithRetention(eventDays, retiredDays int) Option {
 // WithModelName sets the model name recorded on a run when the host's reply
 // carries none.
 func WithModelName(name string) Option { return func(w *Worker) { w.modelName = name } }
+
+// WithLogger sets the logger the Worker writes to; its records carry the
+// attribute component "cogmem". Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option { return func(w *Worker) { w.logger = l } }
+
+// componentLog returns l, the host's logger, tagged with the component
+// "cogmem"; a nil l gives a logger that discards.
+func componentLog(l *slog.Logger) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", "cogmem")
+}
 
 // WithFolderPermissions sets the mode for the debug dump directory when it is
 // created (default: the store's folder mode). Zero is ignored.
@@ -162,6 +177,7 @@ func NewWorker(st *store.Store, model ModelCaller, opts ...Option) *Worker {
 	for _, o := range opts {
 		o(w)
 	}
+	w.log = componentLog(w.logger)
 	return w
 }
 
@@ -240,13 +256,13 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	// memories (e.g. a runaway loop that wrote the same fact repeatedly). Cheap
 	// and idempotent; best-effort so a dedup error never blocks consolidation.
 	if n, derr := w.st.DedupeActiveMemories(ctx); derr != nil {
-		logger.WarnCF("cogmem", "dedupe active memories failed", map[string]any{
-			"id": p.ID, "error": derr.Error(),
-		})
+		w.log.WarnContext(ctx, "dedupe active memories failed",
+			"id", p.ID, "error", derr.Error(),
+		)
 	} else if n > 0 {
-		logger.InfoCF("cogmem", "consolidation: retired duplicate memories", map[string]any{
-			"id": p.ID, "retired": n,
-		})
+		w.log.InfoContext(ctx, "consolidation: retired duplicate memories",
+			"id", p.ID, "retired", n,
+		)
 	}
 
 	w.applyRetention(ctx, p.ID)
@@ -260,8 +276,8 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	promptPath := PromptPath(p.Workspace)
 	system, prompt := BuildPrompt(promptPath)
 	if prompt.Ignored {
-		logger.WarnCF("cogmem", "Ignoring per-agent consolidation instructions: "+prompt.Reason,
-			map[string]any{"path": promptPath})
+		w.log.WarnContext(ctx, "Ignoring per-agent consolidation instructions: "+prompt.Reason,
+			"path", promptPath)
 	}
 	userJSON, err := json.Marshal(in)
 	if err != nil {
@@ -409,16 +425,16 @@ func (w *Worker) callModel(ctx context.Context, runID, system, user string) (Out
 		if strings.TrimSpace(reply.Content) == "" {
 			reason = "empty"
 		}
-		logger.WarnCF("cogmem", "consolidation: model reply unusable", map[string]any{
-			"id":            runID,
-			"model":         w.modelLabel(reply.Model),
-			"attempt":       attempt,
-			"max_attempts":  maxModelAttempts,
-			"reason":        reason,
-			"parse_error":   perr.Error(),
-			"finish_reason": reply.FinishReason,
-			"content_chars": len(reply.Content),
-		})
+		w.log.WarnContext(ctx, "consolidation: model reply unusable",
+			"id", runID,
+			"model", w.modelLabel(reply.Model),
+			"attempt", attempt,
+			"max_attempts", maxModelAttempts,
+			"reason", reason,
+			"parse_error", perr.Error(),
+			"finish_reason", reply.FinishReason,
+			"content_chars", len(reply.Content),
+		)
 		if reply.Model != "" && !slices.Contains(req.Exclude, reply.Model) {
 			req.Exclude = append(req.Exclude, reply.Model)
 		}
@@ -490,22 +506,22 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 // run that was actually asked for.
 func (w *Worker) applyRetention(ctx context.Context, id string) {
 	if n, err := w.st.PurgeExpiredEvents(ctx, w.st.DB(), w.eventDays); err != nil {
-		logger.WarnCF("cogmem", "purge expired events failed", map[string]any{
-			"id": id, "error": err.Error(),
-		})
+		w.log.WarnContext(ctx, "purge expired events failed",
+			"id", id, "error", err.Error(),
+		)
 	} else if n > 0 {
-		logger.InfoCF("cogmem", "consolidation: deleted expired event memories", map[string]any{
-			"id": id, "deleted": n, "older_than_days": w.eventDays,
-		})
+		w.log.InfoContext(ctx, "consolidation: deleted expired event memories",
+			"id", id, "deleted", n, "older_than_days", w.eventDays,
+		)
 	}
 	if n, err := w.st.PurgeRetiredMemories(ctx, w.st.DB(), w.retiredDays); err != nil {
-		logger.WarnCF("cogmem", "purge retired memories failed", map[string]any{
-			"id": id, "error": err.Error(),
-		})
+		w.log.WarnContext(ctx, "purge retired memories failed",
+			"id", id, "error", err.Error(),
+		)
 	} else if n > 0 {
-		logger.InfoCF("cogmem", "consolidation: deleted retired memories", map[string]any{
-			"id": id, "deleted": n, "retired_more_than_days_ago": w.retiredDays,
-		})
+		w.log.InfoContext(ctx, "consolidation: deleted retired memories",
+			"id", id, "deleted", n, "retired_more_than_days_ago", w.retiredDays,
+		)
 	}
 }
 

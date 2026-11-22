@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
@@ -21,16 +22,10 @@ import (
 	"github.com/google/uuid"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
-
-// warnFn is the logger hook the provider uses for non-fatal warnings (e.g.
-// extra_body merge collisions, diagnostic log open/write failures). Tests
-// swap this for a capturing function.
-var warnFn = logger.WarnCF
 
 type (
 	ToolCall               = protocoltypes.ToolCall
@@ -63,6 +58,8 @@ type Provider struct {
 	protocol            string              // Protocol prefix (e.g. "openai", "xai", "openrouter"); drives capability gating
 	responseFormatJSON  bool                // Whether this provider may emit response_format=json_object when callers ask for it
 	httpClient          *http.Client
+	requestTimeout      time.Duration // set by WithRequestTimeout; zero keeps the client default
+	logger              *slog.Logger  // the host's logger; nil discards
 
 	logMu      sync.Mutex // serialises appends to responseLogFile across goroutines sharing this Provider
 	logFile    *os.File   // lazily opened on first use; held for Provider lifetime so the file is opened at most once
@@ -83,9 +80,23 @@ func WithMaxTokensField(maxTokensField string) Option {
 func WithRequestTimeout(timeout time.Duration) Option {
 	return func(p *Provider) {
 		if timeout > 0 {
-			p.httpClient.Timeout = timeout
+			p.requestTimeout = timeout
 		}
 	}
+}
+
+// WithLogger sets the logger the provider writes to; its records carry the
+// attribute component. Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(p *Provider) { p.logger = l }
+}
+
+// log returns the provider's logger tagged with its component.
+func (p *Provider) log() *slog.Logger {
+	if p.logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return p.logger.With("component", "openai_compat")
 }
 
 func WithStrictCompat(v bool) Option {
@@ -216,7 +227,6 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:      apiKey,
 		apiBase:     strings.TrimRight(apiBase, "/"),
-		httpClient:  common.NewHTTPClient(proxy),
 		logFileMode: 0o600,
 		logDirMode:  0o700,
 	}
@@ -225,6 +235,10 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 		if opt != nil {
 			opt(p)
 		}
+	}
+	p.httpClient = common.NewHTTPClient(proxy, p.logger)
+	if p.requestTimeout > 0 {
+		p.httpClient.Timeout = p.requestTimeout
 	}
 
 	return p
@@ -310,7 +324,7 @@ func (p *Provider) chat(
 
 	requestBody := map[string]any{
 		"model":    model,
-		"messages": serializeMessages(messages, p.strictCompat),
+		"messages": serializeMessages(messages, p.strictCompat, p.logger),
 	}
 
 	// Streaming is opt-in: only when the caller supplied a non-nil delta
@@ -411,12 +425,10 @@ func (p *Provider) chat(
 		if p.responseFormatJSON || defaultSupportsResponseFormatJSON(p.protocol) {
 			requestBody["response_format"] = map[string]any{"type": "json_object"}
 		} else {
-			logger.DebugCF("openai_compat",
-				"response_format=json_object dropped: protocol not capable",
-				map[string]any{
-					"protocol": p.protocol,
-					"model":    p.modelLabelOr(model),
-				})
+			p.log().DebugContext(ctx, "response_format=json_object dropped: protocol not capable",
+				"protocol", p.protocol,
+				"model", p.modelLabelOr(model),
+			)
 		}
 	}
 
@@ -433,11 +445,10 @@ func (p *Provider) chat(
 			continue
 		}
 		if _, clash := requestBody[k]; clash {
-			warnFn("openai_compat", "extra_body key collides with a request field spawnllm sets; skipping",
-				map[string]any{
-					"model": p.modelLabelOr(model),
-					"key":   k,
-				})
+			p.log().WarnContext(ctx, "extra_body key collides with a request field spawnllm sets; skipping",
+				"model", p.modelLabelOr(model),
+				"key", k,
+			)
 			continue
 		}
 		requestBody[k] = v
@@ -483,7 +494,7 @@ func (p *Provider) chat(
 	launch.HTTPStatus(ctx, resp.StatusCode)
 	defer func() {
 		if closeErr := resp.Body.Close(); closeErr != nil {
-			logger.DebugCF("openai_compat", "closing response body", map[string]any{"error": closeErr.Error()})
+			p.log().DebugContext(ctx, "closing response body", "error", closeErr.Error())
 		}
 	}()
 
@@ -580,10 +591,11 @@ func (p *Provider) readStream(
 // OpenRouter's usage.cost is known to be in US dollars (credits, 1 credit =
 // $1), so the cost is read from no other host.
 func (p *Provider) parseOptions() []common.ParseOption {
+	opts := []common.ParseOption{common.WithLogger(p.logger)}
 	if isOpenRouterHost(p.apiBase) {
-		return []common.ParseOption{common.WithUsageCost()}
+		opts = append(opts, common.WithUsageCost())
 	}
-	return nil
+	return opts
 }
 
 // countingReader tracks bytes read so streaming can report BytesReceived.
@@ -717,11 +729,13 @@ func normalizeAlternation(in []Message) []Message {
 //   - Preserves ToolCallID, ToolCalls, and ReasoningContent for all messages
 //   - When strictCompat is true, strips non-standard fields (reasoning_content, extra_content,
 //     thought_signature) that some strict OpenAI-compatible providers reject
-func serializeMessages(messages []Message, strictCompat bool) []any {
+//
+// log is passed to common.WireToolCalls.
+func serializeMessages(messages []Message, strictCompat bool, log *slog.Logger) []any {
 	out := make([]any, 0, len(messages))
 	for _, m := range messages {
 		m.Content = common.ToolResultText(m)
-		toolCalls := common.WireToolCalls(m.ToolCalls)
+		toolCalls := common.WireToolCalls(m.ToolCalls, log)
 		reasoningContent := m.ReasoningContent
 
 		if strictCompat {
@@ -894,8 +908,8 @@ func (p *Provider) writeLogEntry(e logEntry) {
 		if err != nil {
 			p.logOpenErr = err
 			p.logErrOnce.Do(func() {
-				warnFn("openai_compat", "response_log_file open failed; further failures suppressed",
-					map[string]any{"path": p.responseLogFile, "err": err.Error()})
+				p.log().Warn("response_log_file open failed; further failures suppressed",
+					"path", p.responseLogFile, "err", err.Error())
 			})
 			return
 		}
@@ -906,8 +920,8 @@ func (p *Provider) writeLogEntry(e logEntry) {
 	}
 	if _, err := p.logFile.Write(line); err != nil {
 		p.logErrOnce.Do(func() {
-			warnFn("openai_compat", "response_log_file write failed; further failures suppressed",
-				map[string]any{"path": p.responseLogFile, "err": err.Error()})
+			p.log().Warn("response_log_file write failed; further failures suppressed",
+				"path", p.responseLogFile, "err", err.Error())
 		})
 	}
 }

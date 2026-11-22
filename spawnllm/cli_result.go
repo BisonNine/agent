@@ -7,8 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"time"
-
-	"go.bison9.com/agent/logger"
 )
 
 // jsonCLICall describes one Chat call to a CLI that reads its prompt on stdin
@@ -28,6 +26,8 @@ type jsonCLICall struct {
 	env       map[string]string
 	model     string
 	parse     func(stdout string) (*LLMResponse, error)
+	// logging is the provider's logger and content setting.
+	logging logging
 }
 
 // runJSONCLI runs c.command with c.args, piping c.prompt on stdin, bounded by
@@ -50,7 +50,7 @@ func runJSONCLI(ctx context.Context, c *jsonCLICall) (*LLMResponse, error) {
 	cmd.Env = applyProviderEnv(c.baseEnv, c.env)
 
 	bytesSent := int64(len(c.prompt))
-	run, runErr := runCLI(ctx, cmd)
+	run, runErr := runCLI(ctx, cmd, c.logging.log())
 	return jsonCLIResult(ctx, c, bytesSent, run, runErr)
 }
 
@@ -92,8 +92,8 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 					resp.Status.BytesSent = bytesSent
 					resp.Status.BytesReceived = bytesReceived
 				}
-				logger.WarnCF("provider", label+"-cli exited non-zero but returned valid content",
-					map[string]any{"exit_code": exitCode})
+				c.logging.log().WarnContext(ctx, label+"-cli exited non-zero but returned valid content",
+					"exit_code", exitCode)
 				return resp, nil
 			}
 		}
@@ -104,15 +104,14 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 		}
 		stderrStr := strings.TrimSpace(stderr.String())
 		stdoutStr := strings.TrimSpace(stdout.String())
-		fields := map[string]any{
-			"agent_id":  AgentIDFromContext(ctx),
-			"exit_code": exitCode,
+		attrs := []any{
+			"agent_id", AgentIDFromContext(ctx),
+			"exit_code", exitCode,
 		}
-		if logger.GetLogMessageContent() {
-			fields["stderr"] = stderrStr
-			fields["stdout"] = stdoutStr
+		if c.logging.logContent {
+			attrs = append(attrs, "stderr", stderrStr, "stdout", stdoutStr)
 		}
-		logger.ErrorCF("provider", label+"-cli subprocess failed", fields)
+		c.logging.log().ErrorContext(ctx, label+"-cli subprocess failed", attrs...)
 		errResp := cliErrorResponse(model, "error", elapsed, bytesSent, bytesReceived)
 		withReportedUsage(errResp.Status, reported)
 		switch {
@@ -129,8 +128,8 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 
 	// Log non-empty stderr on successful exit.
 	if stderrStr := strings.TrimSpace(stderr.String()); stderrStr != "" {
-		logger.WarnCF("provider", label+"-cli wrote to stderr on successful exit",
-			map[string]any{"stderr": stderrStr})
+		c.logging.log().WarnContext(ctx, label+"-cli wrote to stderr on successful exit",
+			"stderr", stderrStr)
 	}
 
 	resp, parseErr := c.parse(stdout.String())
@@ -148,11 +147,11 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 		resp.Status.BytesReceived = bytesReceived
 	}
 	if resp.Content == "" {
-		warnFields := map[string]any{}
-		if logger.GetLogMessageContent() {
-			warnFields["raw_stdout"] = strings.TrimSpace(stdout.String())
+		var attrs []any
+		if c.logging.logContent {
+			attrs = append(attrs, "raw_stdout", strings.TrimSpace(stdout.String()))
 		}
-		logger.WarnCF("provider", label+"-cli returned empty content", warnFields)
+		c.logging.log().WarnContext(ctx, label+"-cli returned empty content", attrs...)
 	}
 	return resp, nil
 }

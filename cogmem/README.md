@@ -182,8 +182,9 @@ can serve both.
 
 ## Host obligations
 
-- Install a logging backend with `logger.SetBackend` from
-  `go.bison9.com/agent/logger` (silent otherwise).
+- Pass a `*slog.Logger` in `SessionOptions.Logger`, to the consolidation
+  `Manager` with `consolidate.WithManagerLogger` and to each `Worker` with
+  `consolidate.WithLogger` (silent otherwise).
 - Provide a `consolidate.ModelCaller` (see above) and, if attachments are
   wanted, an `AttachmentLoader` that enforces the agent's read permissions.
 - Call `Session.Observe` after every stored message with the transcript seq,

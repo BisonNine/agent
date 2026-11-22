@@ -9,10 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
-
-	"go.bison9.com/agent/logger"
 )
 
 const summaryVersion = 2
@@ -692,7 +691,7 @@ func buildSummarizationPrompt(existing *Summary, archiveMin, archiveMax int64, a
 // {...} object (respecting string literals and \-escaped quotes) and parses
 // that. If no balanced object is found, the original buffer's unmarshal error
 // is returned unchanged so genuinely broken responses still fail loudly.
-func validateAndUnmarshalLLMResponse(response string) (*Summary, error) {
+func validateAndUnmarshalLLMResponse(response string, log *slog.Logger) (*Summary, error) {
 	// Strip markdown fences if present (some providers add them despite instructions).
 	cleaned := strings.TrimSpace(response)
 	if strings.HasPrefix(cleaned, "```") {
@@ -725,11 +724,10 @@ func validateAndUnmarshalLLMResponse(response string) (*Summary, error) {
 		// surface the original error so we don't mask the real failure.
 		return nil, fmt.Errorf("unmarshal: %w", directErr)
 	}
-	logger.DebugCF("llmcontext", "recovered JSON from prose-wrapped LLM response",
-		map[string]any{
-			"prefix_len": start,
-			"suffix_len": len(cleaned) - (end + 1),
-		})
+	log.Debug("recovered JSON from prose-wrapped LLM response",
+		"prefix_len", start,
+		"suffix_len", len(cleaned)-(end+1),
+	)
 	if err := s2.Validate(); err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
 	}

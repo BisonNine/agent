@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // ClaudeCliProvider implements LLMProvider using the claude CLI as a subprocess.
 type ClaudeCliProvider struct {
+	logging
+
 	command   string
 	workspace string
 	timeout   time.Duration
@@ -78,7 +79,7 @@ func (p *ClaudeCliProvider) chat(
 	_ = tools
 	// Fortify the stdin payload at the tail so JSON-only directives are the
 	// last thing the CLI reads before generating its reply.
-	prompt := applyCLIOptions("claude-cli", p.buildStdinPrompt(messages), options)
+	prompt := applyCLIOptions(p.log(), "claude-cli", p.buildStdinPrompt(messages), options)
 
 	args := ClaudeCliBaseArgs()
 	args = append(args, p.extraArgs...)
@@ -97,6 +98,7 @@ func (p *ClaudeCliProvider) chat(
 		baseEnv:   p.baseEnv,
 		env:       p.env,
 		model:     model,
+		logging:   p.logging,
 		parse:     p.parseClaudeCliResponse,
 	})
 }
@@ -220,16 +222,14 @@ func (p *ClaudeCliProvider) parseClaudeCliResponse(output string) (*LLMResponse,
 		Usage:        usage,
 		Status:       status,
 	}
-
-	logger.DebugCF("provider", "claude-cli response",
-		map[string]any{
-			"subtype":       resp.Subtype,
-			"num_turns":     resp.NumTurns,
-			"cost_usd":      costForLog(resp.TotalCostUSD),
-			"duration_ms":   resp.DurationMS,
-			"content_chars": len(strings.TrimSpace(content)),
-			"denied_tools":  len(resp.PermissionDenials),
-		})
+	p.log().Debug("claude-cli response",
+		"subtype", resp.Subtype,
+		"num_turns", resp.NumTurns,
+		"cost_usd", costForLog(resp.TotalCostUSD),
+		"duration_ms", resp.DurationMS,
+		"content_chars", len(strings.TrimSpace(content)),
+		"denied_tools", len(resp.PermissionDenials),
+	)
 
 	return result, nil
 }

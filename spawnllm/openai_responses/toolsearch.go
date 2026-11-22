@@ -2,6 +2,7 @@ package openai_responses
 
 import (
 	"encoding/json"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -117,9 +118,9 @@ func (s *toolSearch) namespace(name string) string {
 
 // callItem is the tool_search_call input item replaying a search call, and
 // records its id so its result becomes a tool_search_output.
-func (s *toolSearch) callItem(tc ToolCall) map[string]any {
+func (s *toolSearch) callItem(tc ToolCall, log *slog.Logger) map[string]any {
 	s.calls[tc.ID] = true
-	args := common.ToolCallArgumentsJSON(tc)
+	args := common.ToolCallArgumentsJSON(tc, log)
 	if !json.Valid([]byte(args)) {
 		args = "{}"
 	}

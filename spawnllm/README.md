@@ -9,15 +9,18 @@ It calls an LLM and drives it to completion:
 ## Boundaries
 
 spawnllm imports only [`toolspec`](../toolspec),
-[`accounting`](../accounting), the shared logger and the standard library
+[`accounting`](../accounting) and the standard library
 (plus provider SDKs). It **never imports a host**. Policy —
 model selection, fallback, cooldown, config, results handling — stays in the host
 application. The host resolves a `ProviderSpec`, injects tools, and calls
 the worker.
 
-Logging is host-injectable via `go.bison9.com/agent/logger` (`logger.SetBackend`), so
-provider/loop logs flow into the host's own logger; spawnllm is silent until a
-backend is installed.
+Logging uses `log/slog`. Give a `Worker` a logger with `WithLogger`; the
+provider `WithProvider` builds gets it too. A provider built directly takes
+`WithLogger` (the HTTP providers, `speech`, `imagegen`) or `SetLogger` (the
+CLI providers). Without one, nothing is logged. Records carry the attribute
+`component`. A CLI's stdout and stderr are logged only with
+`WithLogContent(true)` (or `SetLogContent(true)` on a CLI provider).
 
 ## Identity and accounting
 

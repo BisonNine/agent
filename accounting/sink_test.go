@@ -2,45 +2,69 @@ package accounting
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 	"testing"
 	"time"
-
-	"go.bison9.com/agent/logger"
 )
 
-// capture is a logger backend that keeps the accounting records and the
-// error events it receives.
+// capture is a slog handler that keeps the accounting records and counts
+// the error records it receives. Records without the component attribute
+// "accounting" are ignored.
 type capture struct {
 	mu      sync.Mutex
 	records []string
 	errors  int
 }
 
-func (c *capture) Log(level, component, message string, fields map[string]any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if component != "accounting" {
-		return
-	}
-	if level == "error" {
-		c.errors++
-		return
-	}
-	if level == "info" && message == "accounting record" {
-		if s, ok := fields["accounting"].(string); ok {
-			c.records = append(c.records, s)
-		}
-	}
+// captureHandler is the slog.Handler view of a capture, carrying the
+// attributes added with WithAttrs.
+type captureHandler struct {
+	c     *capture
+	attrs []slog.Attr
 }
 
-func (c *capture) LogMessageContent() bool { return false }
+func (captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h captureHandler) Handle(_ context.Context, r slog.Record) error {
+	fields := map[string]string{}
+	for _, a := range h.attrs {
+		fields[a.Key] = a.Value.String()
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		fields[a.Key] = a.Value.String()
+		return true
+	})
+	if fields["component"] != "accounting" {
+		return nil
+	}
+	h.c.mu.Lock()
+	defer h.c.mu.Unlock()
+	switch {
+	case r.Level == slog.LevelError:
+		h.c.errors++
+	case r.Level == slog.LevelInfo && r.Message == "accounting record":
+		if s, ok := fields["accounting"]; ok {
+			h.c.records = append(h.c.records, s)
+		}
+	}
+	return nil
+}
+
+func (h captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return captureHandler{c: h.c, attrs: append(slices.Clip(h.attrs), attrs...)}
+}
+
+func (h captureHandler) WithGroup(string) slog.Handler { return h }
 
 func (c *capture) snapshot() ([]string, int) {
 	c.mu.Lock()
@@ -48,12 +72,13 @@ func (c *capture) snapshot() ([]string, int) {
 	return append([]string(nil), c.records...), c.errors
 }
 
-// useCapture installs a capture backend for the test and removes it after.
+// useCapture sets a capture as the accounting logger for the test and
+// restores the default after.
 func useCapture(t *testing.T) *capture {
 	t.Helper()
 	c := &capture{}
-	logger.SetBackend(c)
-	t.Cleanup(func() { logger.SetBackend(nil) })
+	SetLogger(slog.New(captureHandler{c: c}))
+	t.Cleanup(func() { SetLogger(nil) })
 	return c
 }
 
@@ -414,5 +439,30 @@ func TestStartWaitsForDrainingClose(t *testing.T) {
 		if r.Agent != want {
 			t.Fatalf("record %d is from %q, want %q: the restarted writer ran during the drain", i, r.Agent, want)
 		}
+	}
+}
+
+func TestDefaultLoggerIsSilent(t *testing.T) {
+	// Without SetLogger, a record with no sink goes nowhere: no panic, and
+	// nothing on the process's default logger.
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	SetLogger(nil)
+
+	Report(testRecord("alice", 1))
+	if buf.Len() != 0 {
+		t.Errorf("default logger got output: %s", buf.String())
+	}
+}
+
+func TestLoggerRecordsCarryComponent(t *testing.T) {
+	// The capture keeps only records whose component is "accounting", so a
+	// record seen at all carries it.
+	c := useCapture(t)
+	Report(testRecord("bob", 2))
+	if logged, _ := c.snapshot(); len(logged) != 1 {
+		t.Fatalf("logger got %d records with component accounting, want 1", len(logged))
 	}
 }

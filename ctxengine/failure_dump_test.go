@@ -7,45 +7,19 @@ package ctxengine
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm"
 )
-
-// captureBackend collects the engine's log events for assertions.
-type captureBackend struct {
-	mu     sync.Mutex
-	events []string
-}
-
-func (c *captureBackend) Log(level, component, message string, fields map[string]any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.events = append(c.events, fmt.Sprintf("%s %s %s %v", level, component, message, fields))
-}
-
-func (*captureBackend) LogMessageContent() bool { return false }
-
-func (c *captureBackend) String() string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return strings.Join(c.events, "\n")
-}
 
 // TestCompactionRecorder_LogsOutcome verifies every attempt logs a per-model
 // success/failure line (independent of debug capture), naming the model,
 // through the injectable logging seam.
 func TestCompactionRecorder_LogsOutcome(t *testing.T) {
-	capture := &captureBackend{}
-	logger.SetBackend(capture)
-	defer logger.SetBackend(nil)
-
-	rec := &compactionRecorder{sessionKey: "sess"}
+	capture := &logCapture{}
+	rec := &compactionRecorder{sessionKey: "sess", log: capture.logger()}
 	rec.record("openai/gpt-5.4", "error", "invalid JSON response", time.Second, nil, "")
 	rec.record("deepseek/deepseek-v4-pro", "ok", "", time.Second, nil, "{}")
 

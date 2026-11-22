@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"go.bison9.com/agent/spawnllm/internal/launch/launchtest"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -739,7 +740,7 @@ func TestSerializeMessages_PlainText(t *testing.T) {
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi", ReasoningContent: "thinking..."},
 	}
-	result := serializeMessages(messages, false)
+	result := serializeMessages(messages, false, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -763,7 +764,7 @@ func TestSerializeMessages_WithMedia(t *testing.T) {
 	messages := []protocoltypes.Message{
 		{Role: "user", Content: "describe this", Media: []string{"data:image/png;base64,abc123"}},
 	}
-	result := serializeMessages(messages, false)
+	result := serializeMessages(messages, false, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -810,7 +811,7 @@ func TestSerializeMessages_MediaWithToolCallID(t *testing.T) {
 	messages := []protocoltypes.Message{
 		{Role: "tool", Content: "image result", Media: []string{"data:image/png;base64,xyz"}, ToolCallID: "call_1"},
 	}
-	result := serializeMessages(messages, false)
+	result := serializeMessages(messages, false, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -950,7 +951,7 @@ func TestSerializeMessages_OmitsContentWhenEmptyAndToolCallsPresent(t *testing.T
 			},
 		},
 	}
-	result := serializeMessages(messages, false)
+	result := serializeMessages(messages, false, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -979,7 +980,7 @@ func TestSerializeMessages_IncludesContentWhenNonEmptyWithToolCalls(t *testing.T
 			},
 		},
 	}
-	result := serializeMessages(messages, false)
+	result := serializeMessages(messages, false, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -1005,7 +1006,7 @@ func TestSerializeMessages_StripsSystemParts(t *testing.T) {
 			},
 		},
 	}
-	result := serializeMessages(messages, false)
+	result := serializeMessages(messages, false, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -1022,7 +1023,7 @@ func TestSerializeMessages_StrictCompat_StripsReasoningContent(t *testing.T) {
 		{Role: "user", Content: "What is 1+1?"},
 		{Role: "assistant", Content: "2", ReasoningContent: "Let me think... 1+1=2"},
 	}
-	result := serializeMessages(messages, true)
+	result := serializeMessages(messages, true, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -1063,7 +1064,7 @@ func TestSerializeMessages_StrictCompat_StripsExtraContent(t *testing.T) {
 			},
 		},
 	}
-	result := serializeMessages(messages, true)
+	result := serializeMessages(messages, true, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -1096,7 +1097,7 @@ func TestSerializeMessages_StrictCompat_StripsThoughtSignature(t *testing.T) {
 			},
 		},
 	}
-	result := serializeMessages(messages, true)
+	result := serializeMessages(messages, true, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -1135,7 +1136,7 @@ func TestSerializeMessages_NoStrictCompat_PreservesFields(t *testing.T) {
 			},
 		},
 	}
-	result := serializeMessages(messages, false)
+	result := serializeMessages(messages, false, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -1545,21 +1546,9 @@ func TestRequestBodyLogging_NonBlockingOnWriteError(t *testing.T) {
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "rrlog.jsonl")
 
-	type warnRecord struct {
-		component string
-		message   string
-		fields    map[string]any
-	}
-	var warns []warnRecord
-	prev := warnFn
-	warnFn = func(component, message string, fields map[string]any) {
-		copied := make(map[string]any, len(fields))
-		maps.Copy(copied, fields)
-		warns = append(warns, warnRecord{component, message, copied})
-	}
-	t.Cleanup(func() { warnFn = prev })
+	logs := &launchtest.Logs{}
 
-	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath))
+	p := NewProvider("key", server.URL, "", WithResponseLogFile(logPath), WithLogger(logs.Logger()))
 
 	// First call lazily opens the file handle.
 	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "first"}}, nil, "test-model", nil); err != nil {
@@ -1586,20 +1575,20 @@ func TestRequestBodyLogging_NonBlockingOnWriteError(t *testing.T) {
 
 	// Filter for log-write warnings (extra_body collision uses a different
 	// message; this test does not trigger it but stay defensive).
-	var logWarns []warnRecord
-	for _, w := range warns {
-		if strings.Contains(w.message, "response_log_file") {
+	var logWarns []launchtest.Entry
+	for _, w := range warnEntries(logs) {
+		if strings.Contains(w.Message, "response_log_file") {
 			logWarns = append(logWarns, w)
 		}
 	}
 	if len(logWarns) != 1 {
 		t.Fatalf("expected exactly 1 response_log_file WRN, got %d: %+v", len(logWarns), logWarns)
 	}
-	if logWarns[0].component != "openai_compat" {
-		t.Errorf("WRN component = %q, want openai_compat", logWarns[0].component)
+	if logWarns[0].Attrs["component"] != "openai_compat" {
+		t.Errorf("WRN component = %v, want openai_compat", logWarns[0].Attrs["component"])
 	}
-	if logWarns[0].fields["path"] != logPath {
-		t.Errorf("WRN fields.path = %v, want %q", logWarns[0].fields["path"], logPath)
+	if logWarns[0].Attrs["path"] != logPath {
+		t.Errorf("WRN fields.path = %v, want %q", logWarns[0].Attrs["path"], logPath)
 	}
 }
 
@@ -1737,19 +1726,7 @@ func TestExtraBody_CollisionLogsAndDoesNotOverwrite(t *testing.T) {
 	}))
 	defer server.Close()
 
-	type warnRecord struct {
-		component string
-		message   string
-		fields    map[string]any
-	}
-	var warns []warnRecord
-	prev := warnFn
-	warnFn = func(component, message string, fields map[string]any) {
-		copied := make(map[string]any, len(fields))
-		maps.Copy(copied, fields)
-		warns = append(warns, warnRecord{component, message, copied})
-	}
-	t.Cleanup(func() { warnFn = prev })
+	logs := &launchtest.Logs{}
 
 	extra := map[string]any{
 		"model":       "should-not-overwrite", // collides with the wire model
@@ -1759,6 +1736,7 @@ func TestExtraBody_CollisionLogsAndDoesNotOverwrite(t *testing.T) {
 		"key", server.URL, "",
 		WithExtraBody(extra),
 		WithModelLabel("grok-3-config-label"),
+		WithLogger(logs.Logger()),
 	)
 	if _, err := p.Chat(t.Context(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "grok-real-wire", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
@@ -1770,18 +1748,19 @@ func TestExtraBody_CollisionLogsAndDoesNotOverwrite(t *testing.T) {
 	if got := captured["extra_field"]; got != "kept" {
 		t.Errorf("extra_field lost: got %v", got)
 	}
+	warns := warnEntries(logs)
 	if len(warns) != 1 {
 		t.Fatalf("expected 1 warn call, got %d: %+v", len(warns), warns)
 	}
 	w := warns[0]
-	if w.component != "openai_compat" {
-		t.Errorf("warn component = %q, want openai_compat", w.component)
+	if w.Attrs["component"] != "openai_compat" {
+		t.Errorf("warn component = %v, want openai_compat", w.Attrs["component"])
 	}
-	if w.fields["key"] != "model" {
-		t.Errorf("warn fields.key = %v, want %q", w.fields["key"], "model")
+	if w.Attrs["key"] != "model" {
+		t.Errorf("warn fields.key = %v, want %q", w.Attrs["key"], "model")
 	}
-	if w.fields["model"] != "grok-3-config-label" {
-		t.Errorf("warn fields.model = %v, want %q (label fallback)", w.fields["model"], "grok-3-config-label")
+	if w.Attrs["model"] != "grok-3-config-label" {
+		t.Errorf("warn fields.model = %v, want %q (label fallback)", w.Attrs["model"], "grok-3-config-label")
 	}
 }
 
@@ -1804,4 +1783,15 @@ func TestResponseLogFile_OpenFailureDoesNotPropagate(t *testing.T) {
 	if out == nil || len(out.Content) == 0 {
 		t.Fatalf("expected parsed response despite log failure, got: %+v", out)
 	}
+}
+
+// warnEntries returns the warn-level records captured in logs.
+func warnEntries(logs *launchtest.Logs) []launchtest.Entry {
+	var out []launchtest.Entry
+	for _, e := range logs.Entries() {
+		if e.Level == slog.LevelWarn {
+			out = append(out, e)
+		}
+	}
+	return out
 }

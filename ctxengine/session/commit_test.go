@@ -52,7 +52,7 @@ func TestCommitCompaction(t *testing.T) {
 	if st.MeaningfulCount != 5 || st.CompressedAtMeaningfulCount != 5 || !st.Cooling {
 		t.Errorf("compaction state = %+v, want meaningful 5, compressed_at 5, cooling", st)
 	}
-	a, err := memory.OpenReadOnly(memory.ArchivePath(s.dir, "c"))
+	a, err := memory.OpenReadOnly(memory.ArchivePath(s.dir, "c"), nil)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}

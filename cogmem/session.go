@@ -5,12 +5,12 @@ package cogmem
 
 import (
 	"context"
+	"log/slog"
 	"strings"
 	"sync"
 
 	"go.bison9.com/agent/cogmem/consolidate"
 	"go.bison9.com/agent/cogmem/store"
-	"go.bison9.com/agent/logger"
 )
 
 // Placement says where a recalled block belongs in the model request.
@@ -67,6 +67,9 @@ type SessionOptions struct {
 	// StoreOptions are passed to store.Open, e.g. store.WithFilePermissions
 	// and store.WithFolderPermissions. Nil uses the store defaults.
 	StoreOptions []store.Option
+	// Logger receives the session's records, tagged with the attribute
+	// component "cogmem". Nil means silent.
+	Logger *slog.Logger
 }
 
 // Session is one agent session's view of cognitive memory: the host hands it a
@@ -95,6 +98,15 @@ type Session struct {
 	recentTexts []string
 }
 
+// log returns the session's logger tagged with its component, or one that
+// discards when it has none.
+func (s *Session) log() *slog.Logger {
+	if s.opt.Logger == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return s.opt.Logger.With("component", "cogmem")
+}
+
 // NewSession builds a session. The store is opened lazily on first use.
 func NewSession(opt SessionOptions) *Session {
 	return &Session{opt: opt, dbPath: store.DBPath(opt.Dir)}
@@ -116,11 +128,11 @@ func (s *Session) Store() *store.Store {
 	// first write.
 	st, err := store.Open(s.dbPath, s.opt.StoreOptions...)
 	if err != nil {
-		logger.WarnCF("cogmem", "open session store failed", map[string]any{
-			"id":    s.opt.ID,
-			"path":  s.dbPath,
-			"error": err.Error(),
-		})
+		s.log().Warn("open session store failed",
+			"id", s.opt.ID,
+			"path", s.dbPath,
+			"error", err.Error(),
+		)
 		return nil
 	}
 	s.st = st
@@ -145,9 +157,9 @@ func (s *Session) Observe(ctx context.Context, seq int64, role, text string) {
 	}
 	stored, err := consolidate.Observe(ctx, st, seq, role, text, s.opt.Settings.Consolidation.PerMessageChars)
 	if err != nil {
-		logger.WarnCF("cogmem", "observe message failed", map[string]any{
-			"id": s.opt.ID, "seq": seq, "error": err.Error(),
-		})
+		s.log().WarnContext(ctx, "observe message failed",
+			"id", s.opt.ID, "seq", seq, "error", err.Error(),
+		)
 		return
 	}
 	if stored && s.opt.Manager != nil {
@@ -264,19 +276,19 @@ func (s *Session) Recall(ctx context.Context, routeText string) []Injection {
 	// After composing, so this message is an earlier one only from the next.
 	s.recordRouteText(routeText)
 	if err != nil {
-		logger.WarnCF("cogmem", "memory compose failed", map[string]any{
-			"id": s.opt.ID, "error": err.Error(),
-		})
+		s.log().WarnContext(ctx, "memory compose failed",
+			"id", s.opt.ID, "error", err.Error(),
+		)
 	}
 	if res.Attachments != "" || res.RoutedAttachments != "" {
 		// Split by provenance: sticky bytes ride in the cached prompt and are
 		// paid for once, routed bytes ride with the turn and are paid for
 		// every time. One combined figure hides which is which.
-		logger.DebugCF("cogmem", "attached documents injected", map[string]any{
-			"id":           s.opt.ID,
-			"sticky_bytes": len(res.Attachments),
-			"routed_bytes": len(res.RoutedAttachments),
-		})
+		s.log().DebugContext(ctx, "attached documents injected",
+			"id", s.opt.ID,
+			"sticky_bytes", len(res.Attachments),
+			"routed_bytes", len(res.RoutedAttachments),
+		)
 	}
 	// Sticky documents belong with the stable block; routed documents belong
 	// with the routed block, whose memory ids their headers cite.

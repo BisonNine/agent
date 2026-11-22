@@ -11,14 +11,13 @@ import (
 )
 
 // cogmem stands beside ctxengine, above toolspec only. It may import only its
-// own packages, toolspec, the shared logger, the standard library and the
-// third-party modules listed here; never spawnllm or ctxengine. Test files
-// are held to the same rule.
+// own packages, toolspec, the standard library and the third-party modules
+// listed here; never spawnllm or ctxengine. Test files are held to the same
+// rule.
 func TestImportsRespectLayering(t *testing.T) {
 	allowed := []string{
 		"go.bison9.com/agent/cogmem",
 		"go.bison9.com/agent/toolspec",
-		"go.bison9.com/agent/logger",
 		"github.com/google/uuid",
 		"gopkg.in/yaml.v3",
 		"modernc.org/sqlite",

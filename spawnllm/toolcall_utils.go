@@ -7,14 +7,14 @@ package spawnllm
 
 import (
 	"encoding/json"
-
-	"go.bison9.com/agent/logger"
+	"log/slog"
 )
 
 // NormalizeToolCall normalizes a ToolCall to ensure all fields are properly populated.
 // It handles cases where Name/Arguments might be in different locations (top-level vs Function)
-// and ensures both are populated consistently.
-func NormalizeToolCall(tc ToolCall) ToolCall {
+// and ensures both are populated consistently. Arguments that cannot be encoded
+// are logged at debug level on log (nil discards).
+func NormalizeToolCall(tc ToolCall, log *slog.Logger) ToolCall {
 	normalized := tc
 
 	// Ensure Name is populated from Function if not set
@@ -38,8 +38,11 @@ func NormalizeToolCall(tc ToolCall) ToolCall {
 	// Ensure Function is populated with consistent values
 	argsJSON, err := json.Marshal(normalized.Arguments)
 	if err != nil {
-		logger.DebugCF("provider", "tool call arguments are not JSON-encodable",
-			map[string]any{"tool": normalized.Name, "error": err.Error()})
+		if log == nil {
+			log = discard()
+		}
+		log.With("component", component).Debug("tool call arguments are not JSON-encodable",
+			"tool", normalized.Name, "error", err.Error())
 	}
 	if normalized.Function == nil {
 		normalized.Function = &FunctionCall{

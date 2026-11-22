@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,7 +19,6 @@ import (
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
 	"go.bison9.com/agent/ctxengine/memory"
-	"go.bison9.com/agent/logger"
 )
 
 // maxLegacyLineSize is the largest JSON line the JSONL layout could hold; tool
@@ -60,8 +60,10 @@ type MigrateReport struct {
 // <base>.summaries.jsonl is left in place (the archive imports it on open) and
 // so is any ancient <base>.archive.jsonl. Idempotent: a session whose
 // session_state.next_seq > 0 is skipped untouched. Run with the service
-// stopped. Returns nil, nil if dir does not exist.
-func MigrateJSONL(dir string) (MigrateReport, error) {
+// stopped. Returns nil, nil if dir does not exist. Progress and corrupt lines
+// are logged to log, tagged with the component "session" (the archives it
+// opens log as "memory"); nil discards.
+func MigrateJSONL(dir string, log *slog.Logger) (MigrateReport, error) {
 	report := MigrateReport{Errors: make(map[string]error)}
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
@@ -101,7 +103,7 @@ func MigrateJSONL(dir string) (MigrateReport, error) {
 			report.Errors[base+".jsonl"] = errors.New("no .meta.json alongside; session key unknown")
 			continue
 		}
-		key, skipped, err := migrateSession(dir, base, windows[base])
+		key, skipped, err := migrateSession(dir, base, windows[base], log)
 		switch {
 		case err != nil && key == "":
 			report.Errors[base+".meta.json"] = err
@@ -117,8 +119,10 @@ func MigrateJSONL(dir string) (MigrateReport, error) {
 }
 
 // migrateSession folds one session. key is "" when meta.json could not be
-// read; skipped is true when the archive already holds a window.
-func migrateSession(dir, base string, hasWindow bool) (key string, skipped bool, err error) {
+// read; skipped is true when the archive already holds a window. logger is
+// the host's logger (nil discards).
+func migrateSession(dir, base string, hasWindow bool, logger *slog.Logger) (key string, skipped bool, err error) {
+	log := componentLog(logger, "session")
 	metaPath := filepath.Join(dir, base+".meta.json")
 	data, err := os.ReadFile(metaPath) //nolint:gosec // G304: a file found by listing the host's sessions directory
 	if err != nil {
@@ -133,11 +137,11 @@ func migrateSession(dir, base string, hasWindow bool) (key string, skipped bool,
 	}
 	key = meta.Key
 
-	a, err := memory.Open(memory.ArchivePath(dir, key))
+	a, err := memory.Open(memory.ArchivePath(dir, key), memory.WithLogger(logger))
 	if err != nil {
 		return key, false, fmt.Errorf("open archive: %w", err)
 	}
-	defer iox.CloseQuietly("session", a)
+	defer iox.CloseQuietly(log, a)
 
 	st, err := a.State()
 	if err != nil {
@@ -150,7 +154,7 @@ func migrateSession(dir, base string, hasWindow bool) (key string, skipped bool,
 	var msgs []memory.StoredMessage
 	windowPath := filepath.Join(dir, base+".jsonl")
 	if hasWindow {
-		msgs, err = readLegacyWindow(windowPath, meta.Skip)
+		msgs, err = readLegacyWindow(windowPath, meta.Skip, log)
 		if err != nil {
 			return key, false, err
 		}
@@ -194,8 +198,8 @@ func migrateSession(dir, base string, hasWindow bool) (key string, skipped bool,
 	if err := os.Rename(metaPath, metaPath+".migrated"); err != nil {
 		return key, false, fmt.Errorf("rename meta: %w", err)
 	}
-	logger.InfoCF("session", "migrated JSONL session",
-		map[string]any{"session": key, "messages": len(msgs), "next_seq": nextSeq})
+	log.Info("migrated JSONL session",
+		"session", key, "messages", len(msgs), "next_seq", nextSeq)
 	return key, false, nil
 }
 
@@ -203,12 +207,14 @@ func migrateSession(dir, base string, hasWindow bool) (key string, skipped bool,
 // skip non-empty lines. Lines that do not parse (a partial write from a
 // crash) are logged and dropped. Lines written before seqs existed (seq == 0)
 // are assigned skip+lineNo, the position the JSONL store reported for them.
-func readLegacyWindow(path string, skip int) ([]memory.StoredMessage, error) {
+//
+// log is the caller's logger, tagged with its component.
+func readLegacyWindow(path string, skip int, log *slog.Logger) ([]memory.StoredMessage, error) {
 	f, err := os.Open(path) //nolint:gosec // G304: a file found by listing the host's sessions directory
 	if err != nil {
 		return nil, fmt.Errorf("open window: %w", err)
 	}
-	defer iox.CloseQuietly("session", f)
+	defer iox.CloseQuietly(log, f)
 
 	var msgs []memory.StoredMessage
 	scanner := bufio.NewScanner(f)
@@ -225,8 +231,8 @@ func readLegacyWindow(path string, skip int) ([]memory.StoredMessage, error) {
 		}
 		var stored memory.StoredMessage
 		if err := json.Unmarshal(line, &stored); err != nil {
-			logger.WarnCF("session", "migrate: skipping corrupt line",
-				map[string]any{"line": lineNum, "path": filepath.Base(path), "error": err.Error()})
+			log.Warn("migrate: skipping corrupt line",
+				"line", lineNum, "path", filepath.Base(path), "error", err.Error())
 			continue
 		}
 		if stored.Seq == 0 {

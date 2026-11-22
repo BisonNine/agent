@@ -107,8 +107,8 @@ linters:
         path: ^(toolspec|ctxengine|cogmem)/
         text: ^newexpr
       # Deferred in ctxengine and cogmem (house decision): each fix is an API
-      # change or its own mechanical pass. spawnllm and logger have no
-      # findings, so the checks stay on for them.
+      # change or its own mechanical pass. spawnllm has no findings, so the
+      # checks stay on for it.
       - linters:
           - embeddedstructfieldcheck
           - nilnil

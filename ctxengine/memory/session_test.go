@@ -176,7 +176,7 @@ func TestOpenReadOnly_WindowAndState(t *testing.T) {
 		t.Fatalf("AppendWindow: %v", err)
 	}
 
-	r, err := OpenReadOnly(ArchivePath(dir, "ro"))
+	r, err := OpenReadOnly(ArchivePath(dir, "ro"), nil)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestOpenReadOnly_WindowAndState(t *testing.T) {
 		t.Errorf("window = %+v", w)
 	}
 
-	if _, err := OpenReadOnly(ArchivePath(dir, "missing")); err == nil {
+	if _, err := OpenReadOnly(ArchivePath(dir, "missing"), nil); err == nil {
 		t.Error("expected error for a missing archive")
 	}
 }
@@ -215,7 +215,7 @@ func TestListSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	keys, err := ListSessions(dir)
+	keys, err := ListSessions(dir, nil)
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestListSessions(t *testing.T) {
 		t.Errorf("keys = %v", keys)
 	}
 
-	keys, err = ListSessions(filepath.Join(dir, "nope"))
+	keys, err = ListSessions(filepath.Join(dir, "nope"), nil)
 	if err != nil || keys != nil {
 		t.Errorf("missing dir: keys=%v err=%v", keys, err)
 	}

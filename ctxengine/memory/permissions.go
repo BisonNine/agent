@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -27,6 +28,22 @@ type OpenOption func(*openConfig)
 type openConfig struct {
 	folderPerm os.FileMode
 	filePerm   os.FileMode
+	logger     *slog.Logger
+}
+
+// WithLogger sets the logger the store writes to; its records carry the
+// attribute component "memory". Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) OpenOption {
+	return func(c *openConfig) { c.logger = l }
+}
+
+// componentLog returns l, the host's logger, tagged with the component
+// "memory"; a nil l gives a logger that discards.
+func componentLog(l *slog.Logger) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", "memory")
 }
 
 // WithFolderPermissions sets the mode of the parent directories Open creates
@@ -58,23 +75,24 @@ func WithFilePermissions(perm os.FileMode) OpenOption {
 // umask does not alter them. A failure to create returns an error; a failure
 // to change the mode of an existing file is logged and ignored.
 func prepareArchiveFiles(path string, cfg openConfig) error {
+	log := componentLog(cfg.logger)
 	if err := iox.EnsureDir(filepath.Dir(path), cfg.folderPerm); err != nil {
 		return err
 	}
-	if err := ensureFile(path, cfg.filePerm); err != nil {
+	if err := ensureFile(path, cfg.filePerm, log); err != nil {
 		return err
 	}
-	iox.SetFileMode("memory", path+"-wal", cfg.filePerm)
-	iox.SetFileMode("memory", path+"-shm", cfg.filePerm)
+	iox.SetFileMode(log, path+"-wal", cfg.filePerm)
+	iox.SetFileMode(log, path+"-shm", cfg.filePerm)
 	return nil
 }
 
 // ensureFile creates path empty at perm if it does not exist (SQLite treats an
 // empty file as a new database), or tightens its mode if it does.
-func ensureFile(path string, perm os.FileMode) error {
+func ensureFile(path string, perm os.FileMode, log *slog.Logger) error {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, perm) //nolint:gosec // G304: the archive path is built by ArchivePath from the host's directory
 	if errors.Is(err, fs.ErrExist) {
-		iox.SetFileMode("memory", path, perm)
+		iox.SetFileMode(log, path, perm)
 		return nil
 	}
 	if err != nil {

@@ -129,7 +129,7 @@ func TestAnthropicSupportsDeferredTools(t *testing.T) {
 }
 
 func TestSerializeMessages_ToolReferencesAsText(t *testing.T) {
-	out := SerializeMessages([]Message{{Role: "tool", ToolCallID: "c1", Content: "found", ToolReferences: []string{"x"}}})
+	out := SerializeMessages([]Message{{Role: "tool", ToolCallID: "c1", Content: "found", ToolReferences: []string{"x"}}}, nil)
 	got, ok := out[0].(openaiMessage)
 	if !ok {
 		t.Fatalf("out[0] = %T", out[0])

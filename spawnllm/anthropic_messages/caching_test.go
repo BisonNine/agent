@@ -101,9 +101,9 @@ func TestBuildRequestBody_OnlyTheAutomaticBreakpoint(t *testing.T) {
 		{Role: "assistant", Content: "Hi"},
 		{Role: "user", Content: "Again"},
 	}
-	body, err := buildRequestBody(messages, nil, "m", map[string]any{"max_tokens": 64})
+	body, err := buildRequestBody(messages, nil, "m", map[string]any{"max_tokens": 64}, nil)
 	if err != nil {
-		t.Fatalf("buildRequestBody() error: %v", err)
+		t.Fatalf("buildRequestBody(, nil) error: %v", err)
 	}
 	raw, err := json.Marshal(body)
 	if err != nil {
@@ -126,9 +126,9 @@ func TestParseResponseBody_CacheTokensInUsage(t *testing.T) {
 		"content":[{"type":"text","text":"ok"}],
 		"usage":{"input_tokens":10,"output_tokens":5,
 			"cache_read_input_tokens":90000,"cache_creation_input_tokens":2000}}`)
-	got, err := parseResponseBody(body)
+	got, err := parseResponseBody(body, nil)
 	if err != nil {
-		t.Fatalf("parseResponseBody() error: %v", err)
+		t.Fatalf("parseResponseBody(, nil) error: %v", err)
 	}
 	if got.Status.CacheReadTokens != 90000 || got.Status.CacheCreationTokens != 2000 {
 		t.Errorf("Status cache tokens = (read %d, create %d), want (90000, 2000)",

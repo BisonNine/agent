@@ -1,7 +1,8 @@
 package spawnllm
 
 import (
-	"go.bison9.com/agent/logger"
+	"log/slog"
+
 	"go.bison9.com/agent/spawnllm/openai_compat"
 )
 
@@ -34,8 +35,9 @@ func wantsJSONObjectOption(options map[string]any) bool {
 // the provider recognises but cannot translate to a CLI flag are logged at DBG
 // so the parity break that motivated this helper cannot recur silently.
 //
-// providerName is included in the log context only.
-func applyCLIOptions(providerName, prompt string, options map[string]any) string {
+// providerName is included in the log context only; log is the provider's
+// logger.
+func applyCLIOptions(log *slog.Logger, providerName, prompt string, options map[string]any) string {
 	if wantsJSONObjectOption(options) {
 		prompt += JSONObjectFortification
 	}
@@ -43,11 +45,10 @@ func applyCLIOptions(providerName, prompt string, options map[string]any) string
 		if k == openai_compat.ResponseFormatJSONObjectOption {
 			continue
 		}
-		logger.DebugCF("provider", "cli provider has no equivalent for option",
-			map[string]any{
-				"provider": providerName,
-				"option":   k,
-			})
+		log.Debug("cli provider has no equivalent for option",
+			"provider", providerName,
+			"option", k,
+		)
 	}
 	return prompt
 }

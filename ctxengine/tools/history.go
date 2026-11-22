@@ -52,7 +52,7 @@ func (h Host) messages(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if r != nil {
 		return r, nil
 	}
-	defer iox.CloseQuietly("tools", a)
+	defer iox.CloseQuietly(h.log(), a)
 
 	const windowSize = 5000
 	_, maxSeq, boundsErr := a.Bounds()

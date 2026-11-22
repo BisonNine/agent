@@ -4,10 +4,9 @@ package spawnllm
 
 import (
 	"errors"
+	"log/slog"
 	"os/exec"
 	"syscall"
-
-	"go.bison9.com/agent/logger"
 )
 
 // setCLIProcessGroup starts the CLI as the leader of a new process group and
@@ -31,11 +30,11 @@ func setCLIProcessGroup(cmd *exec.Cmd) {
 // while any member survives, so the signal cannot reach an unrelated process
 // as long as there is something left to kill. ESRCH (nothing left) is the
 // normal outcome and is ignored.
-func killCLIProcessGroup(cmd *exec.Cmd) {
+func killCLIProcessGroup(cmd *exec.Cmd, log *slog.Logger) {
 	if cmd.Process == nil {
 		return
 	}
 	if err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-		logger.DebugCF("provider", "killing CLI process group", map[string]any{"pid": cmd.Process.Pid, "error": err.Error()})
+		log.Debug("killing CLI process group", "pid", cmd.Process.Pid, "error", err.Error())
 	}
 }

@@ -7,6 +7,7 @@ package ctxengine
 
 import (
 	"context"
+	"log/slog"
 	"os"
 
 	"go.bison9.com/agent/ctxengine/memory"
@@ -212,6 +213,8 @@ type managerConfig struct {
 	// ctxengine creates (archive databases, compact.jsonl).
 	folderPerm os.FileMode
 	filePerm   os.FileMode
+	// logger is the host's logger; nil discards.
+	logger *slog.Logger
 }
 
 func defaultManagerConfig() managerConfig {
@@ -396,6 +399,22 @@ func WithFilePermissions(perm os.FileMode) Option {
 			c.filePerm = perm
 		}
 	}
+}
+
+// WithLogger sets the logger the Manager writes to. Its records carry the
+// attribute component ("llmcontext", and "memory" for the archive). Without
+// it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(c *managerConfig) { c.logger = l }
+}
+
+// componentLog returns l, the host's logger, tagged with component; a nil l
+// gives a logger that discards.
+func componentLog(l *slog.Logger, component string) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", component)
 }
 
 // WithOverheadTokens sets the fixed token overhead added to the post-Build token

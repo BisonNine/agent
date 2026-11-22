@@ -12,13 +12,14 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
 // CodexCliProvider implements LLMProvider by wrapping the codex CLI as a subprocess.
 type CodexCliProvider struct {
+	logging
+
 	command   string
 	workspace string
 	timeout   time.Duration
@@ -91,7 +92,7 @@ func (p *CodexCliProvider) chat(
 	_ = tools
 	// Fortify the stdin payload at the tail so JSON-only directives are the
 	// last thing the CLI reads before generating its reply.
-	prompt := applyCLIOptions("codex-cli", p.buildPrompt(messages), options)
+	prompt := applyCLIOptions(p.log(), "codex-cli", p.buildPrompt(messages), options)
 
 	args := CodexCliBaseArgs()
 	args = append(args, p.extraArgs...)
@@ -111,7 +112,7 @@ func (p *CodexCliProvider) chat(
 	cmd.Env = applyProviderEnv(p.baseEnv, p.env)
 
 	bytesSent := int64(len(prompt))
-	run, runErr := runCLI(ctx, cmd)
+	run, runErr := runCLI(ctx, cmd, p.log())
 	stdout, stderr, elapsed := run.stdout, run.stderr, run.elapsed
 	durationMs := elapsed.Milliseconds()
 	bytesReceived := stdout.Received()
@@ -148,15 +149,14 @@ func (p *CodexCliProvider) chat(
 		}
 		stderrStr := strings.TrimSpace(stderr.String())
 		stdoutStr := strings.TrimSpace(stdout.String())
-		fields := map[string]any{
-			"agent_id":  AgentIDFromContext(ctx),
-			"exit_code": exitCode,
+		attrs := []any{
+			"agent_id", AgentIDFromContext(ctx),
+			"exit_code", exitCode,
 		}
-		if logger.GetLogMessageContent() {
-			fields["stderr"] = stderrStr
-			fields["stdout"] = stdoutStr
+		if p.logContent {
+			attrs = append(attrs, "stderr", stderrStr, "stdout", stdoutStr)
 		}
-		logger.ErrorCF("provider", "codex-cli subprocess failed", fields)
+		p.log().ErrorContext(ctx, "codex-cli subprocess failed", attrs...)
 		errResp := cliErrorResponse(model, "error", elapsed, bytesSent, bytesReceived)
 		if stderrStr != "" {
 			return errResp, fmt.Errorf("codex cli error: %s", stderrStr)
@@ -166,8 +166,8 @@ func (p *CodexCliProvider) chat(
 
 	// Log non-empty stderr on successful exit.
 	if stderrStr := strings.TrimSpace(stderr.String()); stderrStr != "" {
-		logger.WarnCF("provider", "codex-cli wrote to stderr on successful exit",
-			map[string]any{"stderr": stderrStr})
+		p.log().WarnContext(ctx, "codex-cli wrote to stderr on successful exit",
+			"stderr", stderrStr)
 	}
 
 	resp, parseErr := p.parseJSONLEvents(stdout.String(), model, durationMs)
@@ -295,8 +295,8 @@ func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int
 
 		var event codexEvent
 		if err := json.Unmarshal([]byte(line), &event); err != nil {
-			logger.DebugCF("provider", "codex-cli: skipping malformed JSONL line",
-				map[string]any{"line_preview": truncateString(line, 120)})
+			p.log().Debug("codex-cli: skipping malformed JSONL line",
+				"line_preview", truncateString(line, 120))
 			continue
 		}
 
@@ -331,8 +331,8 @@ func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int
 	}
 
 	if err := scanner.Err(); err != nil {
-		logger.WarnCF("provider", "codex-cli: JSONL scanner error",
-			map[string]any{"error": err.Error()})
+		p.log().Warn("codex-cli: JSONL scanner error",
+			"error", err.Error())
 		if len(contentParts) == 0 {
 			return nil, fmt.Errorf("codex cli: scanner error: %w", err)
 		}
@@ -361,23 +361,22 @@ func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int
 	}
 
 	hasError := lastError != "" && len(contentParts) > 0
-	logger.DebugCF("provider", "codex-cli response",
-		map[string]any{
-			"content_chars": len(strings.TrimSpace(content)),
-			"num_turns":     turnCompletedCount,
-			"has_error":     hasError,
-		})
+	p.log().Debug("codex-cli response",
+		"content_chars", len(strings.TrimSpace(content)),
+		"num_turns", turnCompletedCount,
+		"has_error", hasError,
+	)
 
 	if result.Content == "" {
 		rawPreview := output
 		if len(rawPreview) > 500 {
 			rawPreview = rawPreview[:500]
 		}
-		fields := map[string]any{}
-		if logger.GetLogMessageContent() {
-			fields["raw_stdout"] = rawPreview
+		var attrs []any
+		if p.logContent {
+			attrs = append(attrs, "raw_stdout", rawPreview)
 		}
-		logger.WarnCF("provider", "codex-cli returned empty content", fields)
+		p.log().Warn("codex-cli returned empty content", attrs...)
 	}
 
 	return result, nil

@@ -72,7 +72,7 @@ func (h Host) search(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	if r != nil {
 		return r, nil
 	}
-	defer iox.CloseQuietly("tools", a)
+	defer iox.CloseQuietly(h.log(), a)
 
 	results, searchErr := a.Search(call.Ctx, query, role, limit)
 	if searchErr != nil {

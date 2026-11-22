@@ -811,7 +811,7 @@ func TestRunOnceDedupesBeforeModel(t *testing.T) {
 	seedInbox(t, s, sampleMessages())
 
 	m := &fakeModel{raw: emptyOutput}
-	res, err := NewWorker(s, m).RunOnce(context.Background(), params())
+	res, err := NewWorker(s, m, WithLogger(logs.logger())).RunOnce(context.Background(), params())
 	if err != nil || res.Status != "ok" {
 		t.Fatalf("RunOnce = %+v, %v", res, err)
 	}

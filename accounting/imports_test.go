@@ -10,12 +10,11 @@ import (
 	"testing"
 )
 
-// accounting is imported by spawnllm, so it imports only the standard library
-// and the shared logger. Test files are held to the same rule.
+// accounting is imported by spawnllm, so it imports only the standard
+// library. Test files are held to the same rule.
 func TestImportsRespectLayering(t *testing.T) {
 	allowed := []string{
 		"go.bison9.com/agent/accounting",
-		"go.bison9.com/agent/logger",
 	}
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

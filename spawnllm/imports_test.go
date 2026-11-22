@@ -11,7 +11,7 @@ import (
 )
 
 // spawnllm sits above toolspec and below ctxengine. It may import only its
-// own packages, toolspec, the shared logger, accounting, the standard library
+// own packages, toolspec, accounting, the standard library
 // and the third-party modules listed here; never ctxengine or cogmem. A new
 // provider SDK is added to the list when it is adopted. Test files are held to
 // the same rule.
@@ -19,7 +19,6 @@ func TestImportsRespectLayering(t *testing.T) {
 	allowed := []string{
 		"go.bison9.com/agent/spawnllm",
 		"go.bison9.com/agent/toolspec",
-		"go.bison9.com/agent/logger",
 		"go.bison9.com/agent/accounting",
 		"github.com/google/uuid",
 	}

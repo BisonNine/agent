@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"go.bison9.com/agent/ctxengine/memory"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -673,12 +672,12 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 			}
 		}
 		if minBytes := m.evictionMinSweepBytes(); minBytes > 0 && freed < minBytes {
-			logger.DebugCF("llmcontext", "eviction deferred: below the batch threshold", map[string]any{
-				"session_key": m.sessionKey,
-				"candidates":  len(marks) + len(argMarks),
-				"bytes":       freed,
-				"threshold":   minBytes,
-			})
+			m.log.Debug("eviction deferred: below the batch threshold",
+				"session_key", m.sessionKey,
+				"candidates", len(marks)+len(argMarks),
+				"bytes", freed,
+				"threshold", minBytes,
+			)
 			return nil
 		}
 	}
@@ -696,15 +695,15 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 				Reason:   "args",
 			}
 			events = append(events, ev)
-			logger.DebugCF("llmcontext", "evicted tool call argument", map[string]any{
-				"session_key": m.sessionKey,
-				"seq":         ev.Seq,
-				"tool":        ev.Tool,
-				"argument":    ae.arg,
-				"resource":    ev.Resource,
-				"bytes":       ev.Bytes,
-				"age_turns":   ev.AgeTurns,
-			})
+			m.log.Debug("evicted tool call argument",
+				"session_key", m.sessionKey,
+				"seq", ev.Seq,
+				"tool", ev.Tool,
+				"argument", ae.arg,
+				"resource", ev.Resource,
+				"bytes", ev.Bytes,
+				"age_turns", ev.AgeTurns,
+			)
 		}
 		reason, ok := marks[idx]
 		if !ok {
@@ -723,15 +722,15 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 		}
 		stored[idx].Content = evictionPlaceholder(meta.tool, res, ev.Bytes, ev.Seq)
 		events = append(events, ev)
-		logger.DebugCF("llmcontext", "evicted tool result", map[string]any{
-			"session_key": m.sessionKey,
-			"seq":         ev.Seq,
-			"tool":        ev.Tool,
-			"resource":    ev.Resource,
-			"bytes":       ev.Bytes,
-			"age_turns":   ev.AgeTurns,
-			"reason":      ev.Reason,
-		})
+		m.log.Debug("evicted tool result",
+			"session_key", m.sessionKey,
+			"seq", ev.Seq,
+			"tool", ev.Tool,
+			"resource", ev.Resource,
+			"bytes", ev.Bytes,
+			"age_turns", ev.AgeTurns,
+			"reason", ev.Reason,
+		)
 	}
 
 	// Persist, preserving seqs when the store supports it. A failed write
@@ -749,17 +748,17 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 		err = m.store.SetHistory(m.sessionKey, plain)
 	}
 	if err != nil {
-		logger.WarnCF("llmcontext", "eviction persist failed; nothing evicted", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.Warn("eviction persist failed; nothing evicted",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 		return nil
 	}
 	if err := m.store.Save(m.sessionKey); err != nil {
-		logger.WarnCF("llmcontext", "eviction save failed", map[string]any{
-			"session_key": m.sessionKey,
-			"error":       err.Error(),
-		})
+		m.log.Warn("eviction save failed",
+			"session_key", m.sessionKey,
+			"error", err.Error(),
+		)
 	}
 	return events
 }

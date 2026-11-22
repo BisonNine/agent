@@ -145,7 +145,7 @@ func TestSummaries_ReadOnlyListAndGet(t *testing.T) {
 	}
 	noErr(t, w.Close())
 
-	ro, err := OpenReadOnly(path)
+	ro, err := OpenReadOnly(path, nil)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}

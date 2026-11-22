@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -18,7 +19,6 @@ import (
 	"time"
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -83,7 +83,11 @@ func ArchivePath(dir, sessionKey string) string {
 // reconstructed from file names. A database that cannot be opened or has no
 // state row (an archive that predates the window fold, or an empty one) is
 // skipped. Returns nil, nil if dir does not exist.
-func ListSessions(dir string) ([]string, error) {
+//
+// Unreadable archives are logged to log, tagged with the component "memory";
+// nil discards.
+func ListSessions(dir string, log *slog.Logger) ([]string, error) {
+	log = componentLog(log)
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -97,14 +101,14 @@ func ListSessions(dir string) ([]string, error) {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		a, err := OpenReadOnly(path)
+		a, err := OpenReadOnly(path, log)
 		if err != nil {
 			continue
 		}
 		st, err := a.State()
 		if err != nil {
-			logger.DebugCF("memory", "list sessions: skipping unreadable archive",
-				map[string]any{"path": entry.Name(), "error": err.Error()})
+			log.Debug("list sessions: skipping unreadable archive",
+				"path", entry.Name(), "error", err.Error())
 			continue
 		}
 		if st.Key != "" {
@@ -161,7 +165,7 @@ func (a *ArchiveStore) reader() (db *sql.DB, done func(), err error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return db, func() { iox.CloseQuietly("memory", db) }, nil
+	return db, func() { iox.CloseQuietly(a.logger(), db) }, nil
 }
 
 // Window returns the live history window ordered by seq. Returns an empty
@@ -180,7 +184,7 @@ func (a *ArchiveStore) Window() ([]StoredMessage, error) {
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			logger.DebugCF("memory", "rows close failed", map[string]any{"error": closeErr.Error()})
+			a.logger().Debug("rows close failed", "error", closeErr.Error())
 		}
 	}()
 
@@ -308,8 +312,8 @@ func (a *ArchiveStore) withTx(fn func(tx *sql.Tx) error) error {
 	}
 	if err := fn(tx); err != nil {
 		if rbErr := tx.Rollback(); rbErr != nil {
-			logger.WarnCF("memory", "archive rollback failed",
-				map[string]any{"path": a.path, "error": rbErr.Error()})
+			a.logger().Warn("archive rollback failed",
+				"path", a.path, "error", rbErr.Error())
 		}
 		return err
 	}

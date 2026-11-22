@@ -279,7 +279,7 @@ func TestRunJobFactoryErrorIsLoggedAndSkipped(t *testing.T) {
 	m := NewManager(func(Job) (*Worker, error) {
 		calls.Add(1)
 		return nil, errors.New("no model configured")
-	})
+	}, WithManagerLogger(logs.logger()))
 	m.Start(context.Background())
 
 	m.Enqueue(Job{ID: "a", Dir: "/tmp/a"}, "manual")
@@ -315,7 +315,7 @@ func TestRunJobStopsOnBusy(t *testing.T) {
 		t.Fatalf("pre-acquire lease: ok=%v err=%v", ok, err)
 	}
 	model := &fakeModel{raw: `{"domain_ops":[],"memory_ops":[],"conflict_ledger":[]}`}
-	m := NewManager(func(Job) (*Worker, error) { return NewWorker(s, model), nil })
+	m := NewManager(func(Job) (*Worker, error) { return NewWorker(s, model), nil }, WithManagerLogger(logs.logger()))
 	m.Start(context.Background())
 
 	m.Enqueue(Job{ID: "a", Dir: dir}, "manual")
@@ -379,7 +379,7 @@ func TestPerStoreDedup(t *testing.T) {
 	var calls atomic.Int32
 	release := make(chan struct{})
 	started := make(chan struct{}, 1)
-	m := NewManager(func(Job) (*Worker, error) { return nil, nil }, WithConcurrency(4))
+	m := NewManager(func(Job) (*Worker, error) { return nil, nil }, WithConcurrency(4), WithManagerLogger(logs.logger()))
 	m.runFn = func(_ context.Context, _ Job, _ string) {
 		calls.Add(1)
 		select {
@@ -538,7 +538,7 @@ func TestNightlyLoopEnqueuesEverySession(t *testing.T) {
 		if trigger == "nightly" {
 			fired <- j
 		}
-	}, WithNightlyAt("03:00"))
+	}, WithNightlyAt("03:00"), WithManagerLogger(logs.logger()))
 	m.now = clk.now
 	// The loop re-arms right after enqueuing. Move the clock past 03:00 inside
 	// that enqueue so the next timer is tomorrow's, not another 10ms.
@@ -656,7 +656,7 @@ func TestRunJobLogsDroppedKeywords(t *testing.T) {
 			}
 			seedInbox(t, s, sampleMessages())
 			model := &fakeModel{raw: fmt.Sprintf(`{"domain_ops":[{"op":"update","id":%q,"keyword_triggers":%q,"evidence":{"seq_start":1,"seq_end":2}}],"memory_ops":[],"conflict_ledger":[]}`, d.ID, tt.keywords)}
-			m := NewManager(func(Job) (*Worker, error) { return NewWorker(s, model), nil })
+			m := NewManager(func(Job) (*Worker, error) { return NewWorker(s, model), nil }, WithManagerLogger(logs.logger()))
 			m.Start(context.Background())
 			m.Enqueue(Job{ID: "a", Dir: dir}, "manual")
 			e := logs.wait(t, "consolidation run finished")

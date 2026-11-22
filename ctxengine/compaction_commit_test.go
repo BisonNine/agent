@@ -64,7 +64,7 @@ func TestCompaction_CommitsThroughSQLiteStore(t *testing.T) {
 		t.Fatalf("current summary = %q, want the committed one", raw)
 	}
 
-	a, err := memory.OpenReadOnly(memory.ArchivePath(dir, "sess"))
+	a, err := memory.OpenReadOnly(memory.ArchivePath(dir, "sess"), nil)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}

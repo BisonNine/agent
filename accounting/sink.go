@@ -9,20 +9,21 @@
 // There is one sink per process. Start opens <dir>/accounting.log and Close
 // drains and closes it. Report never drops a record: when the sink is not
 // started, has been closed, or cannot write the file, the record goes to the
-// shared logger instead, as an info event of component "accounting" whose
-// field "accounting" holds the record's JSON. Report blocks while the queue is
-// full, so a log file on a stalled device blocks the callers.
+// logger set with SetLogger instead, as an info event with the attribute
+// component "accounting" whose attribute "accounting" holds the record's
+// JSON. Report blocks while the queue is full, so a log file on a stalled
+// device blocks the callers.
 package accounting
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
-
-	"go.bison9.com/agent/logger"
+	"sync/atomic"
 )
 
 // FileName is the name of the accounting file in the directory given to
@@ -49,7 +50,30 @@ var (
 	// Report always gets room.
 	mu      sync.RWMutex
 	current *sink
+
+	// log is the logger set by SetLogger, already tagged with the
+	// component; nil discards.
+	log atomic.Pointer[slog.Logger]
 )
+
+// SetLogger sets the logger accounting writes to: records that do not reach
+// the file and the errors of the sink. A nil logger, the default, discards
+// them. It may be called at any time and is safe for concurrent use.
+func SetLogger(l *slog.Logger) {
+	if l == nil {
+		log.Store(nil)
+		return
+	}
+	log.Store(l.With("component", component))
+}
+
+// logger returns the logger set by SetLogger, or one that discards.
+func logger() *slog.Logger {
+	if l := log.Load(); l != nil {
+		return l
+	}
+	return slog.New(slog.DiscardHandler)
+}
 
 type sink struct {
 	path     string
@@ -97,7 +121,7 @@ func Start(dir string) error {
 // the record's CostSource, estimating the cost from the pricing table when the
 // call returned none (see SetPricing). When the queue
 // is full it blocks until there is room; it never drops a record. Without a
-// running sink the record goes to the logger.
+// running sink the record goes to the logger (see SetLogger).
 func Report(r Record) {
 	settleCost(&r)
 	mu.RLock()
@@ -141,10 +165,10 @@ func (s *sink) run() {
 	for r := range s.queue {
 		line := encode(r)
 		if _, err := s.file.Write(append(line, '\n')); err != nil {
-			logger.ErrorCF(component, "accounting file write failed", map[string]any{
-				"path":  s.path,
-				"error": err.Error(),
-			})
+			logger().Error("accounting file write failed",
+				"path", s.path,
+				"error", err.Error(),
+			)
 			toLogger(line)
 		}
 	}
@@ -157,12 +181,12 @@ func (s *sink) run() {
 func encode(r Record) []byte {
 	b, err := json.Marshal(r)
 	if err != nil {
-		logger.ErrorCF(component, "accounting record not encodable", map[string]any{"error": err.Error()})
+		logger().Error("accounting record not encodable", "error", err.Error())
 		return fmt.Appendf(nil, "%+v", r)
 	}
 	return b
 }
 
 func toLogger(line []byte) {
-	logger.InfoCF(component, "accounting record", map[string]any{"accounting": string(line)})
+	logger().Info("accounting record", "accounting", string(line))
 }

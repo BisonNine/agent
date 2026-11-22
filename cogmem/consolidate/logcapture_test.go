@@ -4,28 +4,32 @@
 package consolidate
 
 import (
+	"context"
+	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
-
-	"go.bison9.com/agent/logger"
 )
 
 // waitTimeout bounds every wait in this package's tests. It is a failure
 // deadline, never an assertion: a test that needs it has already gone wrong.
 const waitTimeout = 5 * time.Second
 
-// logEntry is one captured log event.
+// logEntry is one captured log record. level is the slog level in lower case
+// ("debug", "info", "warn", "error"); fields holds the attributes, those added
+// with Logger.With included, with integers as int.
 type logEntry struct {
 	level   string
 	message string
 	fields  map[string]any
 }
 
-// captureBackend is a logger.Backend that records every event and streams
-// them on a channel so a test can block until a specific line appears. The
-// logger backend is process-global, so tests that install one must not call
-// t.Parallel.
+// captureBackend is a slog handler target that records every record and
+// streams them on a channel so a test can block until a specific line
+// appears. Each test gets its own, handed to the code under test with
+// WithLogger or WithManagerLogger.
 type captureBackend struct {
 	mu      sync.Mutex
 	entries []logEntry
@@ -36,18 +40,48 @@ type captureBackend struct {
 	onLog func(logEntry)
 }
 
-// installCapture installs a captureBackend for the duration of the test and
-// silences the logger again on cleanup.
+// installCapture returns a captureBackend for the test; pass its logger to
+// the code under test.
 func installCapture(t *testing.T) *captureBackend {
 	t.Helper()
-	c := &captureBackend{ch: make(chan logEntry, 1024)}
-	logger.SetBackend(c)
-	t.Cleanup(func() { logger.SetBackend(nil) })
-	return c
+	return &captureBackend{ch: make(chan logEntry, 1024)}
 }
 
-func (c *captureBackend) Log(level, _ string, message string, fields map[string]any) {
-	e := logEntry{level: level, message: message, fields: fields}
+// logger returns a logger writing to c.
+func (c *captureBackend) logger() *slog.Logger { return slog.New(captureHandler{c: c}) }
+
+type captureHandler struct {
+	c     *captureBackend
+	attrs []slog.Attr
+}
+
+func (captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h captureHandler) Handle(_ context.Context, r slog.Record) error {
+	fields := map[string]any{}
+	add := func(a slog.Attr) bool {
+		v := a.Value.Any()
+		if n, ok := v.(int64); ok {
+			v = int(n)
+		}
+		fields[a.Key] = v
+		return true
+	}
+	for _, a := range h.attrs {
+		add(a)
+	}
+	r.Attrs(add)
+	h.c.log(logEntry{level: strings.ToLower(r.Level.String()), message: r.Message, fields: fields})
+	return nil
+}
+
+func (h captureHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return captureHandler{c: h.c, attrs: append(slices.Clip(h.attrs), attrs...)}
+}
+
+func (h captureHandler) WithGroup(string) slog.Handler { return h }
+
+func (c *captureBackend) log(e logEntry) {
 	c.mu.Lock()
 	c.entries = append(c.entries, e)
 	hook := c.onLog
@@ -100,5 +134,3 @@ func (c *captureBackend) messages() []string {
 	}
 	return out
 }
-
-func (*captureBackend) LogMessageContent() bool { return false }

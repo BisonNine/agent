@@ -26,12 +26,12 @@ func sanToolResult(id string) spawnllm.Message {
 }
 
 func TestSanitizeHistoryForProvider_EmptyHistory(t *testing.T) {
-	result := sanitizeHistoryForProvider(nil)
+	result := sanitizeHistoryForProvider(nil, discardLog)
 	if len(result) != 0 {
 		t.Fatalf("expected empty, got %d messages", len(result))
 	}
 
-	result = sanitizeHistoryForProvider([]spawnllm.Message{})
+	result = sanitizeHistoryForProvider([]spawnllm.Message{}, discardLog)
 	if len(result) != 0 {
 		t.Fatalf("expected empty, got %d messages", len(result))
 	}
@@ -45,7 +45,7 @@ func TestSanitizeHistoryForProvider_SingleToolCall(t *testing.T) {
 		msg("assistant", "done"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(result))
 	}
@@ -61,7 +61,7 @@ func TestSanitizeHistoryForProvider_MultiToolCalls(t *testing.T) {
 		msg("assistant", "both done"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 5 {
 		t.Fatalf("expected 5 messages, got %d: %+v", len(result), roles(result))
 	}
@@ -76,7 +76,7 @@ func TestSanitizeHistoryForProvider_AssistantToolCallAfterPlainAssistant(t *test
 		sanToolResult("A"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %+v", len(result), roles(result))
 	}
@@ -89,7 +89,7 @@ func TestSanitizeHistoryForProvider_OrphanedLeadingTool(t *testing.T) {
 		msg("user", "hello"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 message, got %d: %+v", len(result), roles(result))
 	}
@@ -102,7 +102,7 @@ func TestSanitizeHistoryForProvider_ToolAfterUserDropped(t *testing.T) {
 		sanToolResult("A"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 message, got %d: %+v", len(result), roles(result))
 	}
@@ -116,7 +116,7 @@ func TestSanitizeHistoryForProvider_ToolAfterAssistantNoToolCalls(t *testing.T) 
 		sanToolResult("A"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 2 {
 		t.Fatalf("expected 2 messages, got %d: %+v", len(result), roles(result))
 	}
@@ -130,7 +130,7 @@ func TestSanitizeHistoryForProvider_AssistantToolCallAtStart(t *testing.T) {
 		msg("user", "hello"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 1 {
 		t.Fatalf("expected 1 message, got %d: %+v", len(result), roles(result))
 	}
@@ -150,7 +150,7 @@ func TestSanitizeHistoryForProvider_MultiToolCallsThenNewRound(t *testing.T) {
 		msg("assistant", "done again"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 9 {
 		t.Fatalf("expected 9 messages, got %d: %+v", len(result), roles(result))
 	}
@@ -169,7 +169,7 @@ func TestSanitizeHistoryForProvider_ConsecutiveMultiToolRounds(t *testing.T) {
 		msg("assistant", "all done"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 8 {
 		t.Fatalf("expected 8 messages, got %d: %+v", len(result), roles(result))
 	}
@@ -184,7 +184,7 @@ func TestSanitizeHistoryForProvider_PlainConversation(t *testing.T) {
 		msg("assistant", "fine"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	if len(result) != 4 {
 		t.Fatalf("expected 4 messages, got %d", len(result))
 	}
@@ -239,7 +239,7 @@ func TestSanitizeHistoryForProvider_IncompleteToolResults(t *testing.T) {
 		msg("assistant", "answer"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	assertRoles(t, result, "user", "assistant", "tool", "tool", "user", "assistant")
 	if result[2].ToolCallID != "A" || result[2].Content != "result" {
 		t.Errorf("the real result for A was altered: %+v", result[2])
@@ -258,7 +258,7 @@ func TestSanitizeHistoryForProvider_MissingAllToolResults(t *testing.T) {
 		msg("assistant", "hi"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	assertRoles(t, result, "user", "assistant", "tool", "tool", "user", "assistant")
 	assertInterrupted(t, result[2], "A")
 	assertInterrupted(t, result[3], "B")
@@ -283,7 +283,7 @@ func TestSanitizeHistoryForProvider_PartialToolResultsInMiddle(t *testing.T) {
 		msg("assistant", "all done"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	assertRoles(t, result,
 		"user", "assistant", "tool", "assistant",
 		"user", "assistant", "tool", "tool",
@@ -307,7 +307,7 @@ func TestSanitizeHistoryForProvider_InterruptedGroupStaysProviderValid(t *testin
 		msg("assistant", "carrying on"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	assertRoles(t, result, "user", "assistant", "tool", "tool", "tool", "assistant")
 
 	declared := map[string]bool{}
@@ -345,7 +345,7 @@ func TestSanitizeHistoryForProvider_BadPredecessorStillDropped(t *testing.T) {
 		sanToolResult("A"),
 	}
 
-	result := sanitizeHistoryForProvider(history)
+	result := sanitizeHistoryForProvider(history, discardLog)
 	assertRoles(t, result, "user", "assistant")
 }
 

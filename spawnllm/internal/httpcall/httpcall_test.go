@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"mime/multipart"
 	"net"
 	"net/http"
@@ -15,32 +16,13 @@ import (
 	"testing"
 	"testing/iotest"
 
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
+	"go.bison9.com/agent/spawnllm/internal/launch/launchtest"
 )
 
-type captureLog struct {
-	mu    sync.Mutex
-	lines []string
-}
-
-func (c *captureLog) Log(level, component, message string, fields map[string]any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.lines = append(c.lines, level+" "+component+" "+message)
-	for k, v := range fields {
-		if s, ok := v.(string); ok && strings.Contains(s, "secret") {
-			c.lines = append(c.lines, "LEAK "+k)
-		}
-	}
-}
-
-func (*captureLog) LogMessageContent() bool { return false }
-
 func TestDo(t *testing.T) {
-	logs := &captureLog{}
-	logger.SetBackend(logs)
-	defer logger.SetBackend(nil)
+	logs := &launchtest.Logs{}
+	log := logs.Logger().With("component", "test")
 
 	tests := []struct {
 		name       string
@@ -70,7 +52,7 @@ func TestDo(t *testing.T) {
 				t.Fatalf("NewPost: %v", err)
 			}
 			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-			resp, err := Do(client, req, Call{Component: "test", Backend: "b", Model: "m", APIBase: srv.URL, JSON: tc.expectJSON})
+			resp, err := Do(client, req, Call{Logger: log, Backend: "b", Model: "m", APIBase: srv.URL, JSON: tc.expectJSON})
 			if tc.wantErr {
 				statusErr, ok := errors.AsType[*common.HTTPStatusError](err)
 				if !ok || statusErr.StatusCode != tc.status {
@@ -84,14 +66,18 @@ func TestDo(t *testing.T) {
 		})
 	}
 
-	logs.mu.Lock()
-	defer logs.mu.Unlock()
-	joined := strings.Join(logs.lines, "\n")
-	if !strings.Contains(joined, "debug test Sending request") || !strings.Contains(joined, "debug test Received response") {
-		t.Errorf("logs = %s", joined)
+	for _, msg := range []string{"Sending request", "Received response"} {
+		e, ok := logs.Find(msg)
+		if !ok || e.Level != slog.LevelDebug || e.Attrs["component"] != "test" {
+			t.Errorf("%q: entry = %+v, found %v; want a debug record with component test", msg, e, ok)
+		}
 	}
-	if strings.Contains(joined, "LEAK") {
-		t.Errorf("the query string was logged: %s", joined)
+	for _, e := range logs.Entries() {
+		for k, v := range e.Attrs {
+			if s, ok := v.(string); ok && strings.Contains(s, "secret") {
+				t.Errorf("the query string was logged in %q attribute %s", e.Message, k)
+			}
+		}
 	}
 }
 
@@ -141,7 +127,7 @@ func TestDo_Binary(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewPost: %v", err)
 			}
-			resp, err := Do(srv.Client(), req, Call{Component: "test", APIBase: srv.URL, Binary: true})
+			resp, err := Do(srv.Client(), req, Call{APIBase: srv.URL, Binary: true})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, want error %v", err, tc.wantErr)
 			}
@@ -177,7 +163,7 @@ func TestDo_DrainsErrorBody(t *testing.T) {
 		if err != nil {
 			t.Fatalf("NewPost: %v", err)
 		}
-		if _, err := Do(client, req, Call{Component: "test"}); err == nil {
+		if _, err := Do(client, req, Call{}); err == nil {
 			t.Fatal("500 accepted")
 		}
 	}

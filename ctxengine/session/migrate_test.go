@@ -90,7 +90,7 @@ func TestMigrateJSONL_ProductionFixture(t *testing.T) {
 	dir := t.TempDir()
 	writeProductionFixture(t, dir)
 
-	report, err := MigrateJSONL(dir)
+	report, err := MigrateJSONL(dir, nil)
 	if err != nil {
 		t.Fatalf("MigrateJSONL: %v", err)
 	}
@@ -119,7 +119,7 @@ func TestMigrateJSONL_ProductionFixture(t *testing.T) {
 		}
 	}
 
-	a, err := memory.OpenReadOnly(memory.ArchivePath(dir, fixtureKey))
+	a, err := memory.OpenReadOnly(memory.ArchivePath(dir, fixtureKey), nil)
 	if err != nil {
 		t.Fatalf("OpenReadOnly: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestMigrateJSONL_ProductionFixture(t *testing.T) {
 	// A second run finds the window in place and skips the session; the
 	// renamed sources are not touched.
 	writeFixture(t, dir, fixtureBase+".meta.json", `{"key":"`+fixtureKey+`","next_seq":99}`)
-	report, err = MigrateJSONL(dir)
+	report, err = MigrateJSONL(dir, nil)
 	if err != nil {
 		t.Fatalf("second MigrateJSONL: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestMigrateJSONL_MetaOnlyAndLegacySeqs(t *testing.T) {
 	writeFixture(t, dir, "old.jsonl",
 		`{"role":"user","content":"one"}`+"\n"+`{"role":"assistant","content":"two"}`+"\n"+`{"role":"user","content":"three"}`+"\n")
 
-	report, err := MigrateJSONL(dir)
+	report, err := MigrateJSONL(dir, nil)
 	if err != nil {
 		t.Fatalf("MigrateJSONL: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestMigrateJSONL_Errors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	report, err := MigrateJSONL(dir)
+	report, err := MigrateJSONL(dir, nil)
 	if err != nil {
 		t.Fatalf("MigrateJSONL: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestMigrateJSONL_Errors(t *testing.T) {
 	}
 
 	// A missing directory is not an error.
-	report, err = MigrateJSONL(filepath.Join(dir, "missing"))
+	report, err = MigrateJSONL(filepath.Join(dir, "missing"), nil)
 	if err != nil || len(report.Errors) != 0 {
 		t.Errorf("missing dir: %+v, %v", report, err)
 	}

@@ -3,9 +3,11 @@ package common
 import (
 	"bytes"
 	"encoding/base64"
+	"log/slog"
 	"strings"
 	"testing"
 
+	"go.bison9.com/agent/spawnllm/internal/launch/launchtest"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -17,15 +19,15 @@ func pngDataURL() string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(pngBytes)
 }
 
-// captureImageWarns swaps the image WARN hook for one that records each
-// WARN's fields. Tests using it must not run in parallel.
-func captureImageWarns(t *testing.T) *[]map[string]any {
-	t.Helper()
+// warnAttrs returns the attributes of each warn-level record in logs.
+func warnAttrs(logs *launchtest.Logs) []map[string]any {
 	var got []map[string]any
-	prev := imageWarnFn
-	imageWarnFn = func(_, _ string, fields map[string]any) { got = append(got, fields) }
-	t.Cleanup(func() { imageWarnFn = prev })
-	return &got
+	for _, e := range logs.Entries() {
+		if e.Level == slog.LevelWarn {
+			got = append(got, e.Attrs)
+		}
+	}
+	return got
 }
 
 func TestImageCollector_AddURL(t *testing.T) {
@@ -79,11 +81,11 @@ func TestImageCollector_AddURL(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			warns := captureImageWarns(t)
-			c := NewImageCollector("gemini-image")
+			logs := &launchtest.Logs{}
+			c := NewImageCollector("gemini-image", logs.Logger())
 			c.AddURL(tc.url)
 			assertImages(t, c.Images(), tc.want)
-			assertWarned(t, *warns, tc.wantWarn)
+			assertWarned(t, warnAttrs(logs), tc.wantWarn)
 		})
 	}
 }
@@ -108,11 +110,11 @@ func TestImageCollector_AddBase64(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			warns := captureImageWarns(t)
-			c := NewImageCollector("gpt-image")
+			logs := &launchtest.Logs{}
+			c := NewImageCollector("gpt-image", logs.Logger())
 			c.AddBase64(tc.b64)
 			assertImages(t, c.Images(), tc.want)
-			assertWarned(t, *warns, tc.wantWarn)
+			assertWarned(t, warnAttrs(logs), tc.wantWarn)
 		})
 	}
 }
@@ -124,7 +126,7 @@ func TestImageCollector_AnySize(t *testing.T) {
 	big := make([]byte, size)
 	copy(big, pngBytes)
 	b64 := base64.StdEncoding.EncodeToString(big)
-	c := NewImageCollector("m")
+	c := NewImageCollector("m", nil)
 	c.AddBase64(b64)
 	c.AddBase64(b64)
 	c.AddURL("data:image/png;base64," + b64)
@@ -169,10 +171,12 @@ func assertWarned(t *testing.T, warns []map[string]any, want bool) {
 	if m := warns[0]["model"]; m == nil || m == "" {
 		t.Errorf("WARN names no model: %v", warns[0])
 	}
+	if c := warns[0]["component"]; c != "common" {
+		t.Errorf("WARN component = %v, want common", c)
+	}
 }
 
 func TestParseResponse_Images(t *testing.T) {
-	captureImageWarns(t)
 	body := `{"model":"google/gemini-2.5-flash-image","choices":[{"message":{"role":"assistant","content":"Here it is.",` +
 		`"images":[{"type":"image_url","image_url":{"url":"` + pngDataURL() + `"}},` +
 		`{"type":"image_url","image_url":{"url":"https://example.com/a.png"}}]},"finish_reason":"stop"}]}`

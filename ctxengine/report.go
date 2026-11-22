@@ -10,13 +10,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
 	"go.bison9.com/agent/ctxengine/memory"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -157,6 +157,16 @@ type compactionRecorder struct {
 	// attempt (status != "ok").
 	failureDump FailureDumpFunc
 	attempts    []CompactionAttempt
+	// log is the Manager's logger; nil discards.
+	log *slog.Logger
+}
+
+// logger returns r.log, or a logger that discards when it is nil.
+func (r *compactionRecorder) logger() *slog.Logger {
+	if r.log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return r.log
 }
 
 // record logs one LLM invocation. req/resp are only persisted when debug
@@ -174,19 +184,19 @@ func (r *compactionRecorder) record(model, status, detail string, dur time.Durat
 	// Always log the per-model outcome (independent of debug capture) so the host's
 	// log shows which summarization model succeeded or failed for each attempt.
 	if status == "ok" {
-		logger.InfoCF("llmcontext", "compression model succeeded", map[string]any{
-			"model":       model,
-			"session":     r.sessionKey,
-			"duration_ms": dur.Milliseconds(),
-		})
+		r.logger().Info("compression model succeeded",
+			"model", model,
+			"session", r.sessionKey,
+			"duration_ms", dur.Milliseconds(),
+		)
 	} else {
-		logger.WarnCF("llmcontext", "compression model failed", map[string]any{
-			"model":       model,
-			"status":      status,
-			"detail":      detail,
-			"session":     r.sessionKey,
-			"duration_ms": dur.Milliseconds(),
-		})
+		r.logger().Warn("compression model failed",
+			"model", model,
+			"status", status,
+			"detail", detail,
+			"session", r.sessionKey,
+			"duration_ms", dur.Milliseconds(),
+		)
 	}
 	if r.failureDump != nil && status != "ok" {
 		r.dumpFailure(model, status, detail, dur, req, resp)
@@ -209,47 +219,47 @@ func (r *compactionRecorder) record(model, status, detail string, dur time.Durat
 	if err != nil {
 		return
 	}
-	f, err := openDebugCapture(r.debugPath, r.debugPerm)
+	f, err := openDebugCapture(r.debugPath, r.debugPerm, r.logger())
 	if err != nil {
-		logger.WarnCF("llmcontext", "compaction debug capture: open failed", map[string]any{
-			"session_key": r.sessionKey,
-			"path":        r.debugPath,
-			"error":       err.Error(),
-		})
+		r.logger().Warn("compaction debug capture: open failed",
+			"session_key", r.sessionKey,
+			"path", r.debugPath,
+			"error", err.Error(),
+		)
 		return
 	}
 	if _, err := f.Write(append(data, '\n')); err != nil {
-		logger.WarnCF("llmcontext", "compaction debug capture: write failed", map[string]any{
-			"session_key": r.sessionKey,
-			"error":       err.Error(),
-		})
+		r.logger().Warn("compaction debug capture: write failed",
+			"session_key", r.sessionKey,
+			"error", err.Error(),
+		)
 	}
 	if err := f.Close(); err != nil {
-		logger.WarnCF("llmcontext", "compaction debug capture: close failed", map[string]any{
-			"session_key": r.sessionKey,
-			"error":       err.Error(),
-		})
+		r.logger().Warn("compaction debug capture: close failed",
+			"session_key", r.sessionKey,
+			"error", err.Error(),
+		)
 	}
 }
 
 // openDebugCapture opens path for appending. A new file is created at perm,
 // set with chmod so the umask does not alter it; an existing one is changed to
 // perm if its mode differs.
-func openDebugCapture(path string, perm os.FileMode) (*os.File, error) {
+func openDebugCapture(path string, perm os.FileMode, log *slog.Logger) (*os.File, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, perm) //nolint:gosec // G304: compact.jsonl in the host's workspace directory
 	if err == nil {
 		if chmodErr := f.Chmod(perm); chmodErr != nil {
-			logger.WarnCF("llmcontext", "compaction debug capture: mode change failed", map[string]any{
-				"path":  path,
-				"error": chmodErr.Error(),
-			})
+			log.Warn("compaction debug capture: mode change failed",
+				"path", path,
+				"error", chmodErr.Error(),
+			)
 		}
 		return f, nil
 	}
 	if !errors.Is(err, fs.ErrExist) {
 		return nil, err
 	}
-	iox.SetFileMode("llmcontext", path, perm)
+	iox.SetFileMode(log, path, perm)
 	return os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0) //nolint:gosec // G304: as above
 }
 
@@ -268,10 +278,10 @@ func (r *compactionRecorder) dumpFailure(model, status, detail string, dur time.
 		"duration_ms": dur.Milliseconds(),
 	}
 	if err := r.failureDump("compress_fail", meta, input, output); err != nil {
-		logger.WarnCF("llmcontext", "failed-compression dump: write failed", map[string]any{
-			"session_key": r.sessionKey,
-			"error":       err.Error(),
-		})
+		r.logger().Warn("failed-compression dump: write failed",
+			"session_key", r.sessionKey,
+			"error", err.Error(),
+		)
 	}
 }
 

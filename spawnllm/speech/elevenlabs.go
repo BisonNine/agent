@@ -10,13 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/internal/httpcall"
 	"go.bison9.com/agent/spawnllm/internal/launch"
 )
@@ -36,7 +36,10 @@ type ElevenLabs struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	logger     *slog.Logger
 }
+
+func (e *ElevenLabs) log() *slog.Logger { return componentLog(e.logger) }
 
 // NewElevenLabs returns an ElevenLabs client. An empty baseURL means
 // ElevenLabsBaseURL.
@@ -45,7 +48,7 @@ func NewElevenLabs(baseURL, apiKey string, opts ...Option) *ElevenLabs {
 	if baseURL == "" {
 		baseURL = ElevenLabsBaseURL
 	}
-	return &ElevenLabs{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, httpClient: o.httpClient}
+	return &ElevenLabs{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, httpClient: o.httpClient, logger: o.logger}
 }
 
 var (
@@ -54,7 +57,7 @@ var (
 )
 
 func (e *ElevenLabs) call(model string, expectJSON bool) httpcall.Call {
-	return httpcall.Call{Component: component, Backend: "elevenlabs", Model: model, APIBase: e.baseURL, JSON: expectJSON}
+	return httpcall.Call{Logger: e.log(), Backend: "elevenlabs", Model: model, APIBase: e.baseURL, JSON: expectJSON}
 }
 
 // Transcribe sends the audio to Scribe (Model is the model_id, e.g.
@@ -76,8 +79,8 @@ func (e *ElevenLabs) transcribe(ctx context.Context, req *TranscribeRequest) (*T
 		return nil, err
 	}
 	if req.Prompt != "" {
-		logger.DebugCF(component, "ElevenLabs transcription has no prompt field; prompt not sent",
-			map[string]any{"model": req.Model})
+		e.log().DebugContext(ctx, "ElevenLabs transcription has no prompt field; prompt not sent",
+			"model", req.Model)
 	}
 	filename, err := uploadFilename(req.Filename, req.ContentType)
 	if err != nil {
@@ -137,8 +140,8 @@ func (e *ElevenLabs) synthesize(ctx context.Context, req *SynthesizeRequest) (*S
 		return nil, err
 	}
 	if req.Instructions != "" {
-		logger.DebugCF(component, "ElevenLabs speech has no instructions field; instructions not sent",
-			map[string]any{"model": req.Model})
+		e.log().DebugContext(ctx, "ElevenLabs speech has no instructions field; instructions not sent",
+			"model", req.Model)
 	}
 	data, err := json.Marshal(map[string]string{"text": req.Text, "model_id": req.Model})
 	if err != nil {

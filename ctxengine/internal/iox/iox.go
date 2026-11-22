@@ -11,21 +11,29 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
-
-	"go.bison9.com/agent/logger"
 )
 
-// CloseQuietly closes c and logs at debug level, under component, if Close
-// reports an error. It is for handles whose close error carries nothing the
-// caller can act on: read-only database connections, row iterators, files
-// opened for reading, and handles being discarded on an error path. A handle
-// that was written to must have its Close error checked by the caller instead,
-// because that is where a flush failure surfaces.
-func CloseQuietly(component string, c io.Closer) {
+// orDiscard returns log, or a logger that discards when it is nil.
+func orDiscard(log *slog.Logger) *slog.Logger {
+	if log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return log
+}
+
+// CloseQuietly closes c and logs at debug level on log (the caller's logger,
+// tagged with its component; nil discards) if Close reports an error. It is
+// for handles whose close error carries nothing the caller can act on:
+// read-only database connections, row iterators, files opened for reading,
+// and handles being discarded on an error path. A handle that was written to
+// must have its Close error checked by the caller instead, because that is
+// where a flush failure surfaces.
+func CloseQuietly(log *slog.Logger, c io.Closer) {
 	if err := c.Close(); err != nil {
-		logger.DebugCF(component, "close failed", map[string]any{"error": err.Error()})
+		orDiscard(log).Debug("close failed", "error", err.Error())
 	}
 }
 
@@ -69,27 +77,29 @@ func EnsureDir(dir string, perm os.FileMode) error {
 // permission bits differ, whether that tightens or loosens them. A missing
 // file is ignored. A symbolic link is not followed, since its target is not
 // ctxengine's to change; it is left alone and logged at debug level. Other
-// failures are logged as warnings under component and otherwise ignored.
-func SetFileMode(component, path string, perm os.FileMode) {
+// failures are logged as warnings and otherwise ignored. log is the caller's
+// logger, tagged with its component; nil discards.
+func SetFileMode(log *slog.Logger, path string, perm os.FileMode) {
+	log = orDiscard(log)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return
 	}
 	if err != nil {
-		logger.WarnCF(component, "file mode check failed",
-			map[string]any{"path": path, "error": err.Error()})
+		log.Warn("file mode check failed",
+			"path", path, "error", err.Error())
 		return
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		logger.DebugCF(component, "file is a symbolic link; mode not changed",
-			map[string]any{"path": path})
+		log.Debug("file is a symbolic link; mode not changed",
+			"path", path)
 		return
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm() == perm {
 		return
 	}
 	if err := os.Chmod(path, perm); err != nil {
-		logger.WarnCF(component, "file mode change failed",
-			map[string]any{"path": path, "mode": fmt.Sprintf("%#o", perm), "error": err.Error()})
+		log.Warn("file mode change failed",
+			"path", path, "mode", fmt.Sprintf("%#o", perm), "error", err.Error())
 	}
 }

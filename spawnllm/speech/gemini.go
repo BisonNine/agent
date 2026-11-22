@@ -12,13 +12,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
 	"strings"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/httpcall"
 	"go.bison9.com/agent/spawnllm/internal/launch"
@@ -51,7 +51,10 @@ type Gemini struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	logger     *slog.Logger
 }
+
+func (g *Gemini) log() *slog.Logger { return componentLog(g.logger) }
 
 // NewGemini returns a Gemini client. An empty baseURL means GeminiBaseURL.
 func NewGemini(baseURL, apiKey string, opts ...Option) *Gemini {
@@ -59,7 +62,7 @@ func NewGemini(baseURL, apiKey string, opts ...Option) *Gemini {
 	if baseURL == "" {
 		baseURL = GeminiBaseURL
 	}
-	return &Gemini{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, httpClient: o.httpClient}
+	return &Gemini{baseURL: strings.TrimRight(baseURL, "/"), apiKey: apiKey, httpClient: o.httpClient, logger: o.logger}
 }
 
 var (
@@ -169,8 +172,8 @@ func (g *Gemini) synthesize(ctx context.Context, req *SynthesizeRequest) (*Speec
 		return nil, err
 	}
 	if req.Format != "" {
-		logger.DebugCF(component, "Gemini speech has no output format choice; format ignored",
-			map[string]any{"model": req.Model, "format": req.Format})
+		g.log().DebugContext(ctx, "Gemini speech has no output format choice; format ignored",
+			"model", req.Model, "format", req.Format)
 	}
 	text := req.Text
 	if req.Instructions != "" {
@@ -227,7 +230,7 @@ func (g *Gemini) generate(ctx context.Context, model string, data []byte) (*gemi
 	httpReq.Header.Set("X-Goog-Api-Key", g.apiKey)
 
 	resp, err := httpcall.Do(g.httpClient, httpReq,
-		httpcall.Call{Component: component, Backend: "gemini", Model: model, APIBase: g.baseURL, JSON: true})
+		httpcall.Call{Logger: g.log(), Backend: "gemini", Model: model, APIBase: g.baseURL, JSON: true})
 	if err != nil {
 		return nil, err
 	}

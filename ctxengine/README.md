@@ -108,14 +108,14 @@ own: the archive imports it into `summaries` the first time it is opened.
   memory for blocks and hands them to `Assemble` as injections with a
   placement.
 - **Logging, failure dumps, refusal rules, message envelopes.** All injected:
-  `logger.SetBackend`, `WithFailureDump`, `WithRefusalClassifier`,
+  `WithLogger`, `WithFailureDump`, `WithRefusalClassifier`,
   `WithNoiseKey` (how repeated scheduled messages are recognised and
   collapsed without the engine knowing what a scheduler is).
 
 ## Host obligations
 
-- Install a logging backend with `logger.SetBackend` from
-  `go.bison9.com/agent/logger` (silent otherwise).
+- Pass a `*slog.Logger` with `WithLogger` (silent otherwise), and the same
+  logger to `session.WithLogger` and the session tools' `Host.Logger`.
 - Provide a `ModelCaller` for compaction.
 - Call `AddUserMessage`/`AddAssistantMessage`/`AddToolCallMessage`/
   `AddToolResult` as the conversation happens, and `Assemble` before every

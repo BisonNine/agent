@@ -11,12 +11,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"strings"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/httpcall"
 	"go.bison9.com/agent/spawnllm/internal/launch"
@@ -41,7 +41,10 @@ type OpenAI struct {
 	apiKey        string
 	httpClient    *http.Client
 	transcription TranscriptionAPI
+	logger        *slog.Logger
 }
+
+func (c *OpenAI) log() *slog.Logger { return componentLog(c.logger) }
 
 // NewOpenAI returns a client for an OpenAI-style base URL. apiKey is sent as
 // a bearer token when not empty (a local server may need none).
@@ -59,6 +62,7 @@ func NewOpenAI(baseURL, apiKey string, opts ...Option) *OpenAI {
 		apiKey:        apiKey,
 		httpClient:    o.httpClient,
 		transcription: api,
+		logger:        o.logger,
 	}
 }
 
@@ -68,7 +72,7 @@ var (
 )
 
 func (c *OpenAI) call(model string, expectJSON bool) httpcall.Call {
-	return httpcall.Call{Component: component, Backend: "openai", Model: model, APIBase: c.baseURL, JSON: expectJSON}
+	return httpcall.Call{Logger: c.log(), Backend: "openai", Model: model, APIBase: c.baseURL, JSON: expectJSON}
 }
 
 // binaryCall is the call description for a response that must be audio.
@@ -207,8 +211,8 @@ func (c *OpenAI) inputAudioRequest(ctx context.Context, req *TranscribeRequest) 
 		return nil, err
 	}
 	if req.Prompt != "" {
-		logger.DebugCF(component, "OpenRouter transcription has no prompt field; prompt not sent",
-			map[string]any{"model": req.Model})
+		c.log().DebugContext(ctx, "OpenRouter transcription has no prompt field; prompt not sent",
+			"model", req.Model)
 	}
 	// Written by hand so the audio is base64-encoded straight into the body,
 	// without a copy of the audio or of its encoding. Keys in sorted order,

@@ -168,7 +168,7 @@ func TestRenderSummaryFromRaw_ValidJSON(t *testing.T) {
 // TestValidateAndUnmarshalLLMResponse_CleanJSON — parses clean JSON correctly.
 func TestValidateAndUnmarshalLLMResponse_CleanJSON(t *testing.T) {
 	raw := `{"version":2,"state":{"goals":[{"text":"build feature","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
-	s, err := validateAndUnmarshalLLMResponse(raw)
+	s, err := validateAndUnmarshalLLMResponse(raw, discardLog)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestValidateAndUnmarshalLLMResponse_CleanJSON(t *testing.T) {
 // TestValidateAndUnmarshalLLMResponse_MarkdownFenced — strips markdown fences before parsing.
 func TestValidateAndUnmarshalLLMResponse_MarkdownFenced(t *testing.T) {
 	raw := "```json\n{\"version\":2,\"state\":{\"goals\":[{\"text\":\"build feature\",\"refs\":[{\"seq_start\":1}]}]},\"covered_seq_start\":0,\"covered_seq_end\":0,\"generated_at\":\"2026-01-01T00:00:00Z\"}\n```"
-	s, err := validateAndUnmarshalLLMResponse(raw)
+	s, err := validateAndUnmarshalLLMResponse(raw, discardLog)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -194,7 +194,7 @@ func TestValidateAndUnmarshalLLMResponse_MarkdownFenced(t *testing.T) {
 func TestValidateAndUnmarshalLLMResponse_ProsePreamble(t *testing.T) {
 	raw := "Quick summary follows.\n\n" +
 		`{"version":2,"state":{"goals":[{"text":"build feature","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
-	s, err := validateAndUnmarshalLLMResponse(raw)
+	s, err := validateAndUnmarshalLLMResponse(raw, discardLog)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestValidateAndUnmarshalLLMResponse_ProsePreambleWithFence(t *testing.T) {
 	raw := "Here is the summary:\n```json\nthis is leading prose inside the fence\n" +
 		`{"version":2,"state":{"goals":[{"text":"fenced+prose","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}` +
 		"\nand some trailing prose\n```"
-	s, err := validateAndUnmarshalLLMResponse(raw)
+	s, err := validateAndUnmarshalLLMResponse(raw, discardLog)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestValidateAndUnmarshalLLMResponse_BracesInsideString(t *testing.T) {
 	// goals contains: "text}with}braces and an escaped \" quote
 	raw := "preamble " +
 		`{"version":2,"state":{"goals":[{"text":"\"text}with}braces\"","refs":[{"seq_start":1}]}]},"covered_seq_start":0,"covered_seq_end":0,"generated_at":"2026-01-01T00:00:00Z"}`
-	s, err := validateAndUnmarshalLLMResponse(raw)
+	s, err := validateAndUnmarshalLLMResponse(raw, discardLog)
 	if err != nil {
 		t.Fatalf("expected nil error, got: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestValidateAndUnmarshalLLMResponse_BracesInsideString(t *testing.T) {
 // matching close returns the original unmarshal error (recovery fails).
 func TestValidateAndUnmarshalLLMResponse_TruncatedJSON(t *testing.T) {
 	raw := `{"version":1,"state":{"goals":"truncated`
-	_, err := validateAndUnmarshalLLMResponse(raw)
+	_, err := validateAndUnmarshalLLMResponse(raw, discardLog)
 	if err == nil {
 		t.Fatal("expected unmarshal error for truncated JSON, got nil")
 	}
@@ -253,7 +253,7 @@ func TestValidateAndUnmarshalLLMResponse_TruncatedJSON(t *testing.T) {
 func TestValidateAndUnmarshalLLMResponse_EmptyAndWhitespace(t *testing.T) {
 	cases := []string{"", "   ", "\n\t  \n"}
 	for _, raw := range cases {
-		if _, err := validateAndUnmarshalLLMResponse(raw); err == nil {
+		if _, err := validateAndUnmarshalLLMResponse(raw, discardLog); err == nil {
 			t.Errorf("expected error for empty/whitespace input %q, got nil", raw)
 		}
 	}

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,6 @@ import (
 	_ "modernc.org/sqlite"
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -153,8 +153,17 @@ type SummaryMeta struct {
 type ArchiveStore struct {
 	db          *sql.DB
 	path        string
-	mu          sync.Mutex // held only for writes (Append, Delete)
-	unavailable bool       // set true when Open fails; all ops are no-ops
+	mu          sync.Mutex   // held only for writes (Append, Delete)
+	unavailable bool         // set true when Open fails; all ops are no-ops
+	log         *slog.Logger // tagged with the component "memory"; nil discards
+}
+
+// logger returns the store's logger, or one that discards when it has none.
+func (a *ArchiveStore) logger() *slog.Logger {
+	if a.log == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return a.log
 }
 
 // OpenReadOnly creates a read-only ArchiveStore for an existing archive at path.
@@ -162,12 +171,13 @@ type ArchiveStore struct {
 // opens its own short-lived read-only SQLite connection. No write connection,
 // WAL pragma, or schema creation is performed.
 // Returns ErrArchiveUnavailable if the file does not exist or is unreadable.
-func OpenReadOnly(path string) (*ArchiveStore, error) {
+// The store logs to log, tagged with the component "memory"; nil discards.
+func OpenReadOnly(path string, log *slog.Logger) (*ArchiveStore, error) {
 	// Verify the file exists before returning the store.
 	if _, err := os.Stat(path); err != nil {
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
-	return &ArchiveStore{path: path}, nil
+	return &ArchiveStore{path: path, log: componentLog(log)}, nil
 }
 
 // busyTimeoutMillis is how long a connection waits for a lock before failing
@@ -198,16 +208,17 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 	for _, o := range opts {
 		o(&cfg)
 	}
+	log := componentLog(cfg.logger)
 	if err := prepareArchiveFiles(path, cfg); err != nil {
-		logger.WarnCF("memory", "archive create failed",
-			map[string]any{"path": path, "error": err.Error()})
+		log.Warn("archive create failed",
+			"path", path, "error", err.Error())
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		logger.WarnCF("memory", "archive open failed",
-			map[string]any{"path": path, "error": err.Error()})
+		log.Warn("archive open failed",
+			"path", path, "error", err.Error())
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
@@ -216,39 +227,39 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 
 	// Enable WAL mode for concurrent reader support.
 	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		iox.CloseQuietly("memory", db)
-		logger.WarnCF("memory", "archive WAL failed",
-			map[string]any{"path": path, "error": err.Error()})
+		iox.CloseQuietly(log, db)
+		log.Warn("archive WAL failed",
+			"path", path, "error", err.Error())
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 	if _, err := db.Exec(fmt.Sprintf("PRAGMA busy_timeout=%d", busyTimeoutMillis)); err != nil {
-		iox.CloseQuietly("memory", db)
-		logger.WarnCF("memory", "archive busy_timeout failed",
-			map[string]any{"path": path, "error": err.Error()})
+		iox.CloseQuietly(log, db)
+		log.Warn("archive busy_timeout failed",
+			"path", path, "error", err.Error())
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
 	// Create schema.
 	if _, err := db.Exec(archiveSchema); err != nil {
-		iox.CloseQuietly("memory", db)
-		logger.WarnCF("memory", "archive schema failed",
-			map[string]any{"path": path, "error": err.Error()})
+		iox.CloseQuietly(log, db)
+		log.Warn("archive schema failed",
+			"path", path, "error", err.Error())
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
 	// FTS5 integrity check; rebuild if needed.
 	if _, err := db.Exec("INSERT INTO messages_fts(messages_fts) VALUES ('integrity-check')"); err != nil {
-		logger.WarnCF("memory", "archive FTS5 integrity check failed, rebuilding",
-			map[string]any{"path": path, "error": err.Error()})
+		log.Warn("archive FTS5 integrity check failed, rebuilding",
+			"path", path, "error", err.Error())
 		if _, rebuildErr := db.Exec("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')"); rebuildErr != nil {
-			iox.CloseQuietly("memory", db)
-			logger.WarnCF("memory", "archive FTS5 rebuild failed",
-				map[string]any{"path": path, "error": rebuildErr.Error()})
+			iox.CloseQuietly(log, db)
+			log.Warn("archive FTS5 rebuild failed",
+				"path", path, "error", rebuildErr.Error())
 			return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 		}
 	}
 
-	store := &ArchiveStore{db: db, path: path}
+	store := &ArchiveStore{db: db, path: path, log: log}
 
 	// One-time import of legacy <base>.summaries.jsonl checkpoints into the
 	// summaries table. Best-effort: a failure logs and is ignored so it never
@@ -285,8 +296,8 @@ func (a *ArchiveStore) importLegacySummaries() {
 	// Idempotency guard: only import when the table is empty.
 	var count int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM summaries`).Scan(&count); err != nil {
-		logger.WarnCF("memory", "archive summaries count failed",
-			map[string]any{"path": a.path, "error": err.Error()})
+		a.logger().Warn("archive summaries count failed",
+			"path", a.path, "error", err.Error())
 		return
 	}
 	if count > 0 {
@@ -302,11 +313,11 @@ func (a *ArchiveStore) importLegacySummaries() {
 		return
 	}
 	if err != nil {
-		logger.WarnCF("memory", "archive legacy summaries open failed",
-			map[string]any{"path": legacyPath, "error": err.Error()})
+		a.logger().Warn("archive legacy summaries open failed",
+			"path", legacyPath, "error", err.Error())
 		return
 	}
-	defer iox.CloseQuietly("memory", f)
+	defer iox.CloseQuietly(a.logger(), f)
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
@@ -318,8 +329,8 @@ func (a *ArchiveStore) importLegacySummaries() {
 		}
 		var cp SummaryCheckpoint
 		if err := json.Unmarshal(line, &cp); err != nil {
-			logger.WarnCF("memory", "archive legacy summaries skip corrupt line",
-				map[string]any{"path": legacyPath, "error": err.Error()})
+			a.logger().Warn("archive legacy summaries skip corrupt line",
+				"path", legacyPath, "error", err.Error())
 			continue
 		}
 		if _, err := a.AppendSummary(SummaryRecord{
@@ -332,19 +343,19 @@ func (a *ArchiveStore) importLegacySummaries() {
 			CoveredSeqEnd:   cp.CoveredSeqEnd,
 			Summary:         cp.Summary,
 		}); err != nil {
-			logger.WarnCF("memory", "archive legacy summaries import failed",
-				map[string]any{"path": legacyPath, "error": err.Error()})
+			a.logger().Warn("archive legacy summaries import failed",
+				"path", legacyPath, "error", err.Error())
 			return
 		}
 		imported++
 	}
 	if err := scanner.Err(); err != nil {
-		logger.WarnCF("memory", "archive legacy summaries scan failed",
-			map[string]any{"path": legacyPath, "error": err.Error()})
+		a.logger().Warn("archive legacy summaries scan failed",
+			"path", legacyPath, "error", err.Error())
 	}
 	if imported > 0 {
-		logger.InfoCF("memory", "archive imported legacy summary checkpoints",
-			map[string]any{"count": imported, "path": filepath.Base(legacyPath)})
+		a.logger().Info("archive imported legacy summary checkpoints",
+			"count", imported, "path", filepath.Base(legacyPath))
 	}
 }
 
@@ -493,7 +504,7 @@ func (a *ArchiveStore) ListSummaries() ([]SummaryMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer iox.CloseQuietly("memory", db)
+	defer iox.CloseQuietly(a.logger(), db)
 
 	rows, err := db.QueryContext(context.Background(),
 		`SELECT id, generated_at, model, profile, source_seq_start, source_seq_end, covered_seq_start, covered_seq_end
@@ -504,7 +515,7 @@ func (a *ArchiveStore) ListSummaries() ([]SummaryMeta, error) {
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			logger.DebugCF("memory", "rows close failed", map[string]any{"error": closeErr.Error()})
+			a.logger().Debug("rows close failed", "error", closeErr.Error())
 		}
 	}()
 
@@ -544,7 +555,7 @@ func (a *ArchiveStore) GetSummary(id int64) (SummaryRecord, bool, error) {
 	if err != nil {
 		return SummaryRecord{}, false, err
 	}
-	defer iox.CloseQuietly("memory", db)
+	defer iox.CloseQuietly(a.logger(), db)
 
 	var (
 		rec     SummaryRecord
@@ -600,7 +611,7 @@ func (a *ArchiveStore) QueryRange(minSeq, maxSeq int64) ([]StoredMessage, error)
 	if err != nil {
 		return nil, err
 	}
-	defer iox.CloseQuietly("memory", db)
+	defer iox.CloseQuietly(a.logger(), db)
 
 	rows, err := db.QueryContext(context.Background(),
 		`SELECT seq, payload, created_at FROM messages WHERE seq BETWEEN ? AND ? ORDER BY seq`,
@@ -611,7 +622,7 @@ func (a *ArchiveStore) QueryRange(minSeq, maxSeq int64) ([]StoredMessage, error)
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			logger.DebugCF("memory", "rows close failed", map[string]any{"error": closeErr.Error()})
+			a.logger().Debug("rows close failed", "error", closeErr.Error())
 		}
 	}()
 
@@ -645,7 +656,7 @@ func (a *ArchiveStore) Search(ctx context.Context, query, role string, limit int
 	if err != nil {
 		return nil, err
 	}
-	defer iox.CloseQuietly("memory", db)
+	defer iox.CloseQuietly(a.logger(), db)
 
 	rows, err := db.QueryContext(ctx,
 		`SELECT m.seq, m.payload, m.created_at
@@ -662,7 +673,7 @@ func (a *ArchiveStore) Search(ctx context.Context, query, role string, limit int
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			logger.DebugCF("memory", "rows close failed", map[string]any{"error": closeErr.Error()})
+			a.logger().DebugContext(ctx, "rows close failed", "error", closeErr.Error())
 		}
 	}()
 
@@ -681,7 +692,7 @@ func (a *ArchiveStore) Bounds() (minSeq, maxSeq int64, err error) {
 	if err != nil {
 		return 0, 0, err
 	}
-	defer iox.CloseQuietly("memory", db)
+	defer iox.CloseQuietly(a.logger(), db)
 
 	row := db.QueryRowContext(context.Background(),
 		`SELECT COALESCE(MIN(seq), 0), COALESCE(MAX(seq), 0) FROM messages`,
@@ -703,7 +714,7 @@ func (a *ArchiveStore) Stats() (count int, first, last time.Time, err error) {
 	if err != nil {
 		return 0, time.Time{}, time.Time{}, err
 	}
-	defer iox.CloseQuietly("memory", db)
+	defer iox.CloseQuietly(a.logger(), db)
 
 	var firstUnix, lastUnix int64
 	row := db.QueryRowContext(context.Background(),
@@ -733,7 +744,7 @@ func (a *ArchiveStore) MinSeqAfter(t time.Time) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer iox.CloseQuietly("memory", db)
+	defer iox.CloseQuietly(a.logger(), db)
 
 	var minSeq int64
 	row := db.QueryRowContext(context.Background(),

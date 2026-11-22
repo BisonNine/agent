@@ -18,14 +18,14 @@ import (
 // --- NewHTTPClient tests ---
 
 func TestNewHTTPClient_DefaultTimeout(t *testing.T) {
-	client := NewHTTPClient("")
+	client := NewHTTPClient("", nil)
 	if client.Timeout != DefaultRequestTimeout {
 		t.Errorf("timeout = %v, want %v", client.Timeout, DefaultRequestTimeout)
 	}
 }
 
 func TestNewHTTPClient_WithProxy(t *testing.T) {
-	client := NewHTTPClient("http://127.0.0.1:8080")
+	client := NewHTTPClient("http://127.0.0.1:8080", nil)
 	transport, ok := client.Transport.(*http.Transport)
 	if !ok || transport == nil {
 		t.Fatalf("expected http.Transport with proxy, got %T", client.Transport)
@@ -41,7 +41,7 @@ func TestNewHTTPClient_WithProxy(t *testing.T) {
 }
 
 func TestNewHTTPClient_NoProxy(t *testing.T) {
-	client := NewHTTPClient("")
+	client := NewHTTPClient("", nil)
 	if client.Transport != nil {
 		t.Errorf("expected nil transport without proxy, got %T", client.Transport)
 	}
@@ -49,7 +49,7 @@ func TestNewHTTPClient_NoProxy(t *testing.T) {
 
 func TestNewHTTPClient_InvalidProxy(t *testing.T) {
 	// Should not panic, just log and return client without proxy
-	client := NewHTTPClient("://bad-url")
+	client := NewHTTPClient("://bad-url", nil)
 	if client == nil {
 		t.Fatal("expected non-nil client even with invalid proxy")
 	}
@@ -62,7 +62,7 @@ func TestSerializeMessages_PlainText(t *testing.T) {
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi", ReasoningContent: "thinking..."},
 	}
-	result := SerializeMessages(messages)
+	result := SerializeMessages(messages, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -85,7 +85,7 @@ func TestSerializeMessages_WithMedia(t *testing.T) {
 	messages := []Message{
 		{Role: "user", Content: "describe this", Media: []string{"data:image/png;base64,abc123"}},
 	}
-	result := SerializeMessages(messages)
+	result := SerializeMessages(messages, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -109,7 +109,7 @@ func TestSerializeMessages_MediaWithToolCallID(t *testing.T) {
 	messages := []Message{
 		{Role: "tool", Content: "result", Media: []string{"data:image/png;base64,xyz"}, ToolCallID: "call_1"},
 	}
-	result := SerializeMessages(messages)
+	result := SerializeMessages(messages, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestSerializeMessages_StripsSystemParts(t *testing.T) {
 			},
 		},
 	}
-	result := SerializeMessages(messages)
+	result := SerializeMessages(messages, nil)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -229,7 +229,7 @@ func TestParseResponse_InvalidJSON(t *testing.T) {
 
 func TestDecodeToolCallArguments_ObjectJSON(t *testing.T) {
 	raw := json.RawMessage(`{"city":"Seattle","units":"metric"}`)
-	args := DecodeToolCallArguments(raw, "test")
+	args := DecodeToolCallArguments(raw, "test", nil)
 	if args["city"] != "Seattle" {
 		t.Errorf("city = %v, want Seattle", args["city"])
 	}
@@ -240,35 +240,35 @@ func TestDecodeToolCallArguments_ObjectJSON(t *testing.T) {
 
 func TestDecodeToolCallArguments_StringJSON(t *testing.T) {
 	raw := json.RawMessage(`"{\"city\":\"SF\"}"`)
-	args := DecodeToolCallArguments(raw, "test")
+	args := DecodeToolCallArguments(raw, "test", nil)
 	if args["city"] != "SF" {
 		t.Errorf("city = %v, want SF", args["city"])
 	}
 }
 
 func TestDecodeToolCallArguments_EmptyInput(t *testing.T) {
-	args := DecodeToolCallArguments(nil, "test")
+	args := DecodeToolCallArguments(nil, "test", nil)
 	if len(args) != 0 {
 		t.Errorf("expected empty map, got %v", args)
 	}
 }
 
 func TestDecodeToolCallArguments_NullInput(t *testing.T) {
-	args := DecodeToolCallArguments(json.RawMessage(`null`), "test")
+	args := DecodeToolCallArguments(json.RawMessage(`null`), "test", nil)
 	if len(args) != 0 {
 		t.Errorf("expected empty map, got %v", args)
 	}
 }
 
 func TestDecodeToolCallArguments_InvalidJSON(t *testing.T) {
-	args := DecodeToolCallArguments(json.RawMessage(`not-json`), "test")
+	args := DecodeToolCallArguments(json.RawMessage(`not-json`), "test", nil)
 	if _, ok := args["raw"]; !ok {
 		t.Error("expected 'raw' fallback key for invalid JSON")
 	}
 }
 
 func TestDecodeToolCallArguments_EmptyStringJSON(t *testing.T) {
-	args := DecodeToolCallArguments(json.RawMessage(`"  "`), "test")
+	args := DecodeToolCallArguments(json.RawMessage(`"  "`), "test", nil)
 	if len(args) != 0 {
 		t.Errorf("expected empty map for whitespace string, got %v", args)
 	}

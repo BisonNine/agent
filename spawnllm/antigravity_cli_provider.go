@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
@@ -22,6 +21,8 @@ import (
 // snake_case token counts. Success is reported by `status`, not by an is_error
 // flag.
 type AntigravityCliProvider struct {
+	logging
+
 	command   string
 	workspace string
 	timeout   time.Duration
@@ -84,7 +85,7 @@ func (p *AntigravityCliProvider) chat(
 	_ = tools
 	// Fortify the stdin payload at the tail so JSON-only directives are the
 	// last thing the CLI reads before generating its reply.
-	prompt := applyCLIOptions("antigravity-cli", p.buildStdinPrompt(messages), options)
+	prompt := applyCLIOptions(p.log(), "antigravity-cli", p.buildStdinPrompt(messages), options)
 
 	// The prompt is piped on stdin, as in:
 	//
@@ -116,6 +117,7 @@ func (p *AntigravityCliProvider) chat(
 		baseEnv:   p.baseEnv,
 		env:       p.env,
 		model:     model,
+		logging:   p.logging,
 		parse:     p.parseAntigravityCliResponse,
 	})
 }
@@ -242,13 +244,11 @@ func (p *AntigravityCliProvider) parseAntigravityCliResponse(output string) (*LL
 		Usage:        usage,
 		Status:       status,
 	}
-
-	logger.DebugCF("provider", "antigravity-cli response",
-		map[string]any{
-			"status":        resp.Status,
-			"num_turns":     resp.NumTurns,
-			"content_chars": len(strings.TrimSpace(content)),
-		})
+	p.log().Debug("antigravity-cli response",
+		"status", resp.Status,
+		"num_turns", resp.NumTurns,
+		"content_chars", len(strings.TrimSpace(content)),
+	)
 
 	return result, nil
 }

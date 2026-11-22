@@ -25,6 +25,7 @@ package speech
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -133,6 +134,22 @@ type Option func(*options)
 type options struct {
 	httpClient    *http.Client
 	transcription TranscriptionAPI
+	logger        *slog.Logger
+}
+
+// WithLogger sets the logger the backend writes to; its records carry the
+// attribute component "speech". Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option {
+	return func(o *options) { o.logger = l }
+}
+
+// componentLog returns l, the host's logger, tagged with the package's
+// component; a nil l gives a logger that discards.
+func componentLog(l *slog.Logger) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", component)
 }
 
 // WithHTTPClient sets the HTTP client. The default is a client with no

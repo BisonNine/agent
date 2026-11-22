@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/exec"
 	"time"
-
-	"go.bison9.com/agent/logger"
 )
 
 // Subprocess execution shared by the CLI providers.
@@ -99,8 +98,9 @@ func newCLICommand(ctx context.Context, name string, args ...string) *exec.Cmd {
 // process group is signalled to terminate; once Wait returns after a
 // cancellation, or after the CLI exited but left its pipes open, any survivors
 // in the group are killed. The returned error is the Wait error, or an error
-// wrapping errCLIOutputCapExceeded when stdout went past its cap.
-func runCLI(ctx context.Context, cmd *exec.Cmd) (*cliRun, error) {
+// wrapping errCLIOutputCapExceeded when stdout went past its cap. log is the
+// provider's logger.
+func runCLI(ctx context.Context, cmd *exec.Cmd, log *slog.Logger) (*cliRun, error) {
 	run := &cliRun{
 		stdout: newCappedBuffer(cliStdoutCapBytes),
 		stderr: newCappedBuffer(cliStderrCapBytes),
@@ -117,13 +117,13 @@ func runCLI(ctx context.Context, cmd *exec.Cmd) (*cliRun, error) {
 		// Wait has returned, so Go has already killed the CLI itself (or it
 		// exited). Anything left in the group is a descendant that ignored or
 		// never received the termination signal: finish it now.
-		killCLIProcessGroup(cmd)
+		killCLIProcessGroup(cmd, log)
 	}
 	if pipesHeldOpen {
 		// The CLI exited successfully; its output is complete even though a
 		// descendant kept the pipes open until WaitDelay elapsed.
-		logger.WarnCF("provider", "cli exited but a descendant held its output pipes open; killed process group",
-			map[string]any{"command": cmd.Path, "wait_delay": cliWaitDelay.String()})
+		log.WarnContext(ctx, "cli exited but a descendant held its output pipes open; killed process group",
+			"command", cmd.Path, "wait_delay", cliWaitDelay.String())
 		runErr = nil
 	}
 
@@ -131,8 +131,8 @@ func runCLI(ctx context.Context, cmd *exec.Cmd) (*cliRun, error) {
 		return run, fmt.Errorf("%w: stdout exceeded %d MiB", errCLIOutputCapExceeded, cliStdoutCapBytes>>20)
 	}
 	if run.stderr.Exceeded() {
-		logger.WarnCF("provider", "cli stderr exceeded retention cap; output truncated",
-			map[string]any{"command": cmd.Path, "cap_bytes": cliStderrCapBytes})
+		log.WarnContext(ctx, "cli stderr exceeded retention cap; output truncated",
+			"command", cmd.Path, "cap_bytes", cliStderrCapBytes)
 	}
 	return run, runErr
 }

@@ -34,7 +34,7 @@ func TestSanitize_DropsToolResultWithUnmatchedID(t *testing.T) {
 		asstCall("keep-me"),
 		orphanToolResult("keep-me", "ok"),
 		orphanToolResult("orphan", "result of a dropped assistant turn"),
-	})
+	}, discardLog)
 
 	for _, m := range out {
 		if m.Role == "tool" && m.ToolCallID == "orphan" {
@@ -62,7 +62,7 @@ func TestSanitize_KeepsParallelToolResults(t *testing.T) {
 		orphanToolResult("a", "ra"),
 		orphanToolResult("b", "rb"),
 		orphanToolResult("c", "rc"),
-	})
+	}, discardLog)
 
 	got := map[string]bool{}
 	for _, m := range out {
@@ -87,7 +87,7 @@ func TestSanitize_ConsecutiveToolCallTurns(t *testing.T) {
 		orphanToolResult("one", "r1"),
 		asstCall("two"),
 		orphanToolResult("two", "r2"),
-	})
+	}, discardLog)
 
 	tools := 0
 	for _, m := range out {
@@ -119,7 +119,7 @@ func TestSanitize_RecoversWendysBrokenHistory(t *testing.T) {
 		orphanToolResult("quHJrX", "Stored memory hMJVAM"),
 		orphanToolResult("ETRQGe", "Updated domain dB5YQ8."),
 		{Role: "user", Content: "carry on"},
-	})
+	}, discardLog)
 
 	declared := map[string]bool{}
 	for _, m := range out {

@@ -2,16 +2,12 @@ package common
 
 import (
 	"encoding/base64"
+	"log/slog"
 	"net/http"
 	"strings"
 
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
-
-// imageWarnFn is the WARN hook for images passed through undecoded; tests
-// swap it.
-var imageWarnFn = logger.WarnCF
 
 // ImageCollector gathers the images of one response, in order. It passes
 // through every image the model returned, whatever its size: base64 data is
@@ -20,12 +16,14 @@ var imageWarnFn = logger.WarnCF
 // decode.
 type ImageCollector struct {
 	model  string
+	log    *slog.Logger
 	images []protocoltypes.GeneratedImage
 }
 
-// NewImageCollector returns an empty collector for a response from model.
-func NewImageCollector(model string) *ImageCollector {
-	return &ImageCollector{model: model}
+// NewImageCollector returns an empty collector for a response from model. The
+// WARN for data that does not decode goes to log (nil discards).
+func NewImageCollector(model string, log *slog.Logger) *ImageCollector {
+	return &ImageCollector{model: model, log: commonLog(log)}
 }
 
 // Images returns the images collected so far, nil when there are none.
@@ -87,8 +85,8 @@ func (c *ImageCollector) addData(data []byte, contentType string) {
 // with a WARN, so the caller still receives what the model returned.
 // contentType is the media type the data URL declares, if any.
 func (c *ImageCollector) passThrough(dataURL, contentType string) {
-	imageWarnFn("common", "Generated image data does not decode, returned as URL",
-		map[string]any{"model": c.model, "length": len(dataURL)})
+	c.log.Warn("Generated image data does not decode, returned as URL",
+		"model", c.model, "length", len(dataURL))
 	c.images = append(c.images, protocoltypes.GeneratedImage{ContentType: contentType, URL: dataURL, Size: -1})
 }
 

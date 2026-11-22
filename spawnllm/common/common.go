@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -21,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	"go.bison9.com/agent/logger"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
 )
 
@@ -53,8 +53,19 @@ const TextDeltaOption = "on_text_delta"
 // Only content deltas are delivered — reasoning/thinking deltas are not.
 type TextDeltaFunc = func(delta string)
 
-// NewHTTPClient creates an *http.Client with an optional proxy and the default timeout.
-func NewHTTPClient(proxy string) *http.Client {
+// commonLog returns l, the caller's logger, tagged with the component
+// "common"; a nil l gives a logger that discards.
+func commonLog(l *slog.Logger) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", "common")
+}
+
+// NewHTTPClient creates an *http.Client with an optional proxy and the default
+// timeout. An invalid proxy URL is logged as a warning on log and the client
+// is returned without a proxy.
+func NewHTTPClient(proxy string, log *slog.Logger) *http.Client {
 	client := &http.Client{
 		Timeout: DefaultRequestTimeout,
 	}
@@ -73,8 +84,8 @@ func NewHTTPClient(proxy string) *http.Client {
 				}
 			}
 		} else {
-			logger.WarnCF("common", "invalid proxy URL",
-				map[string]any{"proxy": proxy, "error": err.Error()})
+			commonLog(log).Warn("invalid proxy URL",
+				"proxy", proxy, "error", err.Error())
 		}
 	}
 	return client
@@ -97,7 +108,9 @@ type openaiMessage struct {
 //   - Strips SystemParts (unknown to third-party endpoints)
 //   - Converts messages with Media to multipart content format (text + image_url parts)
 //   - Preserves ToolCallID, ToolCalls, and ReasoningContent for all messages
-func SerializeMessages(messages []Message) []any {
+//
+// log is passed to WireToolCalls.
+func SerializeMessages(messages []Message, log *slog.Logger) []any {
 	out := make([]any, 0, len(messages))
 	for _, m := range messages {
 		m.Content = ToolResultText(m)
@@ -106,7 +119,7 @@ func SerializeMessages(messages []Message) []any {
 				Role:             m.Role,
 				Content:          m.Content,
 				ReasoningContent: m.ReasoningContent,
-				ToolCalls:        WireToolCalls(m.ToolCalls),
+				ToolCalls:        WireToolCalls(m.ToolCalls, log),
 				ToolCallID:       m.ToolCallID,
 			})
 			continue
@@ -139,7 +152,7 @@ func SerializeMessages(messages []Message) []any {
 			msg["tool_call_id"] = m.ToolCallID
 		}
 		if len(m.ToolCalls) > 0 {
-			msg["tool_calls"] = WireToolCalls(m.ToolCalls)
+			msg["tool_calls"] = WireToolCalls(m.ToolCalls, log)
 		}
 		if m.ReasoningContent != "" {
 			msg["reasoning_content"] = m.ReasoningContent
@@ -165,6 +178,13 @@ type ParseOption func(*parseOptions)
 
 type parseOptions struct {
 	usageCost bool
+	log       *slog.Logger
+}
+
+// WithLogger sets the logger the parser warns on about tool call arguments it
+// cannot decode. Without it those warnings are discarded.
+func WithLogger(l *slog.Logger) ParseOption {
+	return func(o *parseOptions) { o.log = l }
 }
 
 // WithUsageCost makes the parser set DispatchStatus.CostUSD from the response's
@@ -281,7 +301,7 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}, opts ...ParseO
 	var aggReasoningContent string
 	var aggReasoning string
 	var aggReasoningDetails []ReasoningDetail
-	images := NewImageCollector(apiResponse.Model)
+	images := NewImageCollector(apiResponse.Model, o.log)
 
 	for idx, choice := range apiResponse.Choices {
 		for _, img := range choice.Message.Images {
@@ -300,7 +320,7 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}, opts ...ParseO
 
 			if tc.Function != nil {
 				name = tc.Function.Name
-				arguments = DecodeToolCallArguments(tc.Function.Arguments, name)
+				arguments = DecodeToolCallArguments(tc.Function.Arguments, name, o.log)
 			}
 
 			toolCall := ToolCall{
@@ -331,8 +351,8 @@ func ParseResponse(body io.Reader, toolNames map[string]struct{}, opts ...ParseO
 			args := make(map[string]any)
 			if strings.TrimSpace(fc.Arguments) != "" {
 				if err := json.Unmarshal([]byte(fc.Arguments), &args); err != nil {
-					logger.WarnCF("common", "function_call arguments decode failed",
-						map[string]any{"name": fc.Name, "error": err.Error()})
+					commonLog(o.log).Warn("function_call arguments decode failed",
+						"name", fc.Name, "error", err.Error())
 					args = map[string]any{"raw": fc.Arguments}
 				}
 			}
@@ -520,7 +540,9 @@ func coerceSniffArgs(v any) map[string]any {
 }
 
 // DecodeToolCallArguments decodes a tool call's arguments from raw JSON.
-func DecodeToolCallArguments(raw json.RawMessage, name string) map[string]any {
+// Arguments that do not decode are kept under "raw" and logged as a warning
+// on log (nil discards).
+func DecodeToolCallArguments(raw json.RawMessage, name string, log *slog.Logger) map[string]any {
 	arguments := make(map[string]any)
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
@@ -529,8 +551,8 @@ func DecodeToolCallArguments(raw json.RawMessage, name string) map[string]any {
 
 	var decoded any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
-		logger.WarnCF("common", "failed to decode tool call arguments payload",
-			map[string]any{"name": name, "error": err.Error()})
+		commonLog(log).Warn("failed to decode tool call arguments payload",
+			"name", name, "error", err.Error())
 		arguments["raw"] = string(raw)
 		return arguments
 	}
@@ -541,16 +563,16 @@ func DecodeToolCallArguments(raw json.RawMessage, name string) map[string]any {
 			return arguments
 		}
 		if err := json.Unmarshal([]byte(v), &arguments); err != nil {
-			logger.WarnCF("common", "failed to decode tool call arguments",
-				map[string]any{"name": name, "error": err.Error()})
+			commonLog(log).Warn("failed to decode tool call arguments",
+				"name", name, "error", err.Error())
 			arguments["raw"] = v
 		}
 		return arguments
 	case map[string]any:
 		return v
 	default:
-		logger.WarnCF("common", "unsupported tool call arguments type",
-			map[string]any{"name": name, "type": fmt.Sprintf("%T", decoded)})
+		commonLog(log).Warn("unsupported tool call arguments type",
+			"name", name, "type", fmt.Sprintf("%T", decoded))
 		arguments["raw"] = string(raw)
 		return arguments
 	}

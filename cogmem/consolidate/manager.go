@@ -5,11 +5,10 @@ package consolidate
 
 import (
 	"context"
+	"log/slog"
 	"math/rand"
 	"sync"
 	"time"
-
-	"go.bison9.com/agent/logger"
 )
 
 // Job identifies one memory whose inbox may need consolidation. It carries
@@ -41,6 +40,7 @@ type managerOptions struct {
 	nightlyJitter  time.Duration // random delay added to the nightly fire time
 	concurrency    int           // bounded worker pool size
 	idlePoll       time.Duration // how often the idle ticker checks last-activity
+	logger         *slog.Logger  // the host's logger; nil discards
 }
 
 // ManagerOption configures a Manager (functional-options pattern).
@@ -83,6 +83,13 @@ func WithConcurrency(n int) ManagerOption {
 	}
 }
 
+// WithManagerLogger sets the logger the Manager writes to; its records carry
+// the attribute component "cogmem". Without it, or with nil, nothing is
+// logged. Workers take their own logger (WithLogger) from the factory.
+func WithManagerLogger(l *slog.Logger) ManagerOption {
+	return func(o *managerOptions) { o.logger = l }
+}
+
 // WithIdlePollInterval overrides how often the idle ticker scans sessions.
 func WithIdlePollInterval(d time.Duration) ManagerOption {
 	return func(o *managerOptions) {
@@ -107,6 +114,7 @@ type sessionState struct {
 type Manager struct {
 	factory WorkerFactory
 	opt     managerOptions
+	log     *slog.Logger // opt.logger tagged with the component "cogmem"
 
 	mu       sync.Mutex
 	sessions map[string]*sessionState // keyed by Job.key()
@@ -154,6 +162,7 @@ func NewManager(factory WorkerFactory, opts ...ManagerOption) *Manager {
 	m := &Manager{
 		factory:  factory,
 		opt:      o,
+		log:      componentLog(o.logger),
 		sessions: make(map[string]*sessionState),
 		inflight: make(map[string]bool),
 		queue:    make(chan queued, defaultQueueBuffer),
@@ -237,17 +246,17 @@ func (m *Manager) Enqueue(job Job, trigger string) {
 
 	select {
 	case m.queue <- queued{job: job, trigger: trigger}:
-		logger.DebugCF("cogmem", "consolidation job enqueued", map[string]any{
-			"id":      job.ID,
-			"dir":     job.Dir,
-			"trigger": trigger,
-		})
+		m.log.Debug("consolidation job enqueued",
+			"id", job.ID,
+			"dir", job.Dir,
+			"trigger", trigger,
+		)
 	default:
-		logger.WarnCF("cogmem", "consolidation queue full; dropping job", map[string]any{
-			"id":      job.ID,
-			"dir":     job.Dir,
-			"trigger": trigger,
-		})
+		m.log.Warn("consolidation queue full; dropping job",
+			"id", job.ID,
+			"dir", job.Dir,
+			"trigger", trigger,
+		)
 	}
 }
 
@@ -265,11 +274,11 @@ func (m *Manager) dispatchLoop(ctx context.Context) {
 			m.mu.Lock()
 			if m.inflight[q.job.key()] {
 				m.mu.Unlock()
-				logger.DebugCF("cogmem", "consolidation job skipped; run already in flight", map[string]any{
-					"id":      q.job.ID,
-					"dir":     q.job.Dir,
-					"trigger": q.trigger,
-				})
+				m.log.DebugContext(ctx, "consolidation job skipped; run already in flight",
+					"id", q.job.ID,
+					"dir", q.job.Dir,
+					"trigger", q.trigger,
+				)
 				continue // already running; the in-flight run drains More itself
 			}
 			m.inflight[q.job.key()] = true
@@ -312,18 +321,18 @@ const maxLoggedDroppedKeywords = 10
 func (m *Manager) runJob(ctx context.Context, j Job, trigger string) {
 	w, err := m.factory(j)
 	if err != nil {
-		logger.WarnCF("cogmem", "consolidation worker factory failed", map[string]any{
-			"id":    j.ID,
-			"dir":   j.Dir,
-			"error": err.Error(),
-		})
+		m.log.WarnContext(ctx, "consolidation worker factory failed",
+			"id", j.ID,
+			"dir", j.Dir,
+			"error", err.Error(),
+		)
 		return
 	}
-	logger.DebugCF("cogmem", "consolidation run starting", map[string]any{
-		"id":      j.ID,
-		"dir":     j.Dir,
-		"trigger": trigger,
-	})
+	m.log.DebugContext(ctx, "consolidation run starting",
+		"id", j.ID,
+		"dir", j.Dir,
+		"trigger", trigger,
+	)
 	for {
 		select {
 		case <-m.stop:
@@ -339,32 +348,33 @@ func (m *Manager) runJob(ctx context.Context, j Job, trigger string) {
 			Trigger:   trigger,
 		})
 		if err != nil {
-			logger.WarnCF("cogmem", "consolidation run failed", map[string]any{
-				"id":      j.ID,
-				"dir":     j.Dir,
-				"trigger": trigger,
-				"status":  res.Status,
-				"error":   err.Error(),
-			})
+			m.log.WarnContext(ctx, "consolidation run failed",
+				"id", j.ID,
+				"dir", j.Dir,
+				"trigger", trigger,
+				"status", res.Status,
+				"error", err.Error(),
+			)
 			return
 		}
 		// Log every outcome — including idle/busy, which previously left no trace
 		// in the log or the run table, making no-op runs impossible to diagnose.
-		fields := map[string]any{
-			"id":        j.ID,
-			"dir":       j.Dir,
-			"trigger":   trigger,
-			"status":    res.Status,
-			"applied":   res.Applied,
-			"seq_start": res.SeqStart,
-			"seq_end":   res.SeqEnd,
-			"more":      res.More,
+		attrs := []any{
+			"id", j.ID,
+			"dir", j.Dir,
+			"trigger", trigger,
+			"status", res.Status,
+			"applied", res.Applied,
+			"seq_start", res.SeqStart,
+			"seq_end", res.SeqEnd,
+			"more", res.More,
 		}
 		if n := len(res.DroppedKeywords); n > 0 {
-			fields["dropped_keywords"] = n
-			fields["dropped_keyword_list"] = droppedKeywordsText(res.DroppedKeywords, maxLoggedDroppedKeywords)
+			attrs = append(attrs,
+				"dropped_keywords", n,
+				"dropped_keyword_list", droppedKeywordsText(res.DroppedKeywords, maxLoggedDroppedKeywords))
 		}
-		logger.InfoCF("cogmem", "consolidation run finished", fields)
+		m.log.InfoContext(ctx, "consolidation run finished", attrs...)
 		if res.Status == "busy" {
 			return // another owner holds the lease; let it drain.
 		}

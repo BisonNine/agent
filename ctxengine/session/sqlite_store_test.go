@@ -200,7 +200,7 @@ func TestSummary(t *testing.T) {
 	if st != (memory.CompactionState{}) {
 		t.Errorf("fresh compaction state = %+v", st)
 	}
-	keys, err := memory.ListSessions(s.dir)
+	keys, err := memory.ListSessions(s.dir, nil)
 	if err != nil || len(keys) != 1 || keys[0] != "s1" {
 		t.Errorf("ListSessions = %v, %v", keys, err)
 	}

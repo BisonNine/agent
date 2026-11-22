@@ -10,7 +10,7 @@ import (
 // API would see it.
 func requestJSON(t *testing.T, messages []Message, tools []ToolDefinition, model string) map[string]any {
 	t.Helper()
-	body, err := buildRequestBody(messages, tools, model, map[string]any{"max_tokens": 100})
+	body, err := buildRequestBody(messages, tools, model, map[string]any{"max_tokens": 100}, nil)
 	if err != nil {
 		t.Fatalf("buildRequestBody: %v", err)
 	}

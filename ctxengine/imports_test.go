@@ -11,14 +11,13 @@ import (
 )
 
 // ctxengine sits above spawnllm and toolspec. It may import only its own
-// packages, spawnllm, toolspec, the shared logger, the standard library and
-// SQLite; never cogmem. Test files are held to the same rule.
+// packages, spawnllm, toolspec, the standard library and SQLite; never
+// cogmem. Test files are held to the same rule.
 func TestImportsRespectLayering(t *testing.T) {
 	allowed := []string{
 		"go.bison9.com/agent/ctxengine",
 		"go.bison9.com/agent/spawnllm",
 		"go.bison9.com/agent/toolspec",
-		"go.bison9.com/agent/logger",
 		"modernc.org/sqlite",
 	}
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
