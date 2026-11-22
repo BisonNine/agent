@@ -31,7 +31,9 @@ type TurnResult struct {
 	// followed, after a blank line, by the reply lines AfterModel added
 	// (ModelResponse.ReplyLines) over the whole turn. Empty when there is
 	// nothing to say. A host renders an error or cancellation into it in
-	// AfterTurn.
+	// AfterTurn. When storing the reply fails after AfterTurn the engine
+	// leaves Reply as it was and sets Err and OutcomeError: a host sends
+	// Reply only for the outcome it rendered it for.
 	Reply string
 	// Stored is the assistant message the engine stores in the session once
 	// AfterTurn has run: the model's final content followed by the notes

@@ -91,19 +91,29 @@
 //     answered by BeforeTool, timed out, panicked or was abandoned by an
 //     interrupt gets one too; an abandoned call's result is the synthetic
 //     result InterruptedResult, which is also what the session stores, so
-//     the transcript never holds a tool call without a result.
+//     the transcript never holds a tool call without a result. Once a call
+//     is abandoned no callback is started for it and nothing more is
+//     emitted for it: its tool's late return is discarded. A callback that
+//     was already running for it may finish later, after TurnFinished, on
+//     the call's cancelled context; what it does to the result is
+//     discarded.
 //   - ModelCall reports the provider's call as it returned, before any
 //     callback acts on it. The other events that report a result are
 //     emitted after the callbacks of their step and carry what they decided:
 //     ModelAnswer the response as AfterModel left it, ToolCallFinished the
 //     result as AfterTool left it (and the arguments as BeforeTool left
-//     them), TurnFinished the result as AfterTurn left it. TurnStarted and
+//     them), TurnFinished the result as AfterTurn left it, except that a
+//     failure to store the reply afterwards sets Err and OutcomeError (the
+//     Reply AfterTurn rendered is left as it is; a host checks Outcome
+//     before sending it) and a failed save sets SaveErr. TurnStarted and
 //     ToolCallStarted come before their callbacks (BeforeTurn, BeforeTool)
 //     and carry the input as it was received.
-//   - An event is a snapshot: the engine copies what it points to (the
-//     request, the arguments, the result) and never changes it after the
-//     event is emitted, so a consumer on another goroutine may read it at
-//     any time. A consumer must not change it either.
+//   - An event is a snapshot: the engine never changes what it points to
+//     after the event is emitted (it copies what it will go on changing),
+//     so a consumer on another goroutine may read it at any time. A
+//     consumer must not change it either. For this a BeforeModel callback
+//     replaces a message of the working request rather than writing into
+//     one (into its tool calls, media or content blocks) in place.
 //   - Within a run, events are delivered in the order they were emitted. The
 //     engine never blocks on a consumer: events not yet read are held by the
 //     run's handle, and a consumer that stops reading early stops nothing.
@@ -111,7 +121,7 @@
 //     turn has finished, unread events go with the handle when the host
 //     drops it.
 //   - On an interrupt or cancel, the model call in flight ends with a
-//     ModelCall whose Err is the context's error, the tools in flight end as
+//     ModelCall whose Err is ctx.Err(), the tools in flight end as
 //     above, and TurnFinished carries the outcome the cause decides
 //     (CauseOutcome) and the cause.
 package hook

@@ -9,7 +9,7 @@ import (
 
 // ModelRef names one model of the agent's models.
 type ModelRef struct {
-	Name     string // the model's name in the catalogue
+	Name     string // the model's name in the catalogue; the wire id for a models.Catalog.Direct chain
 	Provider string // its provider's name
 	Protocol string // its provider's protocol (modelspec.IsCLIProtocol tells a CLI)
 	Model    string // the wire model id sent to the provider
@@ -43,7 +43,9 @@ type ModelInfo struct {
 	Model ModelRef
 	// Request is the turn's working request. BeforeModel may edit it, and
 	// the edits stay for the turn's later iterations (they are never stored
-	// in the session), so a callback must be idempotent. Read only in
+	// in the session), so a callback must be idempotent. It replaces a
+	// message (Messages[i] = changed) rather than writing into one, so
+	// events that hold an earlier request do not change. Read only in
 	// AfterModel and OnModelError.
 	Request ModelRequest
 }
@@ -158,11 +160,13 @@ type BeforeToolFunc func(ctx context.Context, call *ToolCall) (*toolkit.Result, 
 // result is stored or emitted.
 //
 // It may change *result (redact it, cap it, replace it). It must not keep
-// result after returning.
+// result after returning. It is not called for a call abandoned after an
+// interrupt (see the event rules).
 type AfterToolFunc func(ctx context.Context, call *ToolCall, result *toolkit.Result)
 
 // OnToolErrorFunc runs after a tool call whose result is an error (IsError
-// or Err), including a refusal, a timeout and a panic, on the call's
+// or Err), including a refusal, a timeout and a panic in the tool itself
+// (not one in a tool callback, which skips it), on the call's
 // goroutine and context. It is not called for an abandoned call
 // (InterruptedResult). A non-nil result replaces result; nil keeps it.
 type OnToolErrorFunc func(ctx context.Context, call *ToolCall, result *toolkit.Result) *toolkit.Result

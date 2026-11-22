@@ -90,8 +90,11 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 - 1.3.14 **The engine only ever sees a `models.Chain`.** An agent none of
   whose models resolves is served through `models.Catalog.Direct(name,
   model)`: a one-candidate chain on the default model's client with the
-  agent's model id, no health, no fallback, the catalogue's limit
-  defaults. The host builds it when it chooses the turn's model.
+  agent's model id (also the candidate's name), no health, no fallback,
+  the catalogue's limit defaults. The host builds it when it chooses the
+  turn's model, and its catalogue's limit defaults must be the agent
+  defaults its configuration gives an unknown model (`WithLimitDefaults`),
+  so the turn keeps the limits it has today.
 - 1.3.15 **`AfterTurn` decides; the engine stores; the host replies on
   `TurnFinished`**, so the reply is stored before it is sent.
 - 1.3.16 **Tool calls cannot change their context.** Per-turn host values
@@ -360,6 +363,14 @@ not listed.
   `Catalog.Direct`, built in `selectTurnModel`.
 - 7.11 **`TextDelta`** only with an `OnTextDelta` callback, as the engine
   does; now documented.
+- 7.13 **`ModelCall.Err`** is `ctx.Err()` once the turn's context ended:
+  in the `WithFinish` hook, `if ctx.Err() != nil { err = ctx.Err() }`.
+- 7.14 **Store failure after `AfterTurn`**: the reply consumer sends the
+  reply only when `TurnFinished.Outcome` is still the one it rendered for;
+  `finishTurn`'s store failure becomes `Err` and `OutcomeError`.
+- 7.15 **Snapshots**: `ModelCall.Request` is the dispatch's request
+  (`d.sent`, low-steps note included); the host's `BeforeModel` callbacks
+  replace messages instead of editing them in place.
 - 7.12 **`BeforeModel`, `OnModelError`** are registered but not yet called:
   wire them as section 2 says.
 

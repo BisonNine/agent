@@ -56,14 +56,16 @@ type ModelCall struct {
 	Iteration int
 	// Model is the model called.
 	Model ModelRef
-	// Request is the dispatch's request as BeforeModel left it, before the
-	// engine shaped it for this model.
+	// Request is the dispatch's request as BeforeModel left it, with the
+	// engine's low-steps note when it has one, before the engine shaped it
+	// for this model (its images, reasoning content and options).
 	Request *ModelRequest
 	// Response is the provider's response as it returned it; nil on a
 	// failure. The engine never changes it: AfterModel works on a copy.
 	Response *protocoltypes.LLMResponse
-	// Err is the call's error; nil on success. A call the turn's end cut
-	// short carries the context's error.
+	// Err is the call's error; nil on success. When the turn's context had
+	// ended by the time the call returned, Err is ctx.Err() (the cause is in
+	// TurnResult.Cause), whatever the provider returned.
 	Err     error
 	Elapsed time.Duration
 }
@@ -130,7 +132,8 @@ type ToolCallFinished struct {
 	// Call is the call as the tool ran it: its arguments as BeforeTool left
 	// them.
 	Call ToolCall
-	// Result is the result as AfterTool left it.
+	// Result is the result as AfterTool left it, or InterruptedResult for an
+	// abandoned call (no AfterTool runs for it).
 	Result  *toolkit.Result
 	Elapsed time.Duration
 	// Answered reports a call BeforeTool answered or refused: the tool did
@@ -260,9 +263,10 @@ type TaskFinished struct {
 	Result *toolkit.Result
 }
 
-// TurnFinished is the last event of every run. It closes the turn's span:
-// it is emitted after AfterTurn, after the reply was stored and the session
-// saved.
+// TurnFinished is the last event of every run. For a run that started it
+// closes the turn's span: it is emitted after AfterTurn, after the reply was
+// stored and the session saved. A run dropped from the queue has only this
+// event.
 type TurnFinished struct {
 	EventHeader
 	TurnResult
