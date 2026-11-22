@@ -197,6 +197,7 @@ func TestDisable_Notices(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	settle(t, c)
 	cat := catRec.all()
 	if len(cat) != 2 || !slices.Equal(cat[0].Removed, []string{"a"}) || !slices.Equal(cat[1].Added, []string{"a"}) {
 		t.Fatalf("catalogue notices = %+v", cat)

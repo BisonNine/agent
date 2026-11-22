@@ -26,7 +26,9 @@ project uses [Semantic Versioning](https://semver.org/).
   `ExecuteUnattended`, `List`, `Listed`, `Hidden`, `Get`, `Lookup`,
   `Names`, `Stats` (calls and errors per tool) and `Version`. `Subscribe`
   sends one `Change{Added, Removed, Changed}` per change and none for a
-  change that alters nothing. A call to a tool removed since its snapshot
+  change that alters nothing, in commit order, on a delivery goroutine:
+  a writer returns before its notice is delivered, and a panicking
+  subscriber is logged and skipped. A call to a tool removed since its snapshot
   returns the tool error `tool "x" is no longer available`.
 - `toolkit` two levels, like `models`: a process-wide `Catalog` and a
   per-agent `Set`, the tools one agent is granted. `Catalog.Set(id)` (a

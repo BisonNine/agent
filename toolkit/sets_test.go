@@ -112,6 +112,7 @@ func TestSharedCatalogDifferentViews(t *testing.T) {
 
 	c.Remove("refund")  // alice only
 	c.Remove("weather") // nobody
+	settle(t, c)
 	if aliceRec.count() != 2 || bobRec.count() != 1 {
 		t.Fatalf("notices: alice %d, bob %d; want 2 and 1", aliceRec.count(), bobRec.count())
 	}
@@ -122,6 +123,7 @@ func TestSharedCatalogDifferentViews(t *testing.T) {
 	// A change of grant is a change for that set only.
 	bob.Grant(grant("lookup_order", "crm_find"))
 	mustAdd(t, c, listed("crm_find")...)
+	settle(t, c)
 	if bobRec.count() != 2 || aliceRec.count() != 3 {
 		t.Fatalf("notices: alice %d, bob %d; want 3 and 2", aliceRec.count(), bobRec.count())
 	}
@@ -130,6 +132,7 @@ func TestSharedCatalogDifferentViews(t *testing.T) {
 	if bob.Version() <= v {
 		t.Fatal("a grant change moves the set's version")
 	}
+	settle(t, c)
 	if got := bobRec.all()[2].Removed; !slices.Equal(got, []string{"crm_find"}) {
 		t.Fatalf("bob regrant = %+v", bobRec.all()[2])
 	}
@@ -192,6 +195,7 @@ func TestAdopt(t *testing.T) {
 		t.Fatalf("view after adopt = %v", got)
 	}
 	// One notice per subscriber for the whole swap.
+	settle(t, c)
 	if catRec.count() != 1 || aliceRec.count() != 1 || bobRec.count() != 1 {
 		t.Fatalf("notices: catalogue %d, alice %d, bob %d; want 1 each", catRec.count(), aliceRec.count(), bobRec.count())
 	}

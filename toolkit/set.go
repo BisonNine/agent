@@ -7,7 +7,6 @@ import (
 	"maps"
 	"slices"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -69,7 +68,7 @@ func (denyAll) IsToolAllowed(string) bool { return false }
 // usable.
 type Set struct {
 	cat *Catalog
-	cfg atomic.Pointer[setConfig]
+	key uint64 // its settings in the catalogue state
 
 	subMu  sync.Mutex
 	subs   map[uint64]func(Change)
@@ -79,10 +78,15 @@ type Set struct {
 	stats  map[string]*Stat // internal name → its count
 }
 
-func newSet(c *Catalog, allow AllowChecker) *Set {
-	s := &Set{cat: c, subs: map[uint64]func(Change){}, stats: map[string]*Stat{}}
-	s.cfg.Store(&setConfig{allow: allow})
-	return s
+func newSet(c *Catalog, key uint64) *Set {
+	return &Set{cat: c, key: key, subs: map[uint64]func(Change){}, stats: map[string]*Stat{}}
+}
+
+// load returns the current generation and the set's settings in it: one
+// atomic load, so the two always belong together.
+func (s *Set) load() (*catState, *setConfig) {
+	st := s.cat.state.Load()
+	return st, st.cfg(s.key)
 }
 
 // granted reports whether cfg grants name.
@@ -111,26 +115,38 @@ func (s *Set) offered(st *catState, cfg *setConfig) map[string]*entry {
 // to the catalogue or to the set's own settings. It never goes back,
 // including across Adopt.
 func (s *Set) Version() uint64 {
-	return s.cat.state.Load().version + s.cfg.Load().version
+	st, cfg := s.load()
+	return st.version + cfg.version
 }
 
 // Snapshot returns the tools the set offers now: granted, listed and
 // hidden. Take one per model call; a turn sees later changes at its next
 // snapshot.
 func (s *Set) Snapshot() *Snapshot {
-	cfg := s.cfg.Load()
-	st := s.cat.state.Load()
+	st, cfg := s.load()
 	return newSnapshot(s, st, cfg)
 }
 
 // Subscribe registers fn to be called once for every change to the tools
 // the set offers, with what changed. A change that alters nothing the set
-// offers sends nothing. Notices arrive in order, one at a time, with no
-// registry lock held, so fn may call the registry, including to change
-// it; such a change is delivered after fn returns. A notice may be
-// delivered on the goroutine of a later writer. fn must not block for
-// long: it holds up every later notice.
+// offers sends nothing.
+//
+// Notices are delivered in commit order, one at a time, on a delivery
+// goroutine of the catalogue's, never on the writer's: a writer returns
+// before its notice is delivered. A caller that must wait for a notice
+// waits in fn (for instance on a channel fn sends to). fn may call the
+// registry, including to change it; that change is delivered after fn
+// returns. fn should not block for long: it holds up every later notice,
+// though not any writer. A panic in fn is logged and does not stop
+// delivery to other subscribers or of later notices.
+//
+// fn may run once more after unsubscribe returns, when that notice was
+// already being delivered on another goroutine. A nil fn registers nothing
+// and unsubscribe does nothing.
 func (s *Set) Subscribe(fn func(Change)) (unsubscribe func()) {
+	if fn == nil {
+		return func() {}
+	}
 	c := s.cat
 	c.mu.Lock()
 	s.subMu.Lock()
@@ -193,8 +209,7 @@ func (s *Set) info(st *catState, cfg *setConfig, e *entry) Info {
 // List returns every tool granted to the set, enabled or not, sorted by
 // internal name.
 func (s *Set) List() []Info {
-	st := s.cat.state.Load()
-	cfg := s.cfg.Load()
+	st, cfg := s.load()
 	out := make([]Info, 0, len(st.names))
 	for _, name := range st.names {
 		if cfg.granted(name) {
@@ -213,8 +228,11 @@ func (s *Set) Hidden() []Info { return s.Snapshot().Hidden() }
 // Get returns the granted tool registered under exactly name, enabled or
 // not.
 func (s *Set) Get(name string) (Info, bool) {
-	st := s.cat.state.Load()
-	cfg := s.cfg.Load()
+	st, cfg := s.load()
+	return s.get(st, cfg, name)
+}
+
+func (s *Set) get(st *catState, cfg *setConfig, name string) (Info, bool) {
 	e, ok := st.entries[name]
 	if !ok || !cfg.granted(name) {
 		return Info{}, false
@@ -225,8 +243,7 @@ func (s *Set) Get(name string) (Info, bool) {
 // Lookup is Get that also finds a tool by its ExternalName; Info.Name is
 // the internal name.
 func (s *Set) Lookup(name string) (Info, bool) {
-	st := s.cat.state.Load()
-	cfg := s.cfg.Load()
+	st, cfg := s.load()
 	e, canonical := st.lookup(name)
 	if e == nil || !cfg.granted(canonical) {
 		return Info{}, false
@@ -282,31 +299,35 @@ func (s *Set) count(name string, r *Result) {
 // The caller sets who the call is for on ctx (WithChat, WithSessionKey,
 // WithAgentID). Arguments are never logged.
 func (s *Set) Execute(ctx context.Context, name string, args map[string]any, cb AsyncCallback) *Result {
-	return s.execute(ctx, name, args, cb, nil)
+	st, cfg := s.load()
+	res, _ := s.execute(ctx, st, cfg, name, args, cb, nil)
+	return res
 }
 
-func (s *Set) execute(ctx context.Context, name string, args map[string]any, cb AsyncCallback, snap *Snapshot) *Result {
+// execute runs name against one generation (st, cfg). noResult reports a
+// tool that returned nil.
+func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name string, args map[string]any,
+	cb AsyncCallback, snap *Snapshot,
+) (res *Result, noResult bool) {
 	log := s.cat.logger
 	log.InfoContext(ctx, "Tool execution started", "tool", name)
 
-	st := s.cat.state.Load()
-	cfg := s.cfg.Load()
 	e, canonical := st.lookup(name)
 	if e == nil {
 		if snap != nil && snap.has(name) {
 			log.WarnContext(ctx, "Tool removed since the model saw it", "tool", name)
-			return ErrorResult(fmt.Sprintf("tool %q is no longer available", name)).WithError(ErrToolRemoved)
+			return ErrorResult(fmt.Sprintf("tool %q is no longer available", name)).WithError(ErrToolRemoved), false
 		}
 		log.ErrorContext(ctx, "Tool not found", "tool", name)
-		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(ErrToolNotFound)
+		return ErrorResult(fmt.Sprintf("tool %q not found", name)).WithError(ErrToolNotFound), false
 	}
 	if !cfg.granted(canonical) {
 		log.WarnContext(ctx, "Tool execution denied by agent allowlist", "tool", canonical)
-		return ErrorResult(NotEnabledMessage(name)).WithError(Refusal(fmt.Errorf("tool not permitted: %s", name)))
+		return ErrorResult(NotEnabledMessage(name)).WithError(Refusal(fmt.Errorf("tool not permitted: %s", name))), false
 	}
 	if !enabled(st, cfg, canonical) {
 		log.WarnContext(ctx, "Tool is disabled", "tool", canonical)
-		return ErrorResult(fmt.Sprintf("tool %q is disabled", name)).WithError(Refusal(ErrToolDisabled))
+		return ErrorResult(fmt.Sprintf("tool %q is disabled", name)).WithError(Refusal(ErrToolDisabled)), false
 	}
 
 	var result *Result
@@ -319,6 +340,7 @@ func (s *Set) execute(ctx context.Context, name string, args map[string]any, cb 
 	}
 	duration := time.Since(start)
 	if result == nil {
+		noResult = true
 		result = ErrorResult("tool returned no result")
 	}
 	s.count(canonical, result)
@@ -337,23 +359,29 @@ func (s *Set) execute(ctx context.Context, name string, args map[string]any, cb 
 		log.InfoContext(ctx, "Tool execution completed",
 			"tool", name, "duration_ms", duration.Milliseconds(), "result_length", len(result.ForLLM))
 	}
-	return result
+	return result, noResult
 }
 
 // ExecuteUnattended runs a tool with no session behind it (a scheduled
 // probe, a classifier run). It refuses a tool the set does not hold under
 // exactly name (ErrToolNotRegistered) and a SessionScoped one
 // (ErrToolSessionScoped), passes no async callback, and turns an error
-// result into an error carrying the tool's ForLLM text.
+// result into an error carrying the tool's ForLLM text. A tool that
+// returns nil fails with `tool "x" returned no result`. The check and the
+// call use the same generation.
 func (s *Set) ExecuteUnattended(ctx context.Context, name string, args map[string]any) (string, error) {
-	info, ok := s.Get(name)
+	st, cfg := s.load()
+	info, ok := s.get(st, cfg, name)
 	if !ok {
 		return "", fmt.Errorf("tool %q: %w", name, ErrToolNotRegistered)
 	}
 	if scoped, isScoped := info.Tool.(SessionScoped); isScoped && scoped.IsSessionScoped() {
 		return "", fmt.Errorf("tool %q: %w", name, ErrToolSessionScoped)
 	}
-	res := s.Execute(ctx, name, args, nil)
+	res, noResult := s.execute(ctx, st, cfg, name, args, nil, nil)
+	if noResult {
+		return "", fmt.Errorf("tool %q returned no result", name)
+	}
 	if res.IsError {
 		return "", fmt.Errorf("tool %q failed: %s", name, res.ForLLM)
 	}

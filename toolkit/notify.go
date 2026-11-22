@@ -1,6 +1,8 @@
 package toolkit
 
 import (
+	"fmt"
+	"log/slog"
 	"slices"
 	"sync"
 )
@@ -27,71 +29,114 @@ type subscriber struct {
 	fn func(Change)
 }
 
-// setEvent is one change as seen by one set: the configuration before and
-// after, and the subscribers it had when the change was made.
+// setEvent is one change as seen by one set, with the subscribers the set
+// had when the change was committed.
 type setEvent struct {
-	set            *Set
-	oldCfg, newCfg *setConfig
-	subs           []subscriber
+	set  *Set
+	subs []subscriber
 }
 
-// event is one committed change: the catalogue state before and after and
-// the subscribed sets it may concern.
+// event is one committed change: the catalogue generation before and after
+// and the subscribed sets it may concern.
 type event struct {
 	oldState, newState *catState
 	sets               []setEvent
 }
 
-// notifier delivers events in the order they were committed, one at a
-// time, with no registry lock held. Whoever finds it idle delivers;
-// a writer that finds it busy (another writer, or a subscriber writing
-// back into the registry from its callback) leaves its event to the
-// goroutine already delivering, so a callback may call the registry
-// without deadlock.
+// notifier delivers events in commit order, one at a time, on a goroutine
+// of its own: writers only queue (under the catalogue's write lock) and
+// never run a subscriber's callback, so a slow subscriber holds no writer.
+// The goroutine is started when the queue becomes non-empty and exits when
+// it is empty again. Each callback runs under recover: a subscriber that
+// panics is logged and skipped, and the others still get the event.
 type notifier struct {
-	mu       sync.Mutex
-	pending  []event
-	draining bool
+	logger  *slog.Logger
+	mu      sync.Mutex
+	pending []event
+	running bool
 }
 
+// push queues ev and starts the delivery goroutine if none is running.
+// The caller holds the catalogue's write lock, so events queue in commit
+// order.
 func (n *notifier) push(ev event) {
 	n.mu.Lock()
 	n.pending = append(n.pending, ev)
+	start := !n.running
+	n.running = true
 	n.mu.Unlock()
+	if start {
+		go n.run()
+	}
 }
 
-func (n *notifier) drain() {
-	n.mu.Lock()
-	if n.draining {
-		n.mu.Unlock()
-		return
-	}
-	n.draining = true
-	for len(n.pending) > 0 {
+// run delivers queued events until the queue is empty.
+func (n *notifier) run() {
+	exited := false
+	defer func() {
+		// Clear the flag however the loop ends, so a later push starts a
+		// new goroutine instead of queueing behind a dead one.
+		if !exited {
+			n.mu.Lock()
+			n.running = false
+			n.mu.Unlock()
+		}
+	}()
+	for {
+		n.mu.Lock()
+		if len(n.pending) == 0 {
+			n.running = false
+			exited = true
+			n.mu.Unlock()
+			return
+		}
 		ev := n.pending[0]
+		n.pending[0] = event{}
 		n.pending = n.pending[1:]
 		n.mu.Unlock()
-		deliver(ev)
-		n.mu.Lock()
+		n.deliver(ev)
 	}
-	n.draining = false
-	n.mu.Unlock()
 }
 
 // deliver hands each concerned subscriber its set's change, skipping sets
 // the change did not touch and subscribers that have since unsubscribed.
-func deliver(ev event) {
+func (n *notifier) deliver(ev event) {
 	for _, se := range ev.sets {
-		ch := diff(se.set.offered(ev.oldState, se.oldCfg), se.set.offered(ev.newState, se.newCfg))
-		if ch.Empty() {
+		ch, ok := n.change(ev, se.set)
+		if !ok || ch.Empty() {
 			continue
 		}
 		for _, sub := range se.subs {
 			if se.set.subscribed(sub.id) {
-				sub.fn(ch)
+				n.call(sub.fn, ch)
 			}
 		}
 	}
+}
+
+// change computes what ev did to set. It asks the set's AllowChecker, host
+// code, so a panic there is logged and the set skipped.
+func (n *notifier) change(ev event, s *Set) (ch Change, ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			n.logger.Error("Tool grant check panicked while computing a change notice", "panic", fmt.Sprint(r))
+			ok = false
+		}
+	}()
+	before := s.offered(ev.oldState, ev.oldState.cfg(s.key))
+	after := s.offered(ev.newState, ev.newState.cfg(s.key))
+	return diff(before, after), true
+}
+
+// call runs one subscriber's callback, logging a panic instead of letting
+// it end delivery.
+func (n *notifier) call(fn func(Change), ch Change) {
+	defer func() {
+		if r := recover(); r != nil {
+			n.logger.Error("Tool change subscriber panicked", "panic", fmt.Sprint(r))
+		}
+	}()
+	fn(ch)
 }
 
 // diff compares two offered sets.

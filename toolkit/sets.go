@@ -1,15 +1,24 @@
 package toolkit
 
+import (
+	"maps"
+	"runtime"
+)
+
 // Set returns the named set id, creating it on first use. A set created
 // here grants nothing until Grant is called. The empty id is the default
 // set, which grants every tool. Adopt carries named sets over by id.
 func (c *Catalog) Set(id string) *Set {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.setLocked(id)
+}
+
+func (c *Catalog) setLocked(id string) *Set {
 	if s, ok := c.sets[id]; ok {
 		return s
 	}
-	s := newSet(c, denyAll{})
+	s := c.newSetLocked(denyAll{})
 	c.sets[id] = s
 	return s
 }
@@ -18,7 +27,13 @@ func (c *Catalog) Set(id string) *Set {
 // when allow is nil): a filtered view of the catalogue, for an agent whose
 // grants sit on shared tools. Adopt keeps a view's grant as it is.
 func (c *Catalog) View(allow AllowChecker) *Set {
-	return newSet(c, allow)
+	c.mu.Lock()
+	s := c.newSetLocked(allow)
+	c.mu.Unlock()
+	// Its settings live in the catalogue state; forget them once nobody
+	// can reach the view.
+	runtime.AddCleanup(s, c.dropSet, s.key)
+	return s
 }
 
 // Default returns the default set: the one the catalogue's own read
@@ -33,13 +48,14 @@ func (c *Catalog) Default() *Set { return c.def }
 func (s *Set) Grant(allow AllowChecker) {
 	c := s.cat
 	c.mu.Lock()
-	cur := s.cfg.Load()
-	next := *cur
-	next.version = cur.version + 1
-	next.allow = allow
-	c.commitLocked(c.state.Load(), nil, map[*Set]*setConfig{s: &next})
-	c.mu.Unlock()
-	c.notify()
+	defer c.mu.Unlock()
+	cur := c.state.Load()
+	cfg := *cur.cfg(s.key)
+	cfg.version++
+	cfg.allow = allow
+	next := cur.clone()
+	next.cfgs[s.key] = &cfg
+	c.commitLocked(cur, next)
 }
 
 // Adopt replaces the catalogue's contents with next's, in one step: "when
@@ -68,33 +84,34 @@ func (c *Catalog) Adopt(next *Catalog) Change {
 	ns := next.state.Load()
 	grants := make(map[string]*setConfig, len(next.sets))
 	for id, s := range next.sets {
-		grants[id] = s.cfg.Load()
+		grants[id] = ns.cfg(s.key)
 	}
 	next.mu.Unlock()
 
 	c.mu.Lock()
+	targets := make(map[*Set]*setConfig, len(grants))
+	for id, g := range grants {
+		targets[c.setLocked(id)] = g // creates the sets c lacks
+	}
 	cur := c.state.Load()
 	st := ns.clone()
+	st.version = cur.version + 1
 	// Fresh registration ids, so no remove function handed out before
 	// matches what was adopted.
 	for source := range st.sources {
 		c.regSeq++
 		st.sources[source] = c.regSeq
 	}
-	cfgs := make(map[*Set]*setConfig, len(grants))
-	for id, g := range grants {
-		s, ok := c.sets[id]
-		if !ok {
-			s = newSet(c, denyAll{})
-			c.sets[id] = s
-		}
+	// Settings: c's sets keep theirs, except the named sets next has.
+	st.cfgs = maps.Clone(cur.cfgs)
+	for s, g := range targets {
 		nc := *g
-		nc.version = s.cfg.Load().version + 1
-		cfgs[s] = &nc
+		nc.version = cur.cfg(s.key).version + 1
+		st.cfgs[s.key] = &nc
 	}
-	c.commitLocked(cur, st, cfgs)
+	st.seal()
+	c.commitLocked(cur, st)
 	c.mu.Unlock()
-	c.notify()
 
 	ch := diff(cur.entries, st.entries)
 	c.logger.Info("Adopted a new tool catalogue",

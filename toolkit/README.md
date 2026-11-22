@@ -62,8 +62,19 @@ Rules:
   a crash. A call already running finishes on the tool it started with.
 - **Subscribers** get one `Change{Added, Removed, Changed}` per change and
   none for a change that alters nothing they see. Notices are delivered in
-  order with no registry lock held, so a subscriber may call back into the
-  registry, even to change it.
+  commit order on a delivery goroutine the catalogue starts when there is
+  something to deliver and that exits when there is not. A writer only
+  queues: it returns before its notice is delivered and is never held by a
+  slow subscriber. To wait for a notice, wait in the subscriber (for
+  example on a channel it sends to). A subscriber may call back into the
+  registry, even to change it. A panic in a subscriber is logged and does
+  not stop delivery to the others or of later notices. A callback may run
+  once more after `unsubscribe` returns if that notice was already being
+  delivered. `Subscribe(nil)` registers nothing.
+- **One generation per read.** The catalogue's tools and every set's
+  grant and switches are published together; each read (a snapshot, a
+  call, `List`, `Get`) works from one of them, so it never pairs one
+  configuration's tools with another's grant, even during `Adopt`.
 - **Private state.** `Catalog` and `Set` have no exported fields; `List`,
   `Get` and the snapshot accessors return copies.
 

@@ -112,5 +112,7 @@ func (sn *Snapshot) has(name string) bool {
 // `tool "x" is no longer available` (ErrToolRemoved). A call already
 // running when its tool is removed or replaced finishes on the old tool.
 func (sn *Snapshot) Execute(ctx context.Context, name string, args map[string]any, cb AsyncCallback) *Result {
-	return sn.set.execute(ctx, name, args, cb, sn)
+	st, cfg := sn.set.load()
+	res, _ := sn.set.execute(ctx, st, cfg, name, args, cb, sn)
+	return res
 }

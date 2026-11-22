@@ -114,27 +114,25 @@ func (s *Set) setGroup(group string, off bool) int {
 func (s *Set) setFlags(off bool, pick func(st *catState) ([]string, error)) error {
 	c := s.cat
 	c.mu.Lock()
-	st := c.state.Load()
-	names, err := pick(st)
+	defer c.mu.Unlock()
+	cur := c.state.Load()
+	names, err := pick(cur)
 	if err != nil {
-		c.mu.Unlock()
 		return err
 	}
-	cur := s.cfg.Load()
-	disabled := maps.Clone(cur.disabled)
+	cfg := *cur.cfg(s.key)
+	disabled := maps.Clone(cfg.disabled)
 	if disabled == nil {
 		disabled = map[string]bool{}
 	}
 	if !flip(disabled, names, off) {
-		c.mu.Unlock()
 		return nil
 	}
-	next := *cur
-	next.version = cur.version + 1
-	next.disabled = disabled
-	c.commitLocked(st, nil, map[*Set]*setConfig{s: &next})
-	c.mu.Unlock()
-	c.notify()
+	cfg.version++
+	cfg.disabled = disabled
+	next := cur.clone()
+	next.cfgs[s.key] = &cfg
+	c.commitLocked(cur, next)
 	return nil
 }
 

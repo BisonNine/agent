@@ -29,6 +29,7 @@ type Catalog struct {
 	mu      sync.Mutex // serialises writers; readers never lock
 	state   atomic.Pointer[catState]
 	regSeq  uint64          // toolset and provider registration ids, under mu
+	setSeq  uint64          // set keys, under mu
 	def     *Set            // the default set, also sets[""]
 	sets    map[string]*Set // named sets, under mu
 	watched map[*Set]int    // sets with subscribers → their count, under mu
@@ -55,13 +56,17 @@ func New(opts ...Option) *Catalog {
 	c := &Catalog{
 		logger:  slog.New(slog.DiscardHandler),
 		watched: map[*Set]int{},
+		sets:    map[string]*Set{},
 	}
 	for _, o := range opts {
 		o(c)
 	}
+	c.notes.logger = c.logger
 	c.state.Store(emptyState())
-	c.def = newSet(c, nil)
-	c.sets = map[string]*Set{"": c.def}
+	c.mu.Lock()
+	c.def = c.newSetLocked(nil)
+	c.sets[""] = c.def
+	c.mu.Unlock()
 	return c
 }
 
@@ -69,77 +74,73 @@ func New(opts ...Option) *Catalog {
 // reg := toolkit.NewRegistry(); reg.Add(...); agent.WithTools(reg).
 func NewRegistry(opts ...Option) *Catalog { return New(opts...) }
 
+// newSetLocked creates a set granted allow and records its settings in
+// the state. It is not a change to anything offered, so it sends no
+// notice and moves no version. Caller holds c.mu.
+func (c *Catalog) newSetLocked(allow AllowChecker) *Set {
+	c.setSeq++
+	s := newSet(c, c.setSeq)
+	next := c.state.Load().clone()
+	next.cfgs[s.key] = &setConfig{allow: allow}
+	c.state.Store(next)
+	return s
+}
+
+// dropSet forgets the settings of a set that is no longer reachable.
+func (c *Catalog) dropSet(key uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	next := c.state.Load().clone()
+	delete(next.cfgs, key)
+	c.state.Store(next)
+}
+
 // update applies fn to a writable copy of the state under the write lock.
-// When fn reports a change, the copy is published with the next version
-// and subscribers are notified after the lock is released.
+// When fn reports a change, the copy is published as the next version and
+// a notice is queued for subscribers.
 func (c *Catalog) update(fn func(next *catState) (changed bool, err error)) error {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	cur := c.state.Load()
 	next := cur.clone()
 	changed, err := fn(next)
 	if err != nil || !changed {
-		c.mu.Unlock()
 		return err
 	}
-	c.commitLocked(cur, next, nil)
-	c.mu.Unlock()
-	c.notify()
+	next.version = cur.version + 1
+	next.seal()
+	c.commitLocked(cur, next)
 	return nil
 }
 
 // change is update for a change that cannot fail.
 func (c *Catalog) change(fn func(next *catState) (changed bool)) {
 	c.mu.Lock()
+	defer c.mu.Unlock()
 	cur := c.state.Load()
 	next := cur.clone()
 	if !fn(next) {
-		c.mu.Unlock()
 		return
 	}
-	c.commitLocked(cur, next, nil)
-	c.mu.Unlock()
-	c.notify()
+	next.version = cur.version + 1
+	next.seal()
+	c.commitLocked(cur, next)
 }
 
-// commitLocked publishes next (a changed copy of cur, or nil when only set
-// configurations change) and the new configurations in cfgs, and queues
-// the change notice, so notices queue in commit order. The caller
-// delivers with c.notify once it has released the lock. Caller holds c.mu.
-func (c *Catalog) commitLocked(cur, next *catState, cfgs map[*Set]*setConfig) {
-	if next == nil {
-		next = cur
-	} else {
-		next.version = cur.version + 1
-		next.seal()
-	}
-	ev := c.eventLocked(cur, next, cfgs)
+// commitLocked publishes next, the generation that follows cur, and queues
+// the change notice, so notices queue in commit order. A writer that only
+// changes set settings publishes a clone with the same version: each
+// changed setting carries its own. Caller holds c.mu.
+func (c *Catalog) commitLocked(cur, next *catState) {
 	c.state.Store(next)
-	for s, cfg := range cfgs {
-		s.cfg.Store(cfg)
+	ev := event{oldState: cur, newState: next}
+	for s := range c.watched {
+		ev.sets = append(ev.sets, setEvent{set: s, subs: s.subscribers()})
 	}
 	if len(ev.sets) > 0 {
 		c.notes.push(ev)
 	}
 }
-
-// eventLocked records a change for every subscribed set. cfgs holds the
-// new configuration of the sets whose own settings change with it.
-// Caller holds c.mu and has not yet stored the new state or configs.
-func (c *Catalog) eventLocked(oldState, newState *catState, cfgs map[*Set]*setConfig) event {
-	ev := event{oldState: oldState, newState: newState}
-	for s := range c.watched {
-		oldCfg := s.cfg.Load()
-		newCfg := oldCfg
-		if cfg, ok := cfgs[s]; ok {
-			newCfg = cfg
-		}
-		ev.sets = append(ev.sets, setEvent{set: s, oldCfg: oldCfg, newCfg: newCfg, subs: s.subscribers()})
-	}
-	return ev
-}
-
-// notify delivers queued change notices. Call it with no lock held.
-func (c *Catalog) notify() { c.notes.drain() }
 
 // newEntry validates in and returns it as an entry from source.
 func newEntry(in Entry, source string) (*entry, error) {
@@ -286,11 +287,14 @@ func (c *Catalog) ReplaceEntries(prefix string, entries []Entry) (added, removed
 // AddToolset mounts a toolset's current tools, with the toolset's name as
 // their Source. Adding a toolset again under the same name replaces its
 // tools in one step. It refuses the call, changing nothing, when ts.Tools
-// fails, when the toolset has no name, or when one of its tools clashes
+// fails, when the toolset is nil or has no name, or when one of its tools clashes
 // with a tool from elsewhere (ErrDuplicate). remove unmounts the toolset's
 // tools; it does nothing once the toolset has been mounted again or
 // removed.
 func (c *Catalog) AddToolset(ctx context.Context, ts Toolset) (remove func(), err error) {
+	if ts == nil {
+		return nil, errors.New("toolkit: no toolset")
+	}
 	name := ts.Name()
 	if name == "" {
 		return nil, errors.New("toolkit: toolset has no name")
@@ -304,11 +308,14 @@ func (c *Catalog) AddToolset(ctx context.Context, ts Toolset) (remove func(), er
 
 // AddProvider mounts a toolspec provider's tools under namespace ns: each
 // definition is published as "<ns>_<name>" (see FromSpec), with ns as its
-// Source. Mounting ns again replaces its tools in one step. Clashes are
-// refused as for AddToolset.
+// Source. Mounting ns again replaces its tools in one step. A nil provider
+// and clashes are refused as for AddToolset.
 func (c *Catalog) AddProvider(ns string, p toolspec.ToolProvider, deps toolspec.Deps) (remove func(), err error) {
 	if ns == "" {
 		return nil, errors.New("toolkit: provider has no namespace")
+	}
+	if p == nil {
+		return nil, fmt.Errorf("toolkit: provider %q: no provider", ns)
 	}
 	return c.mount(ns, entriesFromSpec(ns, p.RegisterTools(deps)))
 }

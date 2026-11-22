@@ -85,6 +85,7 @@ func TestAddToolset(t *testing.T) {
 	if got := c.Names(); !slices.Equal(got, []string{"crm_call", "crm_find"}) {
 		t.Fatalf("after re-add = %v", got)
 	}
+	settle(t, c)
 	changes := rec.all()
 	if len(changes) != 2 {
 		t.Fatalf("notices = %+v, want one per AddToolset", changes)
@@ -105,6 +106,7 @@ func TestAddToolset(t *testing.T) {
 	if len(c.Names()) != 0 {
 		t.Fatalf("after remove = %v", c.Names())
 	}
+	settle(t, c)
 	if rec.count() != 3 {
 		t.Fatalf("notices = %d, want 3", rec.count())
 	}
@@ -267,6 +269,7 @@ func TestSubscribe_OnePerChangeNoneForNoOp(t *testing.T) {
 	c.Replace("a", []toolspec.ToolDefinition{{Name: "a2"}})
 	c.Remove("b")
 
+	settle(t, c)
 	changes := rec.all()
 	if len(changes) != 3 {
 		t.Fatalf("notices = %+v, want 3", changes)
@@ -284,6 +287,7 @@ func TestSubscribe_OnePerChangeNoneForNoOp(t *testing.T) {
 	unsubscribe()
 	unsubscribe()
 	mustAdd(t, c, listed("c")...)
+	settle(t, c)
 	if rec.count() != 3 {
 		t.Fatal("no notice after unsubscribe")
 	}
@@ -298,6 +302,7 @@ func TestSubscribe_RedefinitionIsChanged(t *testing.T) {
 	if err := c.Put(listed("a")...); err != nil {
 		t.Fatal(err)
 	}
+	settle(t, c)
 	changes := rec.all()
 	if len(changes) != 1 || !slices.Equal(changes[0].Changed, []string{"a"}) || len(changes[0].Added) != 0 {
 		t.Fatalf("notices = %+v", changes)
@@ -330,6 +335,7 @@ func TestSubscribe_CallbackMayCallBack(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("deadlock: a subscriber writing back into the registry")
 	}
+	settle(t, c)
 	mu.Lock()
 	defer mu.Unlock()
 	if !slices.Equal(seen, []string{"[trigger] []", "[] [trigger]"}) {
@@ -531,6 +537,7 @@ func TestSubscribe_OrderedUnderConcurrentWriters(t *testing.T) {
 		})
 	}
 	wg.Wait()
+	settle(t, c)
 	mu.Lock()
 	defer mu.Unlock()
 	got := slices.Sorted(maps.Keys(seen))

@@ -18,8 +18,11 @@ type entry struct {
 	source string // toolset or provider namespace; "" for a tool added alone
 }
 
-// catState is one immutable version of a catalogue's contents. Writers
-// build a new one and publish it; readers load the pointer and never lock.
+// catState is one immutable generation of a catalogue: its tools and the
+// settings of every set on it. Writers build a new one and publish it
+// behind one atomic pointer; a reader loads it once and works from that
+// generation alone, so it never pairs one generation's tools with another's
+// grant. Readers never lock.
 type catState struct {
 	version uint64
 	entries map[string]*entry
@@ -31,6 +34,8 @@ type catState struct {
 	// to the name: it survives the tool being replaced, removed and added
 	// again, until the name is enabled.
 	disabled map[string]bool
+	// cfgs holds each set's settings, by the set's key.
+	cfgs map[uint64]*setConfig
 }
 
 func emptyState() *catState {
@@ -40,18 +45,32 @@ func emptyState() *catState {
 		extern:   map[string]string{},
 		sources:  map[string]uint64{},
 		disabled: map[string]bool{},
+		cfgs:     map[uint64]*setConfig{},
 	}
 }
 
-// clone returns a writable copy of s for a writer to modify and publish
-// with seal. Entries are shared: they are immutable.
+// clone returns a writable copy of s for a writer to modify and publish.
+// Entries and set configurations are shared: they are immutable.
 func (s *catState) clone() *catState {
 	return &catState{
 		version:  s.version,
 		entries:  maps.Clone(s.entries),
+		names:    s.names,
+		offered:  s.offered,
+		extern:   s.extern,
 		sources:  maps.Clone(s.sources),
 		disabled: maps.Clone(s.disabled),
+		cfgs:     maps.Clone(s.cfgs),
 	}
+}
+
+// cfg returns the settings of the set with key. A set with none (which
+// cannot happen while the set is reachable) is granted nothing.
+func (s *catState) cfg(key uint64) *setConfig {
+	if cfg, ok := s.cfgs[key]; ok {
+		return cfg
+	}
+	return &setConfig{allow: denyAll{}}
 }
 
 // seal derives the sorted names and the name maps from entries. Call it
