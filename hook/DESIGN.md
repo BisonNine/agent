@@ -418,11 +418,9 @@ not listed.
     models.WithDirectRequireReasoningContent(r))`, with `l` from
     `agent.limitsFor(model)` plus the vision mode `modelFacts` reads and
     `r` from `modelFacts`; `candidates` is its `Candidates()`; it is not
-    isolated (the interim path never was). `Direct` refuses an empty
-    model id (`modelspec.ErrModelRequired`), which the interim path would
-    have sent: only an agent with no model name at all, which the host's
-    configuration does not produce; such a turn fails as
-    `errNoModelConfigured`;
+    isolated (the interim path never was). An empty model id (an agent
+    configured with `"models": [""]`) is sent to the client as `""`, as
+    the interim path did: the client decides;
   - 7.10b delete `callDefaultModel`, the direct branches of `callModel`,
     `firstModel` and `turnVision`, `engineSpec.direct`, `directModel`,
     `directClients`, `llmTurnEnv.directClient`, `AgentLoop.directModel`

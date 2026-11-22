@@ -37,6 +37,7 @@ project uses [Semantic Versioning](https://semver.org/).
   candidate that calls model `name`'s client with a wire model id the
   catalogue does not define, ignoring health and switches and recording
   nothing, so a caller with no resolvable model still drives a `Chain`.
+  The wire id is sent as given, even empty (the client decides).
   `WithDirectProvider`, `WithDirectLimits` and
   `WithDirectRequireReasoningContent` set the provider name, limits and
   reasoning-content setting its candidate reports, for a caller whose own

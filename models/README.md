@@ -136,7 +136,8 @@ client replaced by `Adopt` or `RegisterClient` is closed only after that.
 `catalog.Direct(name, model)` is a chain of one candidate for a call the
 catalogue does not define: model `name`'s client, called with the wire model
 id `model` (an agent whose configured models do not resolve, served by a
-default model's client). Its candidate is named by the wire id and has the
+default model's client). The id is sent as given, even empty: the client
+decides what an empty id means (a CLI runs its own default model). Its candidate is named by the wire id and has the
 catalogue's limit defaults. Its calls (`Chat`, `Do`, `Caller`) ignore health
 and switches, record and report nothing, never fall back, and return the
 client's error as given (`ctx.Err()` once the context ended), so a caller

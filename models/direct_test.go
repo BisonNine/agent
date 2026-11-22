@@ -87,8 +87,32 @@ func TestDirectChainErrors(t *testing.T) {
 	if _, err := f.cat.Direct("nope", "x"); !errors.Is(err, models.ErrUnknownModel) {
 		t.Fatalf("unknown model: %v", err)
 	}
-	if _, err := f.cat.Direct("haiku", " "); !errors.Is(err, modelspec.ErrModelRequired) {
-		t.Fatalf("empty model id: %v", err)
+	if _, err := f.cat.Direct("", "x"); !errors.Is(err, models.ErrUnknownModel) {
+		t.Fatalf("empty model name: %v", err)
+	}
+}
+
+// An empty wire id is passed to the client as given: the client decides
+// (a CLI runs its own default model).
+func TestDirectChainEmptyModelID(t *testing.T) {
+	f := newFixture(t, []spec{m("haiku", "p1", "haiku-wire")})
+	ch, err := f.cat.Direct("haiku", "")
+	if err != nil {
+		t.Fatalf("empty model id refused: %v", err)
+	}
+	if c := ch.Candidates()[0]; c.Name != "" || c.Model != "" || c.Provider != "p1" {
+		t.Fatalf("candidate = %+v", c)
+	}
+	res, err := ch.Chat(t.Context(), alice, models.Request{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Candidate.Model != "" {
+		t.Fatalf("result candidate = %+v", res.Candidate)
+	}
+	calls := f.fake.Calls()
+	if len(calls) != 1 || calls[0].Model != "" {
+		t.Fatalf("calls = %+v, want one with model \"\"", calls)
 	}
 }
 

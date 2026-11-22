@@ -703,13 +703,11 @@ func (c *Catalog) Client(name string) (client spawnllm.LLMProvider, release func
 // call on it (Chat, Do, Caller) calls the client once: health is neither
 // read nor recorded, the enable switches are ignored, there is no fallback,
 // no observer event and no record of what is serving, and an error is
-// returned as the client gave it, unless ctx ended (then ctx.Err()). It
-// fails with ErrUnknownModel when the catalogue has no model name, and
-// modelspec.ErrModelRequired when model is empty.
+// returned as the client gave it, unless ctx ended (then ctx.Err()). model
+// is sent as given, even empty: the client decides what an empty id means
+// (a CLI runs its own default model). It fails with ErrUnknownModel when
+// the catalogue has no model name (an empty name included).
 func (c *Catalog) Direct(name, model string, opts ...DirectOption) (*Chain, error) {
-	if strings.TrimSpace(model) == "" {
-		return nil, fmt.Errorf("models: direct chain for %q: %w", name, modelspec.ErrModelRequired)
-	}
 	g := c.gen.Load()
 	e, ok := g.models[name]
 	if !ok {
