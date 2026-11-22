@@ -2,7 +2,7 @@
 
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
 holding `toolspec`, `spawnllm`, `ctxengine`, `cogmem`, `accounting`,
-`fsmode`, `modelspec`, and the tool packages under `toolbox/`
+`fsmode`, `modelspec`, `clock`, and the tool packages under `toolbox/`
 (`toolbox/shell`).
 
 ## Status
@@ -30,6 +30,8 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   library and SQLite. It never imports `cogmem`.
 - `modelspec` imports only the standard library. It never imports
   `spawnllm`, and does not log.
+- `clock` imports only the standard library; code whose timing is tested
+  takes a `clock.Clock` instead of calling the `time` package.
 - `accounting` imports only the standard library. `spawnllm` may
   import it; `ctxengine` and `cogmem` do not.
 - `toolbox/shell/proc` imports only `fsmode`, the standard library and its

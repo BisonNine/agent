@@ -8,6 +8,10 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `clock` package: `Clock` (the system clock through `Or(nil)`) and
+  `Fake`, a clock moved by hand (`Advance`, `Set`, `Waiters`,
+  `BlockUntil`) whose `WithTimeout`/`WithDeadline` contexts end on fake
+  time.
 - `modelspec` package: the shared definition of providers and models.
   `Provider` and `Model` with the JSON form of the host configuration they
   came from; `Model.Validate`, `Provider.ValidateProtocol`,
