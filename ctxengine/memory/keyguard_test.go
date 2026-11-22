@@ -43,6 +43,12 @@ func readSession(t *testing.T, path string) (SessionState, []StoredMessage) {
 	return st, w
 }
 
+// errOf returns the error of a call that returns one value and an error.
+func errOf[T any](_ T, err error) error { return err }
+
+// errOf2 returns the error of a call that returns two values and an error.
+func errOf2[T, U any](_ T, _ U, err error) error { return err }
+
 // wantCollision fails unless err is a *KeyCollisionError for requested
 // against stored, also matched by ErrKeyCollision.
 func wantCollision(t *testing.T, err error, requested, stored string) {
@@ -77,14 +83,14 @@ func TestOpenSession_RefusesFileOfAnotherKey(t *testing.T) {
 			if ce := (*KeyCollisionError)(nil); errors.As(err, &ce) && ce.Path != path {
 				t.Errorf("Path = %q, want %q", ce.Path, path)
 			}
-			if err := a.Update(func(*StateTx) error { return nil }); !errors.Is(err, ErrArchiveUnavailable) {
-				t.Errorf("Update on the refused store = %v, want ErrArchiveUnavailable", err)
+			if updErr := a.Update(func(*StateTx) error { return nil }); !errors.Is(updErr, ErrArchiveUnavailable) {
+				t.Errorf("Update on the refused store = %v, want ErrArchiveUnavailable", updErr)
 			}
 
 			ro, err := OpenSessionReadOnly(dir, other, nil)
 			wantCollision(t, err, other, "a:b")
-			if _, err := ro.Window(); !errors.Is(err, ErrArchiveUnavailable) {
-				t.Errorf("Window on the refused store = %v, want ErrArchiveUnavailable", err)
+			if _, readErr := ro.Window(); !errors.Is(readErr, ErrArchiveUnavailable) {
+				t.Errorf("Window on the refused store = %v, want ErrArchiveUnavailable", readErr)
 			}
 
 			st, w := readSession(t, path)
@@ -118,19 +124,19 @@ func TestKeyWrittenMeanwhile(t *testing.T) {
 
 	for _, h := range []*ArchiveStore{bob, bobRO} {
 		reads := map[string]func() error{
-			"Window":        func() error { _, err := h.Window(); return err },
-			"State":         func() error { _, err := h.State(); return err },
-			"Bounds":        func() error { _, _, err := h.Bounds(); return err },
-			"QueryRange":    func() error { _, err := h.QueryRange(1, 1); return err },
-			"Search":        func() error { _, err := h.Search(context.Background(), "alice", "", 10); return err },
-			"Stats":         func() error { _, _, _, err := h.Stats(); return err },
-			"MinSeqAfter":   func() error { _, err := h.MinSeqAfter(time.Time{}); return err },
-			"ListSummaries": func() error { _, err := h.ListSummaries(); return err },
-			"GetSummary":    func() error { _, _, err := h.GetSummary(1); return err },
+			"Window":        func() error { return errOf(h.Window()) },
+			"State":         func() error { return errOf(h.State()) },
+			"Bounds":        func() error { return errOf2(h.Bounds()) },
+			"QueryRange":    func() error { return errOf(h.QueryRange(1, 1)) },
+			"Search":        func() error { return errOf(h.Search(context.Background(), "alice", "", 10)) },
+			"Stats":         func() error { _, _, _, statsErr := h.Stats(); return statsErr },
+			"MinSeqAfter":   func() error { return errOf(h.MinSeqAfter(time.Time{})) },
+			"ListSummaries": func() error { return errOf(h.ListSummaries()) },
+			"GetSummary":    func() error { return errOf2(h.GetSummary(1)) },
 		}
 		for name, read := range reads {
-			if err := read(); !errors.Is(err, ErrKeyCollision) {
-				t.Errorf("%s = %v, want ErrKeyCollision", name, err)
+			if readErr := read(); !errors.Is(readErr, ErrKeyCollision) {
+				t.Errorf("%s = %v, want ErrKeyCollision", name, readErr)
 			}
 		}
 	}
@@ -141,21 +147,23 @@ func TestKeyWrittenMeanwhile(t *testing.T) {
 		"Append": func() error {
 			return bob.Append(2, spawnllm.Message{Role: "user", Content: "bob"}, time.Now())
 		},
-		"AppendSummary":         func() error { _, err := bob.AppendSummary(SummaryRecord{Summary: "bob"}); return err },
+		"AppendSummary":         func() error { return errOf(bob.AppendSummary(SummaryRecord{Summary: "bob"})) },
 		"PruneMessagesToCount":  func() error { return bob.PruneMessagesToCount(1) },
 		"PruneMessagesBefore":   func() error { return bob.PruneMessagesBefore(time.Now().Add(time.Hour)) },
 		"PruneSummariesToCount": func() error { return bob.PruneSummariesToCount(1) },
 		"PruneSummariesBefore":  func() error { return bob.PruneSummariesBefore(time.Now().Add(time.Hour)) },
 	}
 	for name, write := range writes {
-		if err := write(); !errors.Is(err, ErrKeyCollision) {
-			t.Errorf("%s = %v, want ErrKeyCollision", name, err)
+		if writeErr := write(); !errors.Is(writeErr, ErrKeyCollision) {
+			t.Errorf("%s = %v, want ErrKeyCollision", name, writeErr)
 		}
 	}
-	if minSeq, maxSeq, err := alice.Bounds(); err != nil || minSeq != 1 || maxSeq != 1 {
+	minSeq, maxSeq, err := alice.Bounds()
+	if err != nil || minSeq != 1 || maxSeq != 1 {
 		t.Errorf("alice's archive = [%d, %d] %v, want [1, 1]", minSeq, maxSeq, err)
 	}
-	if metas, err := alice.ListSummaries(); err != nil || len(metas) != 1 {
+	metas, err := alice.ListSummaries()
+	if err != nil || len(metas) != 1 {
 		t.Errorf("alice's summaries = %+v %v, want 1", metas, err)
 	}
 

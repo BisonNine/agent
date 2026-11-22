@@ -66,7 +66,8 @@ one file, as keys that differ only in case do on a case-insensitive file
 system. A file belongs to the first key that writes it: `memory.OpenSession`
 and `memory.OpenSessionReadOnly` (which the store, the manager, the session
 tools and the migration use) refuse it to any other key with
-`*memory.KeyCollisionError`, as do every write transaction and
+`*memory.KeyCollisionError`, and every later read and write through such a
+handle checks again (a file another key took after the open), as does
 `DeleteSession`, so two sessions never share a history. Listings report the
 file under the key it holds.
 

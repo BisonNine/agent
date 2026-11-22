@@ -223,9 +223,9 @@ func OpenSessionReadOnly(dir, key string, log *slog.Logger) (*ArchiveStore, erro
 	}
 	defer done()
 	err = retryBusy(time.Now(), func() error {
-		ok, err := hasTable(db, "messages")
-		if err != nil {
-			return err
+		ok, tableErr := hasTable(db, "messages")
+		if tableErr != nil {
+			return tableErr
 		}
 		if !ok {
 			return ErrArchiveUnavailable
@@ -299,24 +299,28 @@ func isBusy(err error) bool {
 // storedKey returns the session key the database holds: "" when it has no
 // session_state table (an archive that predates it, or one a read-only
 // connection meets before the writer has created it) or no row yet.
-func storedKey(q queryRower) (string, error) {
+func storedKey(q rowQuerier) (string, error) {
 	if ok, err := hasTable(q, "session_state"); err != nil || !ok {
 		return "", err
 	}
 	var key string
-	err := q.QueryRowContext(context.Background(),
-		`SELECT key FROM session_state WHERE id = 1`).Scan(&key)
+	err := q.QueryRow(`SELECT key FROM session_state WHERE id = 1`).Scan(&key)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
 	return key, err
 }
 
+// rowQuerier is the subset of *sql.DB, *sql.Tx and txConn the key check
+// uses.
+type rowQuerier interface {
+	QueryRow(query string, args ...any) *sql.Row
+}
+
 // hasTable reports whether the database has the table name.
-func hasTable(q queryRower, name string) (bool, error) {
+func hasTable(q rowQuerier, name string) (bool, error) {
 	var n int
-	err := q.QueryRowContext(context.Background(),
-		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&n)
+	err := q.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&n)
 	return n > 0, err
 }
 
@@ -324,6 +328,7 @@ func hasTable(q queryRower, name string) (bool, error) {
 // transaction on one.
 type querier interface {
 	queryRower
+	rowQuerier
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
@@ -337,7 +342,7 @@ func (a *ArchiveStore) readFrom(db *sql.DB) (q querier, end func(), err error) {
 	if a.key == "" {
 		return db, func() {}, nil
 	}
-	tx, err := db.BeginTx(context.Background(), nil)
+	tx, err := db.Begin()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -376,7 +381,7 @@ func (a *ArchiveStore) openRead() (q querier, done func(), err error) {
 // session other than key. A database that holds no key yet belongs to the
 // first key that writes one. Keys are compared exactly: neither the store nor
 // the migration changes a key before storing it.
-func checkKey(q queryRower, path, key string) error {
+func checkKey(q rowQuerier, path, key string) error {
 	stored, err := storedKey(q)
 	if err != nil {
 		return fmt.Errorf("memory: read session key: %w", err)

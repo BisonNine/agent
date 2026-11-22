@@ -316,8 +316,8 @@ project uses [Semantic Versioning](https://semver.org/).
   system) silently shared one history. A file now belongs to the first key
   that writes it: opening it for another key (`memory.OpenSession`,
   `memory.OpenSessionReadOnly`, which the store, the manager's archive, the
-  session tools and the JSONL migration use), writing to it and
-  `DeleteSession` are refused with `*memory.KeyCollisionError`
+  session tools and the JSONL migration use), every read and write through
+  such a handle, and `DeleteSession` are refused with `*memory.KeyCollisionError`
   (`memory.ErrKeyCollision`), and its stored key is never overwritten.
   `ListSessions` and `ListPendingSessions` list the file under the key it
   holds. File names are unchanged.

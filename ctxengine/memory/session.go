@@ -310,6 +310,11 @@ func (c txConn) Exec(query string, args ...any) (sql.Result, error) {
 	return c.ExecContext(context.Background(), query, args...)
 }
 
+// QueryRow runs query on the transaction's connection.
+func (c txConn) QueryRow(query string, args ...any) *sql.Row {
+	return c.QueryRowContext(context.Background(), query, args...)
+}
+
 // writeState upserts the single session_state row.
 func writeState(ex execer, st SessionState) error {
 	_, err := ex.Exec(

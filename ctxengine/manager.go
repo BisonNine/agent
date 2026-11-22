@@ -315,7 +315,7 @@ func (m *Manager) AddUserMessage(ctx context.Context, msg spawnllm.Message) (int
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	seq, err := m.addMessage("add user message", msg)
+	seq, err := m.addMessage("add user message", msg) //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 	if err != nil {
 		return 0, err
 	}
@@ -333,7 +333,7 @@ func (m *Manager) AddAssistantMessage(ctx context.Context, msg spawnllm.Message)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	seq, err := m.addMessage("add assistant message", msg)
+	seq, err := m.addMessage("add assistant message", msg) //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 	if err != nil {
 		return 0, err
 	}
@@ -356,7 +356,7 @@ func (m *Manager) AddToolCallMessage(_ context.Context, msg spawnllm.Message) (i
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.addMessage("add tool call message", msg)
+	return m.addMessage("add tool call message", msg) //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 }
 
 // AddToolResult records a tool result message.
@@ -367,7 +367,7 @@ func (m *Manager) AddToolResult(_ context.Context, msg spawnllm.Message) (int64,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.addMessage("add tool result", msg)
+	return m.addMessage("add tool result", msg) //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 }
 
 // Assemble is the single per-dispatch entry point: eviction sweep, emergency
@@ -1419,7 +1419,7 @@ func (m *Manager) ForceCompress(ctx context.Context) error {
 	} else {
 		conv = m.dropOldestStoredGroups(ctx, conv)
 		m.applyLargeMsgChecksStored(conv)
-		if err := m.persistStoredResult(sysMsg, conv, nil); err != nil {
+		if err := m.persistStoredResult(sysMsg, conv, nil); err != nil { //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 			return fmt.Errorf("force compress: %w", err)
 		}
 	}

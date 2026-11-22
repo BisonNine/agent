@@ -395,7 +395,7 @@ func (m *Manager) handleNormalPostLoop(
 		return ErrCompressionFailed
 	}
 
-	if err := m.persistStoredResult(sysMsg, currentStored, latestSummary); err != nil {
+	if err := m.persistStoredResult(sysMsg, currentStored, latestSummary); err != nil { //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 		return err
 	}
 
@@ -430,7 +430,7 @@ func (m *Manager) handleSafetyNetPostLoop(
 	llmSucceeded bool,
 ) error {
 	if llmSucceeded {
-		if err := m.persistStoredResult(sysMsg, currentStored, latestSummary); err != nil {
+		if err := m.persistStoredResult(sysMsg, currentStored, latestSummary); err != nil { //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 			return err
 		}
 	} else if existingSummary != nil {
@@ -470,7 +470,7 @@ func (m *Manager) handleSafetyNetPostLoop(
 	}
 	currentStored = m.dropOldestStoredGroups(ctx, currentStored)
 	m.applyLargeMsgChecksStored(currentStored)
-	if err := m.persistStoredResult(sysMsg, currentStored, newSummary); err != nil {
+	if err := m.persistStoredResult(sysMsg, currentStored, newSummary); err != nil { //nolint:contextcheck // archive writes go through memory.ArchiveStore, whose API takes no context
 		return err
 	}
 
