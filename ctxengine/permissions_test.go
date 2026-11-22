@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/fsmode"
 )
 
 func permOf(t *testing.T, path string) os.FileMode {
@@ -36,19 +37,19 @@ func TestManager_ArchivePermissions(t *testing.T) {
 		{name: "defaults", wantDir: DefaultFolderPermissions, wantFile: DefaultFilePermissions},
 		{
 			name:     "custom",
-			opts:     []Option{WithFolderPermissions(0o750), WithFilePermissions(0o640)},
+			opts:     []Option{WithFileModes(fsmode.Modes{Dir: 0o750, File: 0o640})},
 			wantDir:  0o750,
 			wantFile: 0o640,
 		},
 		{
 			name:     "umask overridden",
-			opts:     []Option{WithFolderPermissions(0o777), WithFilePermissions(0o666)},
+			opts:     []Option{WithFileModes(fsmode.Modes{Dir: 0o777, File: 0o666})},
 			wantDir:  0o777,
 			wantFile: 0o666,
 		},
 		{
 			name:     "zero keeps defaults",
-			opts:     []Option{WithFolderPermissions(0), WithFilePermissions(0)},
+			opts:     []Option{WithFileModes(fsmode.Modes{Dir: 0, File: 0})},
 			wantDir:  DefaultFolderPermissions,
 			wantFile: DefaultFilePermissions,
 		},
@@ -83,11 +84,11 @@ func TestCompactionDebugCapture_Permissions(t *testing.T) {
 		want     os.FileMode
 	}{
 		{name: "created at default", want: DefaultFilePermissions},
-		{name: "created at custom", opts: []Option{WithFilePermissions(0o640)}, want: 0o640},
+		{name: "created at custom", opts: []Option{WithFileModes(fsmode.Modes{File: 0o640})}, want: 0o640},
 		// A normal umask strips group/other write; the chmod must restore it.
-		{name: "umask overridden", opts: []Option{WithFilePermissions(0o666)}, want: 0o666},
+		{name: "umask overridden", opts: []Option{WithFileModes(fsmode.Modes{File: 0o666})}, want: 0o666},
 		{name: "existing tightened to default", existing: 0o644, want: DefaultFilePermissions},
-		{name: "existing tightened to custom", existing: 0o666, opts: []Option{WithFilePermissions(0o640)}, want: 0o640},
+		{name: "existing tightened to custom", existing: 0o666, opts: []Option{WithFileModes(fsmode.Modes{File: 0o640})}, want: 0o640},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

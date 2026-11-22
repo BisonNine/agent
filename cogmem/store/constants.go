@@ -10,7 +10,7 @@ import (
 
 // File-system permission defaults: cogmem's directory, database and snapshots
 // hold the agent's memory, so only the owner may read them. Overridable via
-// WithFolderPermissions and WithFilePermissions.
+// WithFileModes.
 const (
 	DefaultFolderPermissions os.FileMode = 0o700
 	DefaultFilePermissions   os.FileMode = 0o600

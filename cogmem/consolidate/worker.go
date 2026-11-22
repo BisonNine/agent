@@ -18,6 +18,7 @@ import (
 	"github.com/google/uuid"
 
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/fsmode"
 )
 
 // leaseTTL bounds how long a single RunOnce may hold the per-archive lease.
@@ -140,29 +141,18 @@ func componentLog(l *slog.Logger) *slog.Logger {
 	return l.With("component", "cogmem")
 }
 
-// WithFolderPermissions sets the mode for the debug dump directory when it is
-// created (default: the store's folder mode). Zero is ignored.
-func WithFolderPermissions(m os.FileMode) Option {
+// WithFileModes sets the modes of the debug dump directory when it is created
+// (Dir) and of the debug dump files (File). Each defaults to the store's mode;
+// a zero field keeps it (see fsmode.Modes).
+func WithFileModes(m fsmode.Modes) Option {
 	return func(w *Worker) {
-		if m != 0 {
-			w.folderMode = m
-		}
-	}
-}
-
-// WithFilePermissions sets the mode for debug dump files (default: the
-// store's file mode). Zero is ignored.
-func WithFilePermissions(m os.FileMode) Option {
-	return func(w *Worker) {
-		if m != 0 {
-			w.fileMode = m
-		}
+		r := m.Or(fsmode.Modes{Dir: w.folderMode, File: w.fileMode})
+		w.folderMode, w.fileMode = r.Dir, r.File
 	}
 }
 
 // NewWorker builds a Worker over a store and a model caller. The debug dump
-// modes default to the store's; WithFolderPermissions and WithFilePermissions
-// override them.
+// modes default to the store's; WithFileModes overrides them.
 func NewWorker(st *store.Store, model ModelCaller, opts ...Option) *Worker {
 	w := &Worker{
 		st:         st,

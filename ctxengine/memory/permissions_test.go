@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"go.bison9.com/agent/fsmode"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -50,12 +51,12 @@ func TestOpen_FileModes(t *testing.T) {
 		want     os.FileMode
 	}{
 		{name: "default", want: DefaultFilePermissions},
-		{name: "custom", opts: []OpenOption{WithFilePermissions(0o640)}, want: 0o640},
-		{name: "zero keeps default", opts: []OpenOption{WithFilePermissions(0)}, want: DefaultFilePermissions},
+		{name: "custom", opts: []OpenOption{WithFileModes(fsmode.Modes{File: 0o640})}, want: 0o640},
+		{name: "zero keeps default", opts: []OpenOption{WithFileModes(fsmode.Modes{File: 0})}, want: DefaultFilePermissions},
 		// A normal umask strips group/other write; the chmod must restore it.
-		{name: "umask overridden", opts: []OpenOption{WithFilePermissions(0o666)}, want: 0o666},
+		{name: "umask overridden", opts: []OpenOption{WithFileModes(fsmode.Modes{File: 0o666})}, want: 0o666},
 		{name: "existing tightened to default", existing: 0o644, want: DefaultFilePermissions},
-		{name: "existing tightened to custom", existing: 0o666, opts: []OpenOption{WithFilePermissions(0o640)}, want: 0o640},
+		{name: "existing tightened to custom", existing: 0o666, opts: []OpenOption{WithFileModes(fsmode.Modes{File: 0o640})}, want: 0o640},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -101,9 +102,9 @@ func TestOpen_ParentDirectory(t *testing.T) {
 		want     os.FileMode
 	}{
 		{name: "created at default", want: DefaultFolderPermissions},
-		{name: "created at custom", opts: []OpenOption{WithFolderPermissions(0o750)}, want: 0o750},
-		{name: "zero keeps default", opts: []OpenOption{WithFolderPermissions(0)}, want: DefaultFolderPermissions},
-		{name: "umask overridden", opts: []OpenOption{WithFolderPermissions(0o777)}, want: 0o777},
+		{name: "created at custom", opts: []OpenOption{WithFileModes(fsmode.Modes{Dir: 0o750})}, want: 0o750},
+		{name: "zero keeps default", opts: []OpenOption{WithFileModes(fsmode.Modes{Dir: 0})}, want: DefaultFolderPermissions},
+		{name: "umask overridden", opts: []OpenOption{WithFileModes(fsmode.Modes{Dir: 0o777})}, want: 0o777},
 		{name: "existing untouched", existing: 0o755, want: 0o755},
 	}
 	for _, tt := range tests {

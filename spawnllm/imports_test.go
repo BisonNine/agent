@@ -11,15 +11,16 @@ import (
 )
 
 // spawnllm sits above toolspec and below ctxengine. It may import only its
-// own packages, toolspec, accounting, the standard library
-// and the third-party modules listed here; never ctxengine or cogmem. A new
-// provider SDK is added to the list when it is adopted. Test files are held to
-// the same rule.
+// own packages, toolspec, accounting, fsmode, the standard library and the
+// third-party modules listed here; never ctxengine or cogmem. A new provider
+// SDK is added to the list when it is adopted. Test files are held to the
+// same rule.
 func TestImportsRespectLayering(t *testing.T) {
 	allowed := []string{
 		"go.bison9.com/agent/spawnllm",
 		"go.bison9.com/agent/toolspec",
 		"go.bison9.com/agent/accounting",
+		"go.bison9.com/agent/fsmode",
 		"github.com/google/uuid",
 	}
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {

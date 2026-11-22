@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 
 	"go.bison9.com/agent/accounting"
+	"go.bison9.com/agent/fsmode"
 	"go.bison9.com/agent/spawnllm/common"
 	"go.bison9.com/agent/spawnllm/internal/launch"
 	"go.bison9.com/agent/spawnllm/protocoltypes"
@@ -130,15 +131,17 @@ func WithResponseLogFile(path string) Option {
 	}
 }
 
-// WithFileModes sets the mode for the response log file and for any parent
-// directories the provider creates for it. The modes are applied exactly,
+// WithFileModes sets the mode for the response log file (File, default
+// fsmode.DefaultFile) and for any parent directories the provider creates for
+// it (Dir, default fsmode.DefaultDir). The modes are applied exactly,
 // whatever the process umask: the file's mode is set whenever it is opened,
 // and each directory the provider creates gets the directory mode (existing
-// directories are left as they are).
-func WithFileModes(dir, file fs.FileMode) Option {
+// directories are left as they are). A zero field keeps the default (see
+// fsmode.Modes).
+func WithFileModes(m fsmode.Modes) Option {
 	return func(p *Provider) {
-		p.logDirMode = dir
-		p.logFileMode = file
+		r := m.Or(fsmode.Modes{Dir: p.logDirMode, File: p.logFileMode})
+		p.logDirMode, p.logFileMode = r.Dir, r.File
 	}
 }
 
@@ -227,8 +230,8 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	p := &Provider{
 		apiKey:      apiKey,
 		apiBase:     strings.TrimRight(apiBase, "/"),
-		logFileMode: 0o600,
-		logDirMode:  0o700,
+		logFileMode: fsmode.DefaultFile,
+		logDirMode:  fsmode.DefaultDir,
 	}
 
 	for _, opt := range opts {

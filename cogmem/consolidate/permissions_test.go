@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/fsmode"
 )
 
 // The debug dump directory and files are created with the store's configured
@@ -21,7 +22,7 @@ func TestDebugDumpPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("unix permission bits are not supported on windows")
 	}
-	storeCustom := []store.Option{store.WithFolderPermissions(0o750), store.WithFilePermissions(0o640)}
+	storeCustom := []store.Option{store.WithFileModes(fsmode.Modes{Dir: 0o750, File: 0o640})}
 	tests := []struct {
 		name       string
 		storeOpts  []store.Option
@@ -31,8 +32,8 @@ func TestDebugDumpPermissions(t *testing.T) {
 	}{
 		{"defaults", nil, nil, store.DefaultFolderPermissions, store.DefaultFilePermissions},
 		{"store modes", storeCustom, nil, 0o750, 0o640},
-		{"worker overrides", storeCustom, []Option{WithFolderPermissions(0o710), WithFilePermissions(0o400)}, 0o710, 0o400},
-		{"zero ignored", storeCustom, []Option{WithFolderPermissions(0), WithFilePermissions(0)}, 0o750, 0o640},
+		{"worker overrides", storeCustom, []Option{WithFileModes(fsmode.Modes{Dir: 0o710, File: 0o400})}, 0o710, 0o400},
+		{"zero ignored", storeCustom, []Option{WithFileModes(fsmode.Modes{Dir: 0, File: 0})}, 0o750, 0o640},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

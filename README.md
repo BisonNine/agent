@@ -13,6 +13,7 @@ the SDK never imports a host.
 | [`ctxengine`](ctxengine) | The context engine: keeps the transcript, assembles each request, evicts and summarises as the window fills. |
 | [`cogmem`](cogmem) | Cognitive memory: durable, typed memories organised into domains and refined by background consolidation. |
 | [`accounting`](accounting) | One record per LLM or API call launched through spawnllm, written to a file or to the logger. |
+| [`fsmode`](fsmode) | The modes of the directories and files the packages create, taken by each as `WithFileModes`. |
 
 Each package has its own README.
 
@@ -22,10 +23,11 @@ Each package imports only the ones below it, and a guard test in each package
 enforces that:
 
 - `toolspec` imports only the standard library.
+- `fsmode` imports only the standard library.
 - `accounting` imports only the standard library.
-- `spawnllm` imports `toolspec` and `accounting`.
-- `ctxengine` imports `spawnllm` and `toolspec`, never `cogmem`.
-- `cogmem` imports `toolspec`, never `spawnllm` or `ctxengine`.
+- `spawnllm` imports `toolspec`, `accounting` and `fsmode`.
+- `ctxengine` imports `spawnllm`, `toolspec` and `fsmode`, never `cogmem`.
+- `cogmem` imports `toolspec` and `fsmode`, never `spawnllm` or `ctxengine`.
 
 ## Logging
 

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/fsmode"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -40,26 +41,26 @@ func TestNewSQLiteStore_Permissions(t *testing.T) {
 		},
 		{
 			name:     "custom",
-			opts:     []StoreOption{WithFolderPermissions(0o750), WithFilePermissions(0o640)},
+			opts:     []StoreOption{WithFileModes(fsmode.Modes{Dir: 0o750, File: 0o640})},
 			wantDir:  0o750,
 			wantFile: 0o640,
 		},
 		{
 			name:     "zero keeps defaults",
-			opts:     []StoreOption{WithFolderPermissions(0), WithFilePermissions(0)},
+			opts:     []StoreOption{WithFileModes(fsmode.Modes{Dir: 0, File: 0})},
 			wantDir:  memory.DefaultFolderPermissions,
 			wantFile: memory.DefaultFilePermissions,
 		},
 		{
 			// A normal umask strips group/other write; the chmod must restore it.
 			name:     "umask overridden",
-			opts:     []StoreOption{WithFolderPermissions(0o777), WithFilePermissions(0o666)},
+			opts:     []StoreOption{WithFileModes(fsmode.Modes{Dir: 0o777, File: 0o666})},
 			wantDir:  0o777,
 			wantFile: 0o666,
 		},
 		{
 			name:        "existing directory untouched",
-			opts:        []StoreOption{WithFolderPermissions(0o700)},
+			opts:        []StoreOption{WithFileModes(fsmode.Modes{Dir: 0o700})},
 			existingDir: 0o755,
 			wantDir:     0o755,
 			wantFile:    memory.DefaultFilePermissions,

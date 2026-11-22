@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"go.bison9.com/agent/fsmode"
 )
 
 // TestResponseLogFileModes checks that the response log file and the parent
@@ -25,7 +27,7 @@ func TestResponseLogFileModes(t *testing.T) {
 		wantFile fs.FileMode
 	}{
 		{name: "defaults", wantDir: 0o700, wantFile: 0o600},
-		{name: "group writable", opts: []Option{WithFileModes(0o770, 0o660)}, wantDir: 0o770, wantFile: 0o660},
+		{name: "group writable", opts: []Option{WithFileModes(fsmode.Modes{Dir: 0o770, File: 0o660})}, wantDir: 0o770, wantFile: 0o660},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

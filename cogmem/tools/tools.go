@@ -38,8 +38,8 @@ type Host struct {
 	// Consolidate asks the host's background worker to run for a session now.
 	// Nil means the tool reports that no worker is available.
 	Consolidate func(agentID, sessionKey string)
-	// StoreOptions are passed to store.Open, e.g. store.WithFilePermissions
-	// and store.WithFolderPermissions. The export tool uses the same modes.
+	// StoreOptions are passed to store.Open, e.g. store.WithFileModes. The
+	// export tool uses the same modes.
 	// Nil uses the store defaults.
 	StoreOptions []store.Option
 }

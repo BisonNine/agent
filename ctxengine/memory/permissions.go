@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
+	"go.bison9.com/agent/fsmode"
 )
 
 // Default modes for the directories and files ctxengine creates: owner-only.
@@ -46,26 +47,16 @@ func componentLog(l *slog.Logger) *slog.Logger {
 	return l.With("component", "memory")
 }
 
-// WithFolderPermissions sets the mode of the parent directories Open creates
-// (default DefaultFolderPermissions). A directory that already exists is left
-// as it is. Only the permission bits are used; 0 keeps the default.
-func WithFolderPermissions(perm os.FileMode) OpenOption {
+// WithFileModes sets the modes of what Open creates. Dir is the mode of the
+// parent directories Open creates (default DefaultFolderPermissions); a
+// directory that already exists is left as it is. File is the mode of the
+// database file and its -wal and -shm side files (default
+// DefaultFilePermissions); existing files whose mode differs are changed to
+// it. A zero field keeps the default (see fsmode.Modes).
+func WithFileModes(m fsmode.Modes) OpenOption {
 	return func(c *openConfig) {
-		if perm &= os.ModePerm; perm != 0 {
-			c.folderPerm = perm
-		}
-	}
-}
-
-// WithFilePermissions sets the mode of the database file and its -wal and
-// -shm side files (default DefaultFilePermissions). Existing files whose mode
-// differs are changed to it. Only the permission bits are used; 0 keeps the
-// default.
-func WithFilePermissions(perm os.FileMode) OpenOption {
-	return func(c *openConfig) {
-		if perm &= os.ModePerm; perm != 0 {
-			c.filePerm = perm
-		}
+		r := m.Or(fsmode.Modes{Dir: c.folderPerm, File: c.filePerm})
+		c.folderPerm, c.filePerm = r.Dir, r.File
 	}
 }
 

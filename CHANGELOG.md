@@ -8,6 +8,9 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `fsmode` package: `Modes{Dir, File}`, the modes of the directories and
+  files a package creates, with the owner-only defaults `DefaultDir` (0700)
+  and `DefaultFile` (0600).
 - `accounting` package: one `Record` per LLM or API call launched through
   spawnllm, written as a JSON line to `<dir>/accounting.log` (`Start`,
   `Report`, `Close`), or to the logger set with `SetLogger` when no file is
@@ -62,6 +65,15 @@ project uses [Semantic Versioning](https://semver.org/).
 - `anthropic_messages.NewProvider` and `NewProviderWithTimeout`, and
   `azure.NewProviderWithTimeout`, take options.
 
+- Breaking: one option for file and directory modes, taking the new
+  `fsmode.Modes{Dir, File}`: `WithFileModes` on `ctxengine`, `memory.Open`,
+  `session.NewSQLiteStore`, cogmem's `store.Open` and `consolidate.NewWorker`,
+  `openai_compat` and `openai_responses`. A zero field keeps the default and
+  only permission bits are used, in every package.
+
 ### Removed
 
 - Breaking: the `logger` package and its process-wide `SetBackend`.
+- Breaking: `WithFolderPermissions` and `WithFilePermissions` (ctxengine,
+  memory, session, cogmem store and consolidate) and the two-argument
+  `WithFileModes(dir, file)` (openai_compat, openai_responses).

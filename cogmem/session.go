@@ -64,8 +64,8 @@ type SessionOptions struct {
 	// observe or recall. Hosts use it for one-time work such as backfilling
 	// the inbox from an older record of the conversation.
 	OnOpen func(ctx context.Context, st *store.Store)
-	// StoreOptions are passed to store.Open, e.g. store.WithFilePermissions
-	// and store.WithFolderPermissions. Nil uses the store defaults.
+	// StoreOptions are passed to store.Open, e.g. store.WithFileModes. Nil
+	// uses the store defaults.
 	StoreOptions []store.Option
 	// Logger receives the session's records, tagged with the attribute
 	// component "cogmem". Nil means silent.

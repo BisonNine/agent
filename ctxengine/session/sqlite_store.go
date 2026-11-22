@@ -16,6 +16,7 @@ import (
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/fsmode"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -62,27 +63,17 @@ func componentLog(l *slog.Logger, component string) *slog.Logger {
 	return l.With("component", component)
 }
 
-// WithFolderPermissions sets the mode of the sessions directory when
-// NewSQLiteStore creates it (default memory.DefaultFolderPermissions). An
-// existing directory is left as it is. Only the permission bits are used; 0
-// keeps the default.
-func WithFolderPermissions(perm os.FileMode) StoreOption {
+// WithFileModes sets the modes of what the store creates. Dir is the mode of
+// the sessions directory when NewSQLiteStore creates it (default
+// memory.DefaultFolderPermissions); an existing directory is left as it is.
+// File is the mode of the archive databases and their -wal and -shm files
+// (default memory.DefaultFilePermissions); existing files whose mode differs
+// are changed to it when opened. A zero field keeps the default (see
+// fsmode.Modes).
+func WithFileModes(m fsmode.Modes) StoreOption {
 	return func(s *SQLiteStore) {
-		if perm &= os.ModePerm; perm != 0 {
-			s.folderPerm = perm
-		}
-	}
-}
-
-// WithFilePermissions sets the mode of the archive databases and their -wal
-// and -shm files (default memory.DefaultFilePermissions). Existing files whose
-// mode differs are changed to it when opened. Only the permission bits are
-// used; 0 keeps the default.
-func WithFilePermissions(perm os.FileMode) StoreOption {
-	return func(s *SQLiteStore) {
-		if perm &= os.ModePerm; perm != 0 {
-			s.filePerm = perm
-		}
+		r := m.Or(fsmode.Modes{Dir: s.folderPerm, File: s.filePerm})
+		s.folderPerm, s.filePerm = r.Dir, r.File
 	}
 }
 
@@ -120,8 +111,7 @@ func NewSQLiteStore(dir string, opts ...StoreOption) (*SQLiteStore, error) {
 // openOptions passes the store's modes to memory.Open.
 func (s *SQLiteStore) openOptions() []memory.OpenOption {
 	return []memory.OpenOption{
-		memory.WithFolderPermissions(s.folderPerm),
-		memory.WithFilePermissions(s.filePerm),
+		memory.WithFileModes(fsmode.Modes{Dir: s.folderPerm, File: s.filePerm}),
 		memory.WithLogger(s.logger),
 	}
 }

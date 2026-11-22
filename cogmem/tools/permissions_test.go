@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/fsmode"
 )
 
 // The handlers open the store with Host.StoreOptions, and the export tool
@@ -27,7 +28,7 @@ func TestPermissions(t *testing.T) {
 		wantFile   os.FileMode
 	}{
 		{"defaults", nil, store.DefaultFolderPermissions, store.DefaultFilePermissions},
-		{"custom", []store.Option{store.WithFolderPermissions(0o750), store.WithFilePermissions(0o640)}, 0o750, 0o640},
+		{"custom", []store.Option{store.WithFileModes(fsmode.Modes{Dir: 0o750, File: 0o640})}, 0o750, 0o640},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -61,16 +61,16 @@ sessions. Truncation deletes window rows; nothing is logically skipped.
 Directories ctxengine creates are `0700` and its files (databases with their
 `-wal`/`-shm` files, `compact.jsonl`) are `0600`; existing files with another
 mode are changed to it, existing directories are left alone. To change the
-modes:
+modes, pass an `fsmode.Modes{Dir, File}` (a zero field keeps the default):
 
-- `ctxengine.WithFolderPermissions(perm)` / `ctxengine.WithFilePermissions(perm)` — Manager options.
-- `session.NewSQLiteStore(dir, session.WithFolderPermissions(perm), session.WithFilePermissions(perm))` — the store.
-- `memory.Open(path, memory.WithFolderPermissions(perm), memory.WithFilePermissions(perm))` — a single archive.
+- `ctxengine.WithFileModes(modes)` — Manager option.
+- `session.NewSQLiteStore(dir, session.WithFileModes(modes))` — the store.
+- `memory.Open(path, memory.WithFileModes(modes))` — a single archive.
 
 ### Migrating from the JSONL layout
 
 Earlier host versions kept the window in `<key>.jsonl` and the state in
-`<key>.meta.json` beside the archive. `session.MigrateJSONL(dir)` folds every
+`<key>.meta.json` beside the archive. `session.MigrateJSONL(dir, logger)` folds every
 such pair into its `<key>.archive.db` and renames the sources to
 `*.jsonl.migrated` / `*.meta.json.migrated`, which can be deleted once the
 result is verified. Run it once with the service stopped; it is idempotent (a

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+
+	"go.bison9.com/agent/fsmode"
 )
 
 // skipWithoutUnixModes skips on Windows, where a file mode carries only the
@@ -46,8 +48,8 @@ func TestOpenCreatesWithModes(t *testing.T) {
 		wantFile   os.FileMode
 	}{
 		{"defaults", nil, DefaultFolderPermissions, DefaultFilePermissions},
-		{"custom", []Option{WithFolderPermissions(0o750), WithFilePermissions(0o640)}, 0o750, 0o640},
-		{"zero ignored", []Option{WithFolderPermissions(0), WithFilePermissions(0)}, DefaultFolderPermissions, DefaultFilePermissions},
+		{"custom", []Option{WithFileModes(fsmode.Modes{Dir: 0o750, File: 0o640})}, 0o750, 0o640},
+		{"zero ignored", []Option{WithFileModes(fsmode.Modes{Dir: 0, File: 0})}, DefaultFolderPermissions, DefaultFilePermissions},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -100,7 +102,7 @@ func TestOpenRepairsPermissions(t *testing.T) {
 		want os.FileMode
 	}{
 		{"defaults", nil, DefaultFilePermissions},
-		{"custom", []Option{WithFilePermissions(0o640)}, 0o640},
+		{"custom", []Option{WithFileModes(fsmode.Modes{File: 0o640})}, 0o640},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,7 +153,7 @@ func TestPreMigrationSnapshotMode(t *testing.T) {
 		want os.FileMode
 	}{
 		{"defaults", nil, DefaultFilePermissions},
-		{"custom", []Option{WithFilePermissions(0o640)}, 0o640},
+		{"custom", []Option{WithFileModes(fsmode.Modes{File: 0o640})}, 0o640},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -209,7 +211,7 @@ func TestSnapshotMode(t *testing.T) {
 		want os.FileMode
 	}{
 		{"defaults", nil, DefaultFilePermissions},
-		{"custom", []Option{WithFilePermissions(0o640)}, 0o640},
+		{"custom", []Option{WithFileModes(fsmode.Modes{File: 0o640})}, 0o640},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -244,7 +246,7 @@ func TestSnapshotMode(t *testing.T) {
 func TestMigrateOptions(t *testing.T) {
 	skipWithoutUnixModes(t)
 	path := legacyV5(t, DBFileName)
-	if r := Migrate(filepath.Dir(path), WithFilePermissions(0o640)); r.Err != nil {
+	if r := Migrate(filepath.Dir(path), WithFileModes(fsmode.Modes{File: 0o640})); r.Err != nil {
 		t.Fatalf("migrate: %v", r.Err)
 	}
 	assertMode(t, path, 0o640)

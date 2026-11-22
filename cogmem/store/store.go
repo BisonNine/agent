@@ -17,6 +17,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"go.bison9.com/agent/fsmode"
 )
 
 // DBTX is the subset of *sql.DB / *sql.Tx used by store methods, so the same
@@ -67,25 +69,16 @@ func WithBusyTimeout(d time.Duration) Option {
 	}
 }
 
-// WithFolderPermissions sets the mode for directories cogmem creates (default
-// DefaultFolderPermissions). An existing directory keeps its mode. Zero is
-// ignored.
-func WithFolderPermissions(m os.FileMode) Option {
+// WithFileModes sets the modes of what cogmem creates. Dir is the mode of the
+// directories it creates (default DefaultFolderPermissions); an existing
+// directory keeps its mode. File is the mode of the database, its -wal and
+// -shm files and its snapshots (default DefaultFilePermissions); Open repairs
+// any of these that has another mode. A zero field keeps the default (see
+// fsmode.Modes).
+func WithFileModes(m fsmode.Modes) Option {
 	return func(c *openConfig) {
-		if m != 0 {
-			c.folderMode = m
-		}
-	}
-}
-
-// WithFilePermissions sets the mode for the database, its -wal and -shm files
-// and its snapshots (default DefaultFilePermissions). Open repairs any of these
-// that has another mode. Zero is ignored.
-func WithFilePermissions(m os.FileMode) Option {
-	return func(c *openConfig) {
-		if m != 0 {
-			c.fileMode = m
-		}
+		r := m.Or(fsmode.Modes{Dir: c.folderMode, File: c.fileMode})
+		c.folderMode, c.fileMode = r.Dir, r.File
 	}
 }
 
@@ -498,7 +491,7 @@ func (s *Store) Vacuum(ctx context.Context) error {
 // dstPath using SQLite "VACUUM INTO" (captures committed WAL data, no partial
 // pages). dstPath must not already exist. Used to give a spawned sub-agent its
 // own private copy of the primary's memory, deleted when the sub-agent finishes.
-// dstPath gets the file mode from opts (WithFilePermissions); other options
+// dstPath gets the file mode from opts (WithFileModes); other options
 // have no effect here.
 func Snapshot(ctx context.Context, srcPath, dstPath string, opts ...Option) error {
 	cfg := newOpenConfig(opts)

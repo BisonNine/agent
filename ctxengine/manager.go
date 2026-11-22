@@ -18,6 +18,7 @@ import (
 
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/fsmode"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -732,8 +733,7 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 	}
 	path := memory.ArchivePath(m.cfg.archiveDir, m.sessionKey)
 	store, err := memory.Open(path,
-		memory.WithFolderPermissions(m.cfg.folderPerm),
-		memory.WithFilePermissions(m.cfg.filePerm),
+		memory.WithFileModes(fsmode.Modes{Dir: m.cfg.folderPerm, File: m.cfg.filePerm}),
 		memory.WithLogger(m.cfg.logger))
 	if err != nil && !errors.Is(err, memory.ErrArchiveUnavailable) {
 		m.log.Warn("archive open failed",

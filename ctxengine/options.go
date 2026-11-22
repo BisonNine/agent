@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/fsmode"
 )
 
 // Default modes for the directories and files ctxengine creates: owner-only.
@@ -373,31 +374,22 @@ func WithContextWindow(tokens int) Option {
 // databases. The ContextManager derives the archive path as
 // filepath.Join(dir, sanitizedKey+".archive.db") on first write.
 // If dir is empty, archive writes are silently skipped. A missing dir is
-// created at the folder mode (see WithFolderPermissions).
+// created at the folder mode (see WithFileModes).
 func WithArchiveDir(dir string) Option {
 	return func(c *managerConfig) { c.archiveDir = dir }
 }
 
-// WithFolderPermissions sets the mode of the archive directory when ctxengine
-// creates it (default DefaultFolderPermissions). An existing directory is left
-// as it is. Only the permission bits are used; 0 keeps the default.
-func WithFolderPermissions(perm os.FileMode) Option {
+// WithFileModes sets the modes of what ctxengine creates. Dir is the mode of
+// the archive directory when ctxengine creates it (default
+// DefaultFolderPermissions); an existing directory is left as it is. File is
+// the mode of the archive database with its -wal and -shm files, and of
+// compact.jsonl (default DefaultFilePermissions); existing files whose mode
+// differs are changed to it. A zero field keeps the default (see
+// fsmode.Modes).
+func WithFileModes(m fsmode.Modes) Option {
 	return func(c *managerConfig) {
-		if perm &= os.ModePerm; perm != 0 {
-			c.folderPerm = perm
-		}
-	}
-}
-
-// WithFilePermissions sets the mode of the files ctxengine creates: the
-// archive database with its -wal and -shm files, and compact.jsonl (default
-// DefaultFilePermissions). Existing files whose mode differs are changed to
-// it. Only the permission bits are used; 0 keeps the default.
-func WithFilePermissions(perm os.FileMode) Option {
-	return func(c *managerConfig) {
-		if perm &= os.ModePerm; perm != 0 {
-			c.filePerm = perm
-		}
+		r := m.Or(fsmode.Modes{Dir: c.folderPerm, File: c.filePerm})
+		c.folderPerm, c.filePerm = r.Dir, r.File
 	}
 }
 
