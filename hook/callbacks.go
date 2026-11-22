@@ -82,10 +82,10 @@ type ToolCall struct {
 // turn is stored, on the turn's goroutine and context.
 //
 // It may change turn.Message. A non-nil result answers the turn instead of
-// the model: no model is called and nothing is stored (TurnResult.Skipped
-// is set; Stored is ignored). A non-nil error refuses the turn: it ends with
-// OutcomeError and that error, and nothing is stored. AfterTurn runs in
-// either case.
+// the model: no model is called (TurnResult.Skipped is set). A non-nil
+// error refuses the turn: it ends with OutcomeError and that error. Either
+// way nothing of the turn is stored, whatever Stored says after AfterTurn,
+// which runs in both cases.
 type BeforeTurnFunc func(ctx context.Context, turn *Turn) (*TurnResult, error)
 
 // AfterTurnFunc runs once at the end of every turn that ran BeforeTurn,
@@ -95,8 +95,9 @@ type BeforeTurnFunc func(ctx context.Context, turn *Turn) (*TurnResult, error)
 // reply after an interrupt.
 //
 // It may change result.Reply, result.Stored and result.Outcome (render an
-// error, replace an empty reply, decide that a reply is not stored). It must
-// not change the other fields.
+// error, replace an empty reply, decide that a reply is not stored). Stored
+// is ignored for a turn BeforeTurn answered or refused. It must not change
+// the other fields.
 type AfterTurnFunc func(ctx context.Context, turn *Turn, result *TurnResult)
 
 // BeforeModelFunc runs before each dispatch of a turn (once per iteration,
@@ -164,10 +165,13 @@ type AfterToolFunc func(ctx context.Context, call *ToolCall, result *toolkit.Res
 type OnToolErrorFunc func(ctx context.Context, call *ToolCall, result *toolkit.Result) *toolkit.Result
 
 // OnCompactionFunc observes the session's context being compacted or
-// evicted, on the turn's goroutine, at the moment it happens: for a
-// CompactionStarted that a turn waits on, before the summary model is
-// called. It runs while the session's context is held, so it must not call
-// back into the session. The Compaction event carries the same.
+// evicted, on the goroutine doing it, at the moment it happens: for a
+// CompactionStarted, before the summary model is called. A blocking pass
+// runs on the turn's goroutine and context; a background pass (after the
+// reply, or asked for by a tool) gets a context that is never cancelled,
+// with the session's scope and no turn id. It runs while the session's
+// context is held, so it must not call back into the session. The
+// Compaction event carries the same.
 type OnCompactionFunc func(ctx context.Context, ev Compaction)
 
 // OnTextDeltaFunc observes partial reply text as a provider streams it, on
@@ -175,22 +179,34 @@ type OnCompactionFunc func(ctx context.Context, ev Compaction)
 // It must return quickly. The TextDelta event carries the same.
 type OnTextDeltaFunc func(ctx context.Context, ev TextDelta)
 
-// OnInterruptFunc observes an interrupt of a session (Agent.Interrupt,
-// Run.Interrupt) or a cancel (Run.Cancel, Agent.Cancel), on the goroutine
-// that called it, after the running turn's context was cancelled and its
-// queue dropped. Its context is never cancelled.
+// OnInterruptFunc observes an interrupt (Agent.Interrupt, Run.Interrupt) or
+// a cancel (Run.Cancel, Agent.Cancel), on the goroutine that called it,
+// after the turn's context was cancelled and what it drops was dropped. Its
+// context is never cancelled.
 type OnInterruptFunc func(ctx context.Context, ev Interrupted)
 
-// OnEventFunc observes every event of every run of the agent, including runs
-// the host holds no handle for (background results, restart replays), on
-// the goroutine that emits it and synchronously, before Run.Events delivers
-// it. It must be safe for concurrent use and must not block.
+// OnEventFunc observes every event of the agent, including those of runs the
+// host holds no handle for (background results, restart replays) and those
+// of no live turn (a background compaction, a task that ends after its
+// turn), on the goroutine that emits it and synchronously, before Run.Events
+// delivers it. Its context is the turn's while one is live, otherwise one
+// that is never cancelled, carrying the event's scope. It must be safe for
+// concurrent use and must not block.
 type OnEventFunc func(ctx context.Context, ev Event)
 
-// Interrupted is what an interrupt or a cancel stopped.
+// Interrupted is what an interrupt or a cancel stopped. It is passed to
+// OnInterrupt only; it is not an event.
+//
+//   - Agent.Interrupt(session): the session's running turn and its queue;
+//     every task is left running.
+//   - Run.Interrupt: that run only (its turn, or its place in the queue);
+//     other queued runs and every task are left.
+//   - Run.Cancel: that run and the tasks its turn started (with their own
+//     tasks); other queued runs and tasks are left.
+//   - Agent.Cancel: every turn, queue and task of the agent.
 type Interrupted struct {
-	// Scope names the agent and the session; TurnID is the stopped turn's,
-	// empty when no turn was running.
+	// Scope names the agent and the session (empty for Agent.Cancel);
+	// TurnID is the stopped turn's, empty when no turn was running.
 	Scope Scope
 	// Cause is the cancel cause.
 	Cause error
@@ -198,10 +214,9 @@ type Interrupted struct {
 	Running bool
 	// Dropped counts the queued runs that were dropped.
 	Dropped int
-	// StillRunning lists the tasks of the session that were left running (an
-	// interrupt leaves every task; a cancel lists none).
+	// StillRunning lists the session's tasks that were left running.
 	StillRunning []TaskInfo
-	// Cancelled lists the tasks the cancel stopped.
+	// Cancelled lists the tasks that were cancelled.
 	Cancelled []TaskInfo
 }
 

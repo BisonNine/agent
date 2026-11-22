@@ -34,8 +34,8 @@ type RunOptions struct {
 	// ResetSession: the session's context is reset (its history archived,
 	// not deleted) before the message is stored.
 	ResetSession bool
-	// Budget replaces Limits.TurnBudget for this turn when positive.
-	Budget time.Duration
+	// TurnBudget replaces Limits.TurnBudget for this turn when positive.
+	TurnBudget time.Duration
 	// Depth is the sub-agent depth the turn runs at (Scope.Depth).
 	Depth int
 }
@@ -50,7 +50,7 @@ func AlreadyStored() RunOption { return func(o *RunOptions) { o.AlreadyStored = 
 func ResetSession() RunOption { return func(o *RunOptions) { o.ResetSession = true } }
 
 // TurnBudget gives the turn its own budget, replacing Limits.TurnBudget.
-func TurnBudget(d time.Duration) RunOption { return func(o *RunOptions) { o.Budget = d } }
+func TurnBudget(d time.Duration) RunOption { return func(o *RunOptions) { o.TurnBudget = d } }
 
 // AtDepth runs the turn at sub-agent depth n.
 func AtDepth(n int) RunOption { return func(o *RunOptions) { o.Depth = n } }

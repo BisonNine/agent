@@ -24,7 +24,7 @@ type EventHeader struct {
 func (h EventHeader) Header() EventHeader { return h }
 
 // TurnStarted is the first event of a run that started (left the queue),
-// emitted before BeforeTurn.
+// emitted before BeforeTurn: Message is as the run was given it.
 type TurnStarted struct {
 	EventHeader
 
@@ -43,10 +43,9 @@ type ModelCall struct {
 	Iteration int
 	Model     ModelRef
 	// Request is the dispatch's request as BeforeModel left it, before the
-	// engine shaped it for this model. Read only.
+	// engine shaped it for this model (a snapshot).
 	Request *ModelRequest
 	// Response is the answer (as AfterModel left it); nil on a failure.
-	// Read only.
 	Response *protocoltypes.LLMResponse
 	// Err is the call's error; nil on success.
 	Err      error
@@ -63,8 +62,9 @@ type TextDelta struct {
 	Text      string
 }
 
-// ToolCallStarted is a tool call the model made. The calls of one response
-// are emitted in the response's order, all before the first of them runs.
+// ToolCallStarted is a tool call the model made, with the model's
+// arguments. The calls of one response are emitted in the response's order,
+// all before the first BeforeTool runs.
 type ToolCallStarted struct {
 	EventHeader
 
@@ -77,7 +77,7 @@ type ToolCallFinished struct {
 	EventHeader
 
 	Call ToolCall
-	// Result is the result as stored. Read only.
+	// Result is the result as stored.
 	Result  *toolkit.Result
 	Elapsed time.Duration
 	// Answered reports a call BeforeTool answered or refused: the tool did
@@ -169,8 +169,9 @@ type TaskStarted struct {
 
 // TaskFinished is a task that ended: done, failed or cancelled. Result is
 // what its owner is to be told (nil for a cancelled task: whoever cancelled
-// it already knows). It is emitted on the agent's event stream (OnEvent);
-// on Run.Events only while the run that started the task is still open.
+// it already knows). It is emitted on the agent's event stream (OnEvent),
+// with the scope of the turn that started the task; on Run.Events only
+// while that turn is still running.
 type TaskFinished struct {
 	EventHeader
 

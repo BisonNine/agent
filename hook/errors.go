@@ -9,8 +9,11 @@ import (
 // The cancel causes: why a turn or a task was stopped. The engine cancels
 // with one of them (context.WithCancelCause), records it in TurnResult.Cause
 // and TaskInfo.Cause, and decides the outcome from it. A host may pass its
-// own cause to Run.Cancel or Agent.Cancel; it should wrap one of these
-// (fmt.Errorf("…: %w", ErrShutdown)) so the engine treats it the same way.
+// own cause to Run.Cancel or Agent.Cancel, wrapping one of these
+// (fmt.Errorf("…: %w", ErrShutdown)) to be treated the same way. A cause
+// that wraps ErrDeadline ends the turn with OutcomeError; any other cause,
+// including one that wraps none of these, with OutcomeCancelled, and only
+// ErrShutdown keeps the turn pending for a restart.
 var (
 	// ErrInterrupted: the person stopped the reply (Run.Interrupt,
 	// Agent.Interrupt). The turn ends cancelled and is not replayed; the

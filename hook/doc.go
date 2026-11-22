@@ -36,9 +36,10 @@
 //     values of the context the host passed to Run. It is the turn's context,
 //     cancelled when the turn is interrupted or cancelled, except where a
 //     type says otherwise (AfterTurn, OnInterrupt).
-//   - A panic in a callback is recovered: in a Before… or On…Error callback
-//     it is that callback's error, in an After… or observing callback it is
-//     logged and the turn goes on.
+//   - A panic in a callback is recovered and logged: in a Before… callback
+//     or OnModelError it is that callback's error; in OnToolError, an
+//     After… or an observing callback the turn goes on as if the callback
+//     had returned nothing.
 //
 // # Event rules
 //
@@ -55,15 +56,24 @@
 //     interrupt gets one too; an abandoned call's result is the synthetic
 //     result InterruptedResult, which is also what the session stores, so
 //     the transcript never holds a tool call without a result.
-//   - An event is emitted after the callbacks of its step have run, and
-//     carries what they decided (ModelCall carries the response as AfterModel
-//     left it, ToolCallFinished the result as AfterTool left it, TurnFinished
-//     the result as AfterTurn left it).
+//   - An event that reports a result is emitted after the callbacks of its
+//     step have run, and carries what they decided: ModelCall the response
+//     as AfterModel left it, ToolCallFinished the result as AfterTool left
+//     it, TurnFinished the result as AfterTurn left it. TurnStarted and
+//     ToolCallStarted come before their callbacks (BeforeTurn, BeforeTool)
+//     and carry the input as it was received.
+//   - An event is a snapshot: the engine copies what it points to (the
+//     request, the arguments, the result) and never changes it after the
+//     event is emitted, so a consumer on another goroutine may read it at
+//     any time. A consumer must not change it either.
 //   - Within a run, events are delivered in the order they were emitted. The
-//     engine never blocks on a consumer: events not yet read are kept until
-//     the run is released, and a consumer that stops reading early stops
-//     nothing.
+//     engine never blocks on a consumer: events not yet read are held by the
+//     run's handle, and a consumer that stops reading early stops nothing.
+//     Ranging Events again yields only the events not yet yielded; once the
+//     turn has finished, unread events go with the handle when the host
+//     drops it.
 //   - On an interrupt or cancel, the model call in flight ends with a
 //     ModelCall whose Err is the context's error, the tools in flight end as
-//     above, and TurnFinished carries OutcomeCancelled and the cause.
+//     above, and TurnFinished carries the outcome the cause decides (see
+//     the cancel causes) and the cause.
 package hook

@@ -12,9 +12,8 @@ const (
 	OutcomeOK Outcome = "ok"
 	// OutcomeError: the turn failed, or used up its budget (ErrDeadline).
 	OutcomeError Outcome = "error"
-	// OutcomeCancelled: the turn was interrupted or cancelled (ErrInterrupted,
-	// ErrShutdown, ErrSuperseded or a cause wrapping one), or dropped from
-	// the session's queue before it started.
+	// OutcomeCancelled: the turn was interrupted or cancelled with any cause
+	// but ErrDeadline, or dropped from the session's queue before it started.
 	OutcomeCancelled Outcome = "cancelled"
 	// OutcomeEmpty: the agent produced no reply.
 	OutcomeEmpty Outcome = "empty"
@@ -35,8 +34,8 @@ type TurnResult struct {
 	// Stored is the assistant message the engine stores in the session once
 	// AfterTurn has run: the model's final content followed by the notes
 	// AfterModel added to the last response (ModelResponse.Notes). Nothing
-	// is stored when it is empty. A failed, cancelled or skipped turn starts
-	// with it empty.
+	// is stored when it is empty. A failed or cancelled turn starts with it
+	// empty; for a turn BeforeTurn answered or refused it is never stored.
 	Stored string
 	// Err is the error that ended the turn, nil when it answered.
 	Err error
@@ -66,11 +65,12 @@ type TurnResult struct {
 type Run interface {
 	// Events is the turn's event stream, ending with TurnFinished. The
 	// second value is nil for every event except TurnFinished, where it is
-	// TurnResult.Err. It may be ranged once; breaking out of the range stops
-	// nothing.
+	// TurnResult.Err, so `for ev, err := range run.Events()` ends on the
+	// turn's error. Breaking out of the range stops nothing; a later range
+	// continues with the events not yet yielded.
 	Events() iter.Seq2[Event, error]
-	// Interrupt stops the turn with ErrInterrupted (or drops it from the
-	// queue). The tasks it started keep running.
+	// Interrupt stops this run's turn with ErrInterrupted, or drops this run
+	// from the queue. Other queued runs and the tasks it started are left.
 	Interrupt()
 	// Cancel stops the turn and every task it started, with cause (nil
 	// means ErrInterrupted).

@@ -100,6 +100,8 @@ func TestRepairIDKeepsCase(t *testing.T) {
 		"  Bob  ":     "Bob",
 		"!!!":         "",
 		"alice":       "alice",
+		"alice-":      "alice", // valid, but the suggestion trims it
+		"Bob_":        "Bob",
 	} {
 		if got := ident.RepairID(in); got != want {
 			t.Errorf("RepairID(%q) = %q, want %q", in, got, want)

@@ -143,15 +143,24 @@ func TestLimitsWithDefaults(t *testing.T) {
 	if got := set.WithDefaults(); got != set {
 		t.Fatalf("set limits changed: %+v", got)
 	}
-	if got := (hook.Limits{Retries: -1}).WithDefaults().Retries; got != 0 {
-		t.Fatalf("negative Retries = %d, want 0", got)
+	if got := (hook.Limits{Retries: -1}).WithDefaults().Retries; got != -1 {
+		t.Fatalf("negative Retries = %d, want -1 (none)", got)
+	}
+	if got := (hook.Limits{ToolTimeout: -time.Second}).WithDefaults().ToolTimeout; got != hook.DefaultToolTimeout {
+		t.Fatalf("negative ToolTimeout = %v, want the default", got)
+	}
+	for _, l := range []hook.Limits{{}, {Retries: -1}, set, {CancelGrace: -1}} {
+		once := l.WithDefaults()
+		if twice := once.WithDefaults(); twice != once {
+			t.Errorf("WithDefaults not idempotent for %+v: %+v then %+v", l, once, twice)
+		}
 	}
 }
 
 func TestRunOptions(t *testing.T) {
 	got := hook.ApplyRunOptions(hook.AlreadyStored(), nil, hook.ResetSession(),
 		hook.TurnBudget(time.Hour), hook.AtDepth(2))
-	want := hook.RunOptions{AlreadyStored: true, ResetSession: true, Budget: time.Hour, Depth: 2}
+	want := hook.RunOptions{AlreadyStored: true, ResetSession: true, TurnBudget: time.Hour, Depth: 2}
 	if got != want {
 		t.Fatalf("ApplyRunOptions = %+v, want %+v", got, want)
 	}
@@ -218,5 +227,5 @@ func (fakeMemory) Open(context.Context, hook.Scope) (hook.MemorySession, error) 
 }
 func (fakeMemory) Recall(context.Context, string) []hook.Recalled { return nil }
 func (fakeMemory) Observe(context.Context, int64, string, string) {}
-func (fakeMemory) ToolsUsed(...string)                            {}
+func (fakeMemory) ToolsUsed(context.Context, ...string)           {}
 func (fakeMemory) Close() error                                   { return nil }

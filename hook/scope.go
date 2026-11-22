@@ -22,8 +22,8 @@ type Scope struct {
 	// Session is the session the turn belongs to.
 	Session string
 	// TurnID names one turn, so every log line and record of it can be
-	// pulled together. Empty outside a turn (a background task's own calls
-	// carry the turn id of the turn that started the task).
+	// pulled together. Empty when no turn is involved; a background task's
+	// calls carry the id of the turn that started the task.
 	TurnID string
 	// Depth is the sub-agent depth: 0 for an agent talked to directly, one
 	// more for each agent that started another.

@@ -22,7 +22,7 @@ type MemorySession interface {
 	Observe(ctx context.Context, seq int64, role, content string)
 	// ToolsUsed records the tools a model response called, before they run,
 	// so memory tied to them can be recalled in the turn's next dispatch.
-	ToolsUsed(names ...string)
+	ToolsUsed(ctx context.Context, names ...string)
 	// Close releases the session's memory.
 	Close() error
 }
@@ -46,8 +46,3 @@ type Recalled struct {
 	Placement Placement
 	Text      string
 }
-
-// Redactor returns s with secrets (keys, tokens) replaced. The engine applies
-// the agent's redactor to the error text and the content it logs; the errors
-// it returns (TurnResult.Err) are left as they are, for the host to render.
-type Redactor func(s string) string

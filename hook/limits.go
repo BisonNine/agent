@@ -29,7 +29,8 @@ type Limits struct {
 	// return before abandoning them (InterruptedResult).
 	CancelGrace time.Duration
 	// Retries is how many times one dispatch is retried after a timeout or
-	// a context overflow. A negative value means none.
+	// a context overflow. A negative value means none (the loop reads
+	// max(Retries, 0) after WithDefaults).
 	Retries int
 	// RetryBackoff is the step of the wait before retrying a timed-out
 	// dispatch: the n-th retry waits n steps, spread by 20% either way.
@@ -37,7 +38,8 @@ type Limits struct {
 }
 
 // WithDefaults returns l with each zero (or negative) field set to its
-// default, and a negative Retries set to 0.
+// default, except Retries: only a zero Retries takes the default, and a
+// negative one is kept (none). Applying it twice gives the same limits.
 func (l Limits) WithDefaults() Limits {
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = DefaultMaxIterations
@@ -51,10 +53,7 @@ func (l Limits) WithDefaults() Limits {
 	if l.CancelGrace <= 0 {
 		l.CancelGrace = DefaultCancelGrace
 	}
-	switch {
-	case l.Retries < 0:
-		l.Retries = 0
-	case l.Retries == 0:
+	if l.Retries == 0 {
 		l.Retries = DefaultRetries
 	}
 	if l.RetryBackoff <= 0 {

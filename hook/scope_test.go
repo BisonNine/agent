@@ -76,10 +76,12 @@ func TestScopeLogValue(t *testing.T) {
 	}))
 	log.Info("turn", "scope", alice)
 	log.Info("turn", "scope", hook.Scope{AgentID: "bob"})
+	log.Info("empty", "scope", hook.Scope{})
 	got := buf.String()
 	for _, want := range []string{
 		"scope.agent=alice scope.agent_name=Alice scope.session=s-42 scope.turn=0a1b2c3d scope.depth=1 scope.project=support",
 		"msg=turn scope.agent=bob\n",
+		"msg=empty\n", // a zero scope logs nothing
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("log %q lacks %q", got, want)

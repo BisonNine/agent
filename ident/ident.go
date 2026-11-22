@@ -63,7 +63,9 @@ func SameID(a, b string) bool {
 // characters outside letters, digits, '-' and '_' becomes one '-', leading
 // and trailing '-' and '_' are removed, and the result is cut to MaxIDLength
 // characters without a trailing '-' or '_'. It is "" when nothing is left.
-// A host uses it to suggest a fix when it refuses an id.
+// It is meant for an id that was refused (ValidID false), to suggest a fix:
+// it also trims a trailing '-' or '_' from a valid id ("alice-" gives
+// "alice"), as the host's rule it was taken from does.
 func RepairID(id string) string {
 	result := strings.Trim(invalidRuns.ReplaceAllString(id, "-"), "-_")
 	if len(result) > MaxIDLength {
