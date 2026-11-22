@@ -61,6 +61,10 @@ func WithContext(opts ...ctxengine.Option) Option {
 	return func(s *loop.Spec) { s.Context = append(s.Context, opts...) }
 }
 
+// WithServedTools gives a CLI model the agent's tools for each of its turns
+// (for instance mcphost.Served).
+func WithServedTools(st ServedTools) Option { return func(s *loop.Spec) { s.Served = st } }
+
 // WithLimits sets the loop's limits.
 func WithLimits(l Limits) Option { return func(s *loop.Spec) { s.Limits = l } }
 

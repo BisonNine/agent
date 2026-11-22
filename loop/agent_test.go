@@ -358,3 +358,59 @@ func TestAgent_Close(t *testing.T) {
 		t.Fatalf("run after close = %+v", res)
 	}
 }
+
+// servedFake records the credentials it issues and revokes.
+type servedFake struct {
+	mu      sync.Mutex
+	scopes  []hook.Scope
+	revoked int
+}
+
+func (s *servedFake) ServeTurn(_ context.Context, scope hook.Scope) (string, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.scopes = append(s.scopes, scope)
+	return "Use token T1.", func() {
+		s.mu.Lock()
+		s.revoked++
+		s.mu.Unlock()
+	}, nil
+}
+
+// A CLI model's turn gets its served tools' prompt and credential, revoked
+// when the turn ends; a model that is not a CLI gets none.
+func TestAgent_ServedToolsForCLIModels(t *testing.T) {
+	for _, cli := range []bool{true, false} {
+		p := modelstest.New().Script("w1", modelstest.Reply("ok"))
+		cat := models.New()
+		prov := modelspec.Provider{Name: "api", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"}
+		if cli {
+			prov = modelspec.Provider{Name: "api", Protocol: "claude-cli"}
+		}
+		if err := cat.AddProvider(prov); err != nil {
+			t.Fatal(err)
+		}
+		if err := cat.Add(modelspec.Model{ModelName: "m1", Model: "w1", Provider: "api"}, models.For(models.Chat, 1)); err != nil {
+			t.Fatal(err)
+		}
+		if err := cat.RegisterClient("m1", p); err != nil {
+			t.Fatal(err)
+		}
+		served := &servedFake{}
+		a, err := New(Spec{ID: "alice", Models: cat.Default(), Served: served})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.Run(context.Background(), "s1", hook.UserText("hello")).Wait()
+		if err := a.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		served.mu.Lock()
+		issued, revoked := len(served.scopes), served.revoked
+		served.mu.Unlock()
+		system := p.Calls()[0].Messages[0].Content
+		if cli != (issued == 1 && revoked == 1 && strings.Contains(system, "Use token T1.")) || (!cli && issued != 0) {
+			t.Fatalf("cli %v: issued %d, revoked %d, system %q", cli, issued, revoked, system)
+		}
+	}
+}

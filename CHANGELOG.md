@@ -13,6 +13,7 @@ project uses [Semantic Versioning](https://semver.org/).
   capability interfaces `TaskController`, `ToolHolder` and `ModelHolder`,
   `New(id, opts...)`, the `With…` options (models from a catalogue or a
   set, tools, allow checker, sessions, memory, context options, limits,
+  served tools for CLI models,
   project, clock, logger, log content, redactor, plugins and one option per
   callback, each usable more than once, run in the order given) and aliases
   of the `hook` types, so a host imports one package. It holds no loop and

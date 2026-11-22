@@ -68,7 +68,7 @@ tool activity; and delivery of a tool's output to people.
 
 ## For the agent loop
 
-`Served{Store, CLI}` is the agent's `hook.ServedTools` (`agent.Spec.Served`):
+`Served{Store, CLI}` is the agent's `hook.ServedTools` (`agent.WithServedTools`):
 for each turn of a CLI model it issues a token for the turn's scope, returns
 `CLI.Access(token).Prompt` for the system prompt, and revokes the token when
 the turn ends or is stopped. For a `Bearer` endpoint the prompt is empty and
