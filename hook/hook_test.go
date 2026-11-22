@@ -303,3 +303,30 @@ func (fakeMemory) Recall(context.Context, string) []hook.Recalled { return nil }
 func (fakeMemory) Observe(context.Context, int64, string, string) {}
 func (fakeMemory) ToolsUsed(context.Context, ...string)           {}
 func (fakeMemory) Close() error                                   { return nil }
+
+// Truncate cuts at the limit in runes, the last three of them "...".
+func TestTruncate(t *testing.T) {
+	var _ hook.Truncator = hook.Truncate
+	tests := []struct {
+		name  string
+		s     string
+		limit int
+		want  string
+	}{
+		{"short", "hello", 10, "hello"},
+		{"exact", "hello", 5, "hello"},
+		{"cut", "hello world", 8, "hello..."},
+		{"runes", "héllo wörld", 8, "héllo..."},
+		{"tiny limit", "hello", 3, "hel"},
+		{"zero limit", "hello", 0, ""},
+		{"negative limit", "hello", -1, ""},
+		{"empty", "", 5, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hook.Truncate(tt.s, tt.limit); got != tt.want {
+				t.Fatalf("Truncate(%q, %d) = %q, want %q", tt.s, tt.limit, got, tt.want)
+			}
+		})
+	}
+}

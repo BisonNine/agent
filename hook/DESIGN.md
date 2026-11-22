@@ -84,17 +84,21 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
   needs no host classifier of causes.
 - 1.3.13 **The engine logs generic fields only**, through its
   `*slog.Logger` (scope, iteration, model, counts, redacted errors; the
-  full request as JSON when content may be logged). A field only the host
-  knows (its reasoning channel, its chat) is the host's, on its own line
-  from an event consumer.
+  full request, its content shortened by the agent's `hook.Truncator`, when
+  content may be logged). A line that carries a field only the host knows
+  (its reasoning channel, its chat) is the host's whole line, logged where
+  the engine's was: the "LLM response" line from an `AfterModel` callback
+  registered first, which changes nothing (7.9). Decorating the turn's
+  logger instead would put the host's fields on every engine line.
 - 1.3.14 **The engine only ever sees a `models.Chain`.** An agent none of
   whose models resolves is served through `models.Catalog.Direct(name,
-  model)`: a one-candidate chain on the default model's client with the
-  agent's model id (also the candidate's name), no health, no fallback,
-  the catalogue's limit defaults. The host builds it when it chooses the
-  turn's model, and its catalogue's limit defaults must be the agent
-  defaults its configuration gives an unknown model (`WithLimitDefaults`),
-  so the turn keeps the limits it has today.
+  model, opts...)`: a one-candidate chain on the default model's client
+  with the agent's model id (also the candidate's name), no health, no
+  fallback. The host builds it when it chooses the turn's model, with the
+  options that make the candidate report what such a turn always ran with:
+  no provider (`WithDirectProvider("")`), the agent's own limits
+  (`WithDirectLimits`) and the agent's model's reasoning-content setting
+  (`WithDirectRequireReasoningContent`) (7.10).
 - 1.3.15 **`AfterTurn` decides; the engine stores; the host replies on
   `TurnFinished`**, so the reply is stored before it is sent.
 - 1.3.16 **Tool calls cannot change their context.** Per-turn host values
@@ -183,7 +187,7 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 | 3.3.3 | A human agent's turn answered by the person | `human.go:runHumanTurn` | CALLBACK | `BeforeTurn` |
 | 3.3.4 | Single-shot: blank start, discard after | `runAgentLoop`, `eviction.go:discardConversation` | neither | 6.2 |
 | 3.3.5 | Session context per agent and session | `context_manager.go:getSessionContext` | ENGINE | 2.4 |
-| 3.3.6 | The turn's model chosen once; window set; an unresolvable agent on the default client | `llm_dispatch.go:selectTurnModel`, `defaultModelClient` | ENGINE + HOST | the host begins the chain, or `Catalog.Direct` (1.3.14) |
+| 3.3.6 | The turn's model chosen once; window set; an unresolvable agent on the default client | `llm_dispatch.go:selectTurnModel`, `defaultModelClient` | ENGINE + HOST | the host begins the chain, or `Catalog.Direct` with its options (1.3.14) |
 | 3.3.7 | Age compaction after the reply | `deferred_compaction.go:compactAfterReply` | ENGINE | 2.11 |
 | 3.3.8 | Session token scoped to the turn for CLI MCP calls | `scopeSessionToken` | CALLBACK | `BeforeTurn` / `AfterTurn` |
 | 3.3.9 | A blocking compaction tells the person | `compaction_notice.go:compactionStarted` | CALLBACK | `OnCompaction` (`Started`) |
@@ -206,7 +210,7 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 | 3.4.1 | Progress heartbeat with a tool count | `turn_hooks.go` (plugin `progress`), `loop_tools.go:startProgressUpdates` | CONSUMER | `TurnStarted`, `ToolBatchFinished`, `TurnFinished` |
 | 3.4.2 | One eviction notice per turn | plugin `evictions`, `publishEvictionNotice` | CONSUMER | `Compaction{Evicted}`, `TurnFinished` |
 | 3.4.3 | Streaming, flushed before the reply | plugin `stream`, `stream_coalescer.go` | CALLBACK + CONSUMER | `OnTextDelta`; flush on `TurnFinished` |
-| 3.4.4 | Dispatch and request logs | `logDispatchTarget`, `logRequest`, `logResponse` | ENGINE | generic fields (1.3.13) |
+| 3.4.4 | Dispatch and request logs | `logDispatchTarget`, `logRequest`; `logResponse` | ENGINE; CALLBACK | generic fields, `hook.Truncator` (1.3.13); "LLM response" from `AfterModel` (7.9) |
 | 3.4.5 | Iteration cap | `run` | ENGINE | `Limits.MaxIterations` |
 | 3.4.6 | Tool definitions; none for `no_tools` | `toolDefinitions` | ENGINE | toolkit, `discovery`, `Candidate.Limits.NoTools` |
 | 3.4.7 | Assemble per iteration; evictions | `assemble` | ENGINE | `Compaction{Evicted}` |
@@ -237,7 +241,7 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 | 3.5.9 | Fallback, cooldown skips, passed models logged | `callModel`, `logPassed` | ENGINE | `models` chain; `Fallback` |
 | 3.5.10 | "Model X failed, trying Y" | plugin `fallback-notice` | CALLBACK | `OnFallback` |
 | 3.5.11 | Model calls in flight counted | interim `trackModelCall` | CONSUMER | `ModelCallStarted` / `ModelCall`; after 5c `Agent.Close` |
-| 3.5.12 | Unresolvable agent on the default client | `callDefaultModel`; interim `directClient`, `directProtocol` | ENGINE | `Catalog.Direct` (1.3.14) |
+| 3.5.12 | Unresolvable agent on the default client | `callDefaultModel`; interim `directClients`, `directModel` | ENGINE | `Catalog.Direct` with its options (1.3.14) |
 | 3.5.13 | Per model: `max_tokens`, thinking, `tool_choice: none` | `requestOptions` | ENGINE | `Candidate.Limits`; interim `modelFacts` goes |
 | 3.5.14 | Images hidden from a non-vision model | `messagesForModel` | ENGINE | `Candidate.Limits.Vision` |
 | 3.5.15 | Reasoning backfill | `backfillReasoningContent` | ENGINE | `Candidate.ProviderSpec.RequireReasoningContent` |
@@ -355,12 +359,75 @@ not listed.
   `ErrShutdown`, `ErrSuperseded`. Outcomes from `hook.CauseOutcome`.
 - 7.8 **Interim `trackModelCall`** → a consumer counting
   `ModelCallStarted` against `ModelCall`.
-- 7.9 **Interim `responseLogFields`, `formatRequest`** → the engine logs
-  generic fields and formats the request as JSON itself; the host's
-  `target_channel` and `channel` go on its own line, if wanted.
-- 7.10 **Interim `modelFacts`** → `Candidate.Limits` and
-  `Candidate.ProviderSpec`; `directClient`/`directProtocol` →
-  `Catalog.Direct`, built in `selectTurnModel`.
+- 7.9 **Resolved: interim `formatRequest` and `responseLogFields`.**
+  - 7.9.1 *`formatRequest`.* Formatting the request for the "Full LLM
+    request" line is generic: it is the engine's, and moves with it to
+    `loop` (`loop/log.go`). The host's text format is kept; only the
+    truncation is the host's, injected as a `hook.Truncator` (the shape of
+    `toolkit.WithTruncate`'s function; nil means `hook.Truncate`, the host's
+    rule without its switch). It cannot be an event consumer: no event
+    carries the request at the line's place (`ModelCallStarted` has no
+    request; `ModelCall` has it but comes per provider call, after the
+    call, and not at all for a supplied answer), so the line would move or
+    multiply. Host checklist:
+    - 7.9.1a move `formatMessagesForLog` and `formatToolsForLog` into an
+      engine file, taking a `hook.Truncator` in place of `utils.Truncate`
+      (same format, same limit of 200);
+    - 7.9.1b add `truncate hook.Truncator` to `engineSpec`, nil read as
+      `hook.Truncate`; `logRequest` calls the moved formatters with it;
+    - 7.9.1c pass `utils.Truncate` (which honours the no-truncate switch)
+      from `newEngineTurn`'s caller;
+    - 7.9.1d delete `turnHost.formatRequest` and `llmTurnEnv.formatRequest`.
+  - 7.9.2 *`responseLogFields`.* The "LLM response" line becomes the
+    host's, whole: an `AfterModel` callback registered before every other
+    one logs it, unchanged, from `ModelInfo.Iteration` and
+    `ModelResponse.Response` (the engine's copy of the answer, before any
+    callback changed it). That is where the engine logged it: after the
+    dispatch's answer, `ModelCall` consumers, a fallback's success line and
+    the token calibration, before `AfterModel` and for a supplied answer
+    too, so the line, its fields and its neighbours are as today. No SDK
+    surface. A `ModelCall` consumer would move it before the fallback and
+    calibration lines; decorating the turn's logger would add the two
+    fields to every engine line. Host checklist:
+    - 7.9.2a register `hook.Plugin{Name: "response-log", AfterModel: …}`
+      first among the `AfterModel` plugins (before `images`), logging
+      "LLM response" under component `agent` at debug with `agent_id`,
+      `iteration`, `content_chars`, `tool_calls`, `reasoning_chars`,
+      `target_channel`, `channel`, and `reasoning` when content may be
+      logged; it changes nothing;
+    - 7.9.2b delete the engine's `logResponse` and its call in `iterate`,
+      `turnHost.responseLogFields` and `llmTurnEnv.responseLogFields`.
+- 7.10 **Resolved: interim `modelFacts`, `directClients`, `spec.direct`,
+  `directModel`.** `modelFacts` → `Candidate.Limits` and
+  `Candidate.ProviderSpec`. The unresolvable agent → `Catalog.Direct(name,
+  model, opts...)`, whose options make its candidate report what the
+  interim path reports: `WithDirectProvider("")` (the finish line's empty
+  provider, and `d.provider`), `WithDirectLimits` (the agent's own max
+  tokens, context window, thinking level, no-tools, vision mode and request
+  timeout) and `WithDirectRequireReasoningContent` (the agent's model's
+  provider setting, not the default model's). The chain still records no
+  health, sends no observer event and never falls back; its protocol, and
+  so temperature for a CLI, is the default model's. Host checklist:
+  - 7.10a in `selectTurnModel`, when no candidate resolves and
+    `defaultModelClient()` names one: `al.catalog.Direct(direct, model,
+    models.WithDirectProvider(""), models.WithDirectLimits(l),
+    models.WithDirectRequireReasoningContent(r))`, with `l` from
+    `agent.limitsFor(model)` plus the vision mode `modelFacts` reads and
+    `r` from `modelFacts`; `candidates` is its `Candidates()`; it is not
+    isolated (the interim path never was). `Direct` refuses an empty
+    model id (`modelspec.ErrModelRequired`), which the interim path would
+    have sent: only an agent with no model name at all, which the host's
+    configuration does not produce; such a turn fails as
+    `errNoModelConfigured`;
+  - 7.10b delete `callDefaultModel`, the direct branches of `callModel`,
+    `firstModel` and `turnVision`, `engineSpec.direct`, `directModel`,
+    `directClients`, `llmTurnEnv.directClient`, `AgentLoop.directModel`
+    and `turnModel.direct` where only these used it;
+  - 7.10c expect `ModelRef.Protocol` now set on the direct call's events
+    (nothing logged reads it), and a cancelled call's returned error to be
+    `ctx.Err()`, as `ModelCall.Err` already was;
+  - 7.10d `TestUnresolvedAgent_RunsOnDefaultModelClient` and
+    `TestUnresolvedAgent_DefaultModelTemperature` pass unchanged.
 - 7.11 **`TextDelta`** only with an `OnTextDelta` callback, as the engine
   does; now documented.
 - 7.13 **`ModelCall.Err`** is `ctx.Err()` once the turn's context ended:

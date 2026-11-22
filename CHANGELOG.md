@@ -222,7 +222,8 @@ project uses [Semantic Versioning](https://semver.org/).
   and run options; `Scope` with `WithScope` and `ScopeOf`; the cancel causes,
   `CauseOutcome` and `InterruptedResult`; `ErrSessionStore` and
   `SessionStoreError`; `TaskInfo` and `TaskController`; `Limits`; `Memory`;
-  `Redactor`. `hook/DESIGN.md` maps a
+  `Redactor`; `Truncator` and its default `Truncate`, which shorten the
+  request content the engine logs. `hook/DESIGN.md` maps a
   host's existing turn loop onto it.
 
 ### Changed

@@ -83,6 +83,9 @@ and the `TaskController` capability (`Tasks`, `CancelTask`).
 - `Memory` / `MemorySession`: optional long-term memory, opened per session
   (`Recall`, `Observe`, `ToolsUsed`, `Close`).
 - `Redactor`: what the engine applies to the error text and content it logs.
+- `Truncator`: what the engine shortens the request content it logs with
+  (`Truncate` by default; a host with a "no truncate" switch passes its
+  own).
 
 The session store is `ctxengine`'s own `session.SessionStore`, the clock
 `clock.Clock`, and the model-caller `models.Caller`; this package does not
