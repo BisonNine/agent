@@ -1,9 +1,5 @@
 package loop
 
-// This file is part of the turn engine (the engine_*.go files): it imports no
-// host package and uses no host identifier, so it can live in a package of
-// its own. engine_guard_test.go enforces that.
-
 import (
 	"context"
 	"fmt"
@@ -20,8 +16,8 @@ import (
 
 // turnHooks are a turn's callbacks and event consumers, each kind in the
 // order it was registered, each with the name of the plugin that registered
-// it. The host builds one per turn and the engine calls it; the engine never
-// reaches host behaviour any other way than through these and turnEnv.
+// it. The agent builds one per turn and the engine calls it; the engine never
+// reaches a host's behaviour any other way than through these.
 //
 // Panics follow the hook package's rules ("Panics"): an observer (OnFallback,
 // OnCompaction, OnTextDelta, OnInterrupt, an event consumer) is logged and
@@ -275,7 +271,7 @@ type turnOnContext struct {
 type turnOnContextKey struct{}
 
 // beginTurnContext returns ctx carrying the turn's scope (hook.WithScope,
-// which also sets toolkit's agent id and session key) and hooks. The host
+// which also sets toolkit's agent id and session key) and hooks. The agent
 // calls it once per turn, for the context it runs the turn on.
 func beginTurnContext(ctx context.Context, scope hook.Scope, hooks *turnHooks, now clock.Clock) context.Context {
 	ctx = hook.WithScope(ctx, scope)

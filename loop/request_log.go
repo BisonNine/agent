@@ -1,9 +1,5 @@
 package loop
 
-// This file is part of the turn engine (the engine_*.go files): it imports no
-// host package and uses no host identifier, so it can live in a package of
-// its own. engine_guard_test.go enforces that.
-
 import (
 	"fmt"
 	"strings"

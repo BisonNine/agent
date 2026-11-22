@@ -3,7 +3,7 @@
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
 holding `toolspec`, `toolkit`, `discovery`, `spawnllm`, `ctxengine`,
 `cogmem`, `accounting`, `fsmode`, `modelspec`, `clock`, `models`, `ident`,
-`hook`, `mcphost`, and the tool packages under `toolbox/` (`toolbox/shell`).
+`hook`, `loop`, `mcphost`, and the tool packages under `toolbox/` (`toolbox/shell`).
 
 ## Status
 
@@ -56,6 +56,13 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   clients), `accounting` and the standard library. It holds no logic: no
   loop, no goroutine, no provider code. It never imports `models`,
   `ctxengine`, `cogmem` or `discovery`; the loop does.
+- `loop` (the agent and its turn engine: `loop.Spec`, `loop.Agent`) imports
+  only `hook`, `models`, `modelspec`, `toolkit`, `discovery`, `ctxengine`
+  (with `ctxengine/session`), `accounting`, `clock`, `ident`, `spawnllm`
+  (message types and its pure helpers; never a client of its own) and the
+  standard library; its tests also `models/modelstest` and `toolspec`. It
+  never imports `cogmem`, `mcphost` or the root package: memory arrives as a
+  `hook.Memory`, served tools for CLI models as a `hook.ServedTools`.
 - `mcphost` (serving tools over MCP to CLI models) imports only `toolkit`,
   `toolspec`, `hook`, the standard library and `mark3labs/mcp-go`. It is the
   only package that imports mcp-go, and nothing else in the SDK imports

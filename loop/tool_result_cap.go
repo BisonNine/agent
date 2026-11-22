@@ -1,8 +1,5 @@
 package loop
 
-// This file is part of the turn engine (the engine_*.go files); see
-// engine_turn.go.
-
 import (
 	"fmt"
 	"unicode/utf8"

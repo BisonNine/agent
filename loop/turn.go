@@ -1,9 +1,5 @@
 package loop
 
-// This file is part of the turn engine (the engine_*.go files): it imports no
-// host package and uses no host identifier, so it can live in a package of
-// its own. engine_guard_test.go enforces that.
-
 import (
 	"context"
 	"encoding/json"
@@ -69,7 +65,7 @@ type turnMemory interface {
 	RecordToolUse(names ...string)
 }
 
-// turnEnv is what the engine reaches the host's services through, besides
+// turnEnv is what the engine reaches the agent's services through, besides
 // the callbacks: tools and the session's context.
 type turnEnv interface {
 	turnTools
