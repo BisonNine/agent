@@ -240,45 +240,6 @@ func TestHTTPProviderAccountsOnce(t *testing.T) {
 	checkTokens(t, got, tokens{input: known(10), output: known(3), cacheRead: known(2)})
 }
 
-func TestWorkerUsesAccountingIdentity(t *testing.T) {
-	rec := launchtest.Capture(t)
-	srv, hits := chatServer(t, http.StatusOK, chatOK)
-	w, err := New(
-		WithProvider(ProviderSpec{Kind: "openai-chat", BaseURL: srv.URL, APIKey: "k", Model: "gpt-test"}),
-		WithAccounting(accounting.Identity{Agent: "bob", Name: "Bob the builder", Project: "shed"}),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.Run(context.Background(), []Message{{Role: "user", Content: "hi"}}); err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	if hits.Load() != 1 {
-		t.Fatalf("requests = %d, want 1", hits.Load())
-	}
-	if got := rec.One(); got.Agent != "bob" || got.AgentName != "Bob the builder" || got.Project != "shed" {
-		t.Errorf("identity = %q/%q/%q, want bob/Bob the builder/shed", got.Agent, got.AgentName, got.Project)
-	}
-}
-
-func TestWorkerWithoutAccountingLaunchesNothing(t *testing.T) {
-	rec := launchtest.Capture(t)
-	srv, hits := chatServer(t, http.StatusOK, chatOK)
-	w, err := New(WithProvider(ProviderSpec{Kind: "openai-chat", BaseURL: srv.URL, APIKey: "k", Model: "gpt-test"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.Run(context.Background(), []Message{{Role: "user", Content: "hi"}}); !errors.Is(err, accounting.ErrAgentRequired) {
-		t.Fatalf("Run err = %v, want ErrAgentRequired", err)
-	}
-	if hits.Load() != 0 {
-		t.Errorf("requests = %d, want 0", hits.Load())
-	}
-	if got := rec.One(); got.Success {
-		t.Error("refused launch recorded as a success")
-	}
-}
-
 func TestUnconfiguredProviderIsAccounted(t *testing.T) {
 	rec := launchtest.Capture(t)
 	if _, err := NewUnconfiguredProvider().Chat(context.Background(), testID, nil, nil, "m", nil); err == nil {

@@ -68,32 +68,6 @@ func TestLogging_ComponentAndContent(t *testing.T) {
 	}
 }
 
-func TestLogging_WorkerPassesLoggerToProvider(t *testing.T) {
-	// WithLogger and WithLogContent reach the provider WithProvider builds,
-	// whichever order the options come in.
-	logs := &launchtest.Logs{}
-	script := createMockCLI(t, "", cliFailure, 1)
-	w, err := New(
-		WithLogger(logs.Logger()),
-		WithProvider(ProviderSpec{Kind: "claude-cli", CLIPath: script, Workspace: t.TempDir()}),
-		WithLogContent(true),
-		WithAccounting(testID),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := w.Run(context.Background(), []Message{{Role: "user", Content: "hello"}}); err == nil {
-		t.Fatal("Run succeeded, want the CLI's failure")
-	}
-	e, ok := logs.Find("claude-cli subprocess failed")
-	if !ok {
-		t.Fatalf("no failure record; got %+v", logs.Entries())
-	}
-	if e.Attrs["stderr"] != cliFailure {
-		t.Errorf("stderr = %v, want %q", e.Attrs["stderr"], cliFailure)
-	}
-}
-
 func TestLogging_ProvidersAreIsolated(t *testing.T) {
 	alice, bob := &launchtest.Logs{}, &launchtest.Logs{}
 	pa := NewClaudeCliProvider("", t.TempDir(), nil, nil)

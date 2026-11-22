@@ -1,10 +1,13 @@
 # spawnllm
 
-`go.bison9.com/agent/spawnllm` is an **LLM-dispatch core** for host applications.
-It calls an LLM and drives it to completion:
+`go.bison9.com/agent/spawnllm` holds the provider clients and the types they
+share: one model call each.
 
 - **CLI providers** (claude-cli, codex-cli, cursor-cli, antigravity-cli; gemini-cli is an alias for antigravity-cli): run the subprocess, return the result.
-- **API providers** (OpenAI-chat/responses, Azure, Anthropic): run the LLM↔tool-call loop, giving the model access to host-injected `toolspec.Tool`s until it is done.
+- **API providers** (OpenAI-chat/responses, Azure, Anthropic): one HTTP request per call.
+
+The tool loop, fallback and cooldown are not here: the agent loop
+([`loop`](../loop)) runs turns, [`models`](../models) owns the clients.
 
 ## Boundaries
 
@@ -12,11 +15,9 @@ spawnllm imports only [`toolspec`](../toolspec),
 [`accounting`](../accounting) and the standard library
 (plus provider SDKs). It **never imports a host**. Policy —
 model selection, fallback, cooldown, config, results handling — stays in the host
-application. The host resolves a `ProviderSpec`, injects tools, and calls
-the worker.
+application.
 
-Logging uses `log/slog`. Give a `Worker` a logger with `WithLogger`; the
-provider `WithProvider` builds gets it too. A provider built directly takes
+Logging uses `log/slog`. A provider takes
 `WithLogger` (the HTTP providers, `speech`, `imagegen`) or `SetLogger` (the
 CLI providers). Without one, nothing is logged. Records carry the attribute
 `component`. A CLI's stdout and stderr are logged only with
@@ -26,8 +27,7 @@ CLI providers). Without one, nothing is logged. Records carry the attribute
 
 Every call that can launch a model takes an `accounting.Identity` right
 after the context: `LLMProvider.Chat`, `speech` `Transcribe` and
-`Synthesize`, and `imagegen` `Generate` and `Edit`. A `Worker` takes it from
-`WithAccounting`.
+`Synthesize`, and `imagegen` `Generate` and `Edit`.
 
 - The agent name is required. A missing agent, or an agent or project name
   longer than 64 characters, is refused before anything is launched; the
