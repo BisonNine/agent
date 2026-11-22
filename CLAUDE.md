@@ -3,7 +3,7 @@
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
 holding `toolspec`, `toolkit`, `discovery`, `spawnllm`, `ctxengine`,
 `cogmem`, `accounting`, `fsmode`, `modelspec`, `clock`, `models`, `ident`,
-`hook`, and the tool packages under `toolbox/` (`toolbox/shell`).
+`hook`, `mcphost`, and the tool packages under `toolbox/` (`toolbox/shell`).
 
 ## Status
 
@@ -52,6 +52,11 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   clients), `accounting` and the standard library. It holds no logic: no
   loop, no goroutine, no provider code. It never imports `models`,
   `ctxengine`, `cogmem` or `discovery`; the loop does.
+- `mcphost` (serving tools over MCP to CLI models) imports only `toolkit`,
+  `toolspec`, `hook`, the standard library and `mark3labs/mcp-go`. It is the
+  only package that imports mcp-go, and nothing else in the SDK imports
+  `mcphost`, so a host with no CLI model never links mcp-go. It knows no
+  host name, path, token format or tool prefix: the host passes them in.
 - `toolbox/shell/proc` imports only `fsmode`, the standard library and its
   own `proctest`. It takes its modes as `Options.Modes` (`fsmode.Modes`).
 - `toolbox/shell` imports only `toolspec`, `fsmode`, its own `proc`, and the
