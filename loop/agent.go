@@ -49,6 +49,8 @@ type Agent struct {
 	states map[string]*sessionState
 	closed bool
 	wg     sync.WaitGroup
+	// closeDone is closed once the first Close has finished.
+	closeDone chan struct{}
 }
 
 // sessionState is one session as the agent holds it.
@@ -73,12 +75,13 @@ func New(spec Spec) (*Agent, error) {
 		return nil, err
 	}
 	a := &Agent{
-		spec:     spec,
-		id:       ident.NormalizeID(spec.ID),
-		clock:    clock.Or(spec.Clock),
-		log:      spec.Logger,
-		sessions: spec.Sessions,
-		states:   map[string]*sessionState{},
+		spec:      spec,
+		id:        ident.NormalizeID(spec.ID),
+		clock:     clock.Or(spec.Clock),
+		log:       spec.Logger,
+		sessions:  spec.Sessions,
+		states:    map[string]*sessionState{},
+		closeDone: make(chan struct{}),
 	}
 	if a.log == nil {
 		a.log = slog.New(slog.DiscardHandler)
@@ -239,8 +242,25 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	ctx, stopBudget := a.clock.WithTimeout(ctx, budget)
 	defer stopBudget()
 	hooks := a.forRun(r)
+	engineRan := false
+	defer func() {
+		// A panic in the engine itself (not in a callback) has already ended
+		// the turn with OutcomeError; one before the engine started ends it
+		// here. Either stops here rather than in the host.
+		if p := recover(); p != nil {
+			a.log.Error("panic in turn", "component", "agent", "agent_id", a.id,
+				"session", s.key, "panic", fmt.Sprintf("%v", p), "stack", string(debug.Stack()))
+			if !engineRan {
+				a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: fmt.Errorf("turn set-up panicked: %v", p)})
+			}
+		}
+	}()
 	ctx = beginTurnContext(ctx, scope, hooks, a.clock)
-	ctx = hook.WithTaskRegistrar(ctx, a.tasks)
+	// A turn on a task's context (a sub-agent's) keeps the registrar the task
+	// was started from, so its tasks are that task's children there.
+	if _, ok := hook.TaskRegistrarFrom(ctx); !ok {
+		ctx = hook.WithTaskRegistrar(ctx, a.tasks)
+	}
 
 	chain := a.spec.Models.Begin(models.Chat, models.Scope(s.key))
 	candidates := chain.Candidates()
@@ -291,14 +311,7 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 		env:   env,
 		hooks: hooks,
 	}
-	defer func() {
-		// A panic in the engine itself (not in a callback) has already ended
-		// the turn with OutcomeError; it stops here rather than in the host.
-		if p := recover(); p != nil {
-			a.log.Error("panic in turn engine", "component", "agent", "agent_id", a.id,
-				"session", s.key, "panic", fmt.Sprintf("%v", p), "stack", string(debug.Stack()))
-		}
-	}()
+	engineRan = true
 	if _, err := newEngineTurn(spec, nil).run(ctx); err != nil {
 		// The run's TurnFinished carries the error; a host renders it.
 		a.log.Debug("turn ended with an error", "component", "agent", "agent_id", a.id,
@@ -329,7 +342,9 @@ func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Sco
 		s.cm = ctxengine.New(s.key, a.sessions, append(opts, a.spec.Context...)...)
 	}
 	if s.mem == nil && a.spec.Memory != nil {
-		ms, err := a.spec.Memory.Open(ctx, scope)
+		// The session's memory outlives this turn: it is opened on a context
+		// the turn's end does not cancel.
+		ms, err := a.spec.Memory.Open(context.WithoutCancel(ctx), scope)
 		if err != nil {
 			a.log.Warn("memory not opened; the session runs without it", "component", "agent",
 				"agent_id", a.id, "session", s.key, "error", a.redact(err.Error()))
@@ -451,7 +466,7 @@ func (a *Agent) interrupt(ctx context.Context, sessionKey string, cause error) (
 	a.mu.Unlock()
 
 	for _, r := range queued {
-		a.finishUnstarted(ctx, r, droppedResult(cause))
+		a.finishUnstarted(r.ctx, r, droppedResult(cause)) //nolint:contextcheck // a dropped run's consumers get its own context
 	}
 	if cancel != nil {
 		cancel(cause)
@@ -459,6 +474,9 @@ func (a *Agent) interrupt(ctx context.Context, sessionKey string, cause error) (
 	}
 	scope := hook.Scope{AgentID: a.id, AgentName: a.spec.Name, Session: sessionKey, TurnID: turnID, Project: a.spec.Project}
 	ev := hook.Interrupted{Scope: scope, Cause: cause, Running: cancel != nil, Dropped: len(queued)}
+	if !ev.Running && ev.Dropped == 0 {
+		return false, 0 // nothing was stopped: no one is told
+	}
 	for _, t := range a.tasks.Tasks() {
 		if t.Session == sessionKey {
 			ev.StillRunning = append(ev.StillRunning, t)
@@ -517,13 +535,20 @@ var errClosing = fmt.Errorf("agent closing: %w", hook.ErrShutdown)
 // then stops whatever is left with a cause wrapping hook.ErrShutdown (see
 // Cancel) and waits for it to end. Finally it closes the sessions' context
 // managers and memory. Every goroutine the agent started has ended when it
+// returns, except a tool call's that ignored its cancellation past
+// Limits.CancelGrace: the turn abandoned it, and it ends when the tool
 // returns. It returns ctx's error when ctx ended first, else the first error
 // of closing a session.
 func (a *Agent) Close(ctx context.Context) error {
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
-		return nil
+		select {
+		case <-a.closeDone:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	a.closed = true
 	a.mu.Unlock()
@@ -539,6 +564,7 @@ func (a *Agent) Close(ctx context.Context) error {
 		a.tasks.shutDown(errClosing)
 	case <-ctx.Done():
 		err = ctx.Err()
+		a.endLife()          // a deferred compaction stops too
 		a.Cancel(errClosing) //nolint:contextcheck // Cancel is told its cause; its observers get a context that is never cancelled
 		<-idle
 	}
@@ -559,5 +585,6 @@ func (a *Agent) Close(ctx context.Context) error {
 			}
 		}
 	}
+	close(a.closeDone)
 	return err
 }

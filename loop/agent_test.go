@@ -414,3 +414,89 @@ func TestAgent_ServedToolsForCLIModels(t *testing.T) {
 		}
 	}
 }
+
+// A cancel whose OnCancel declines (the task had ended) asks once, leaves the
+// task to its Finish, and CancelAll returns.
+func TestTaskRegistry_DeclinedCancel(t *testing.T) {
+	f := newAgentFixture(t)
+	a := f.agent(t, nil)
+	ctx := hook.WithScope(context.Background(), hook.Scope{AgentID: "alice", Session: "s1"})
+	asked := 0
+	_, h, err := a.tasks.StartTask(ctx, hook.TaskStart{OnCancel: func(error) bool { asked++; return false }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan hook.TaskCancel, 1)
+	go func() { done <- a.CancelAll(nil) }()
+	select {
+	case got := <-done:
+		if len(got.Cancelled) != 0 || len(got.AlreadyEnded) != 1 {
+			t.Fatalf("CancelAll = %+v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CancelAll did not return")
+	}
+	again, err := a.CancelTask(h.ID(), nil)
+	if err != nil || asked != 1 || len(again.AlreadyEnded) != 1 {
+		t.Fatalf("OnCancel asked %d times; second cancel %+v, %v", asked, again, err)
+	}
+	if !h.Finish(toolkit.NewResult("result")) || h.Info().State != hook.TaskDone {
+		t.Fatalf("Finish after a declined cancel: %+v", h.Info())
+	}
+}
+
+// Finish racing a cancel's OnCancel waits for it: a declined cancel lets the
+// result through, an accepted one wins.
+func TestTaskRegistry_FinishWaitsForSettle(t *testing.T) {
+	f := newAgentFixture(t)
+	a := f.agent(t, nil)
+	ctx := hook.WithScope(context.Background(), hook.Scope{AgentID: "alice"})
+	for _, accept := range []bool{false, true} {
+		inCancel, release := make(chan struct{}), make(chan struct{})
+		_, h, err := a.tasks.StartTask(ctx, hook.TaskStart{OnCancel: func(error) bool {
+			close(inCancel)
+			<-release
+			return accept
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		go h.Cancel(nil)
+		<-inCancel
+		finished := make(chan bool, 1)
+		go func() { finished <- h.Finish(toolkit.NewResult("r")) }()
+		close(release)
+		if got := <-finished; got == accept {
+			t.Fatalf("accept %v: Finish = %v", accept, got)
+		}
+	}
+}
+
+// A sub-agent's turn on a task's context starts its tasks as that task's
+// children in the parent's registry: cancelling the task reaches them.
+func TestAgent_SubAgentTasksAreChildren(t *testing.T) {
+	f := newAgentFixture(t)
+	parent := f.agent(t, nil)
+	var grandchild context.Context
+	f.tool(t, "spawn", func(ctx context.Context, _ map[string]any) (string, error) {
+		reg, _ := hook.TaskRegistrarFrom(ctx)
+		gctx, _, err := reg.StartTask(ctx, hook.TaskStart{})
+		grandchild = gctx //nolint:fatcontext // kept for the test to inspect
+		return "ok", err
+	})
+	f.p.Script("w1", calls("spawn"), modelstest.Reply("done"))
+	worker := f.agent(t, func(s *Spec) { s.ID = "alice-worker" })
+
+	ctx := hook.WithTaskRegistrar(hook.WithScope(context.Background(), hook.Scope{AgentID: "alice", Session: "s1"}), parent.tasks)
+	tctx, h, err := parent.tasks.StartTask(ctx, hook.TaskStart{Info: hook.TaskInfo{Kind: "subagent"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker.Run(tctx, "worker-s", hook.UserText("work")).Wait()
+	if grandchild == nil || len(parent.Tasks()) != 2 || parent.Tasks()[1].Parent != h.ID() {
+		t.Fatalf("parent's tasks = %+v", parent.Tasks())
+	}
+	if !h.Cancel(nil) || grandchild.Err() == nil {
+		t.Fatal("cancelling the task left its sub-agent's task running")
+	}
+}

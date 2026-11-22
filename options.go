@@ -36,9 +36,13 @@ func WithModels[M *models.Catalog | *models.Set](m M) Option {
 	return func(s *loop.Spec) {
 		switch v := any(m).(type) {
 		case *models.Catalog:
-			s.Models = v.Default()
+			if v != nil {
+				s.Models = v.Default()
+			}
 		case *models.Set:
-			s.Models = v
+			if v != nil {
+				s.Models = v
+			}
 		}
 	}
 }

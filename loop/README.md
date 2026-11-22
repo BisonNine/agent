@@ -78,7 +78,8 @@ step, prompt-token calibration).
 - `Agent.Close(ctx)`: refuses new runs (`ErrClosed`), lets running and
   queued turns finish until `ctx` ends, then stops the rest as a shutdown,
   waits, and closes every session's manager and memory. Every goroutine the
-  agent started has ended when it returns.
+  agent started has ended when it returns, except that of a tool call that
+  ignored its cancellation past the cancel grace (the turn abandoned it).
 
 `OnInterrupt` is told once per stop, with what was stopped and dropped.
 
@@ -91,7 +92,10 @@ context is not a child of the turn's; cancelling cascades to children
 first; `OnCancel` runs before the context is cancelled; `Detach` turns a
 `TaskWait` task into a `TaskCallback` one, or cancels it once the agent is
 shutting down. `TaskStarted` and `TaskFinished` go to the run while its turn
-runs, and to `OnEvent` always. The registry remembers the last 256 ended
+runs, and to `OnEvent` always. A turn run on a task's context (a
+sub-agent's) keeps the registrar that task was started from, so the tasks
+it starts are that task's children there and a cancel of it reaches them.
+The registry remembers the last 256 ended
 tasks for `AlreadyEnded`.
 
 ## Not here

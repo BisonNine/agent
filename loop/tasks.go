@@ -34,6 +34,8 @@ type taskRegistry struct {
 	// cancellingAll counts CancelAll calls in progress: a task started
 	// meanwhile is cancelled at once.
 	cancellingAll int
+	// settled is signalled whenever a task's settle (claim) ends.
+	settled *sync.Cond
 }
 
 // task is one registered task. Its info and flags are guarded by the
@@ -47,12 +49,14 @@ type task struct {
 	onDetach func() bool
 
 	// settling: a cancel or detach is running its host step (OnCancel,
-	// OnDetach) outside the lock; Finish and other settles wait their turn by
-	// failing.
+	// OnDetach) outside the lock; Finish and other settles wait for it.
 	settling bool
-	// cancelling: a cancel of this task (or of its parent) is under way; a
-	// child started now is cancelled at once.
-	cancelling bool
+	// cancelCause is set while a cancel of this task is under way: a child
+	// started now is cancelled at once, with it.
+	cancelCause error
+	// declined: OnCancel said the task had already ended; no cancel asks
+	// again, and its Finish delivers the result.
+	declined bool
 
 	// turn is the turn that started the task, for its events while that turn
 	// runs; scope is the starter's scope, for the events' headers.
@@ -61,7 +65,9 @@ type task struct {
 }
 
 func newTaskRegistry(a *Agent) *taskRegistry {
-	return &taskRegistry{a: a, tasks: map[string]*task{}}
+	r := &taskRegistry{a: a, tasks: map[string]*task{}}
+	r.settled = sync.NewCond(&r.mu)
+	return r
 }
 
 var _ hook.TaskRegistrar = (*taskRegistry)(nil)
@@ -128,14 +134,16 @@ func (r *taskRegistry) StartTask(ctx context.Context, start hook.TaskStart) (con
 	r.tasks[info.ID] = t
 	r.order = append(r.order, info.ID)
 	parent := r.tasks[info.Parent]
-	cancelNow := r.cancellingAll > 0 || (parent != nil && (parent.cancelling || parent.info.State == hook.TaskCancelled))
 	var cause error
-	if cancelNow {
+	switch {
+	case parent != nil && parent.cancelCause != nil:
+		cause = parent.cancelCause
+	case parent != nil && parent.info.State == hook.TaskCancelled:
+		cause = parent.info.Cause
+	case r.cancellingAll > 0:
 		cause = hook.ErrInterrupted
-		if parent != nil && parent.info.Cause != nil {
-			cause = parent.info.Cause
-		}
 	}
+	cancelNow := cause != nil
 	snapshot := t.info
 	r.mu.Unlock()
 
@@ -190,15 +198,17 @@ func (r *taskRegistry) CancelAll(cause error) hook.TaskCancel {
 		r.mu.Unlock()
 	}()
 	var out hook.TaskCancel
+	visited := map[*task]bool{}
 	for {
 		roots := r.running(func(t *task) bool {
 			p := r.tasks[t.info.Parent]
-			return p == nil || p.info.State != hook.TaskRunning
+			return !visited[t] && !t.declined && (p == nil || p.info.State != hook.TaskRunning || visited[p] || p.declined)
 		})
 		if len(roots) == 0 {
 			return out
 		}
 		for _, t := range roots {
+			visited[t] = true
 			r.cancelTree(t, cause, &out)
 		}
 	}
@@ -233,7 +243,9 @@ func (r *taskRegistry) running(match func(*task) bool) []*task {
 // out.
 func (r *taskRegistry) cancelTree(t *task, cause error, out *hook.TaskCancel) {
 	r.mu.Lock()
-	t.cancelling = true
+	if t.info.State == hook.TaskRunning && !t.declined {
+		t.cancelCause = cause
+	}
 	var children []*task
 	for _, id := range r.order {
 		if c := r.tasks[id]; c != nil && c.info.Parent == t.info.ID && c.info.State == hook.TaskRunning {
@@ -247,29 +259,31 @@ func (r *taskRegistry) cancelTree(t *task, cause error, out *hook.TaskCancel) {
 	r.cancelOne(t, cause, out)
 }
 
-// claim marks t as being settled by the caller, when it is running and no
-// other settle is under way.
-func (r *taskRegistry) claim(t *task) bool {
+// claim marks t as being settled by the caller, once any other settle has
+// ended, when it is still running and ok (called under the lock) accepts it.
+func (r *taskRegistry) claim(t *task, ok func() bool) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if t.info.State != hook.TaskRunning || t.settling {
+	for t.settling {
+		r.settled.Wait()
+	}
+	if t.info.State != hook.TaskRunning || !ok() {
 		return false
 	}
 	t.settling = true
 	return true
 }
 
-// release ends a claim that changed nothing.
-func (r *taskRegistry) release(t *task) {
-	r.mu.Lock()
+// unsettleLocked ends a claim. r.mu is held.
+func (r *taskRegistry) unsettleLocked(t *task) {
 	t.settling = false
-	r.mu.Unlock()
+	r.settled.Broadcast()
 }
 
 // cancelOne cancels t alone: OnCancel, then its state, its context and
 // TaskFinished.
 func (r *taskRegistry) cancelOne(t *task, cause error, out *hook.TaskCancel) bool {
-	if !r.claim(t) {
+	if !r.claim(t, func() bool { return !t.declined }) {
 		r.mu.Lock()
 		info := t.info
 		r.mu.Unlock()
@@ -277,15 +291,18 @@ func (r *taskRegistry) cancelOne(t *task, cause error, out *hook.TaskCancel) boo
 		return false
 	}
 	if t.onCancel != nil && !t.onCancel(cause) {
-		r.release(t)
 		r.mu.Lock()
+		t.declined = true
+		t.cancelCause = nil
+		r.unsettleLocked(t)
 		info := t.info
 		r.mu.Unlock()
 		out.AlreadyEnded = append(out.AlreadyEnded, info)
 		return false
 	}
 	r.mu.Lock()
-	t.settling = false
+	r.unsettleLocked(t)
+	t.cancelCause = nil
 	t.info.State = hook.TaskCancelled
 	t.info.Cause = cause
 	t.info.Ended = r.a.clock.Now()
@@ -334,13 +351,6 @@ func (r *taskRegistry) shutDown(cause error) {
 	}
 }
 
-// shuttingDown reports whether the agent was told it is shutting down.
-func (r *taskRegistry) shuttingDown() bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.shutdown
-}
-
 // taskHandle is a starter's hold on one task.
 type taskHandle struct {
 	r *taskRegistry
@@ -359,7 +369,10 @@ func (h *taskHandle) Info() hook.TaskInfo {
 func (h *taskHandle) Finish(result *toolkit.Result) bool {
 	r, t := h.r, h.t
 	r.mu.Lock()
-	if t.info.State != hook.TaskRunning || t.settling {
+	for t.settling {
+		r.settled.Wait()
+	}
+	if t.info.State != hook.TaskRunning {
 		r.mu.Unlock()
 		return false
 	}
@@ -379,25 +392,28 @@ func (h *taskHandle) Finish(result *toolkit.Result) bool {
 // Detach stops the turn waiting for a TaskWait task (see hook.TaskHandle).
 func (h *taskHandle) Detach(cause error) bool {
 	r, t := h.r, h.t
-	if r.shuttingDown() || errors.Is(cause, hook.ErrShutdown) {
+	cancel := errors.Is(cause, hook.ErrShutdown)
+	claimed := r.claim(t, func() bool {
+		if r.shutdown {
+			cancel = true
+		}
+		return !cancel && t.info.Mode == hook.TaskWait
+	})
+	if cancel {
 		r.cancelTree(t, cause, &hook.TaskCancel{})
 		return false
 	}
-	r.mu.Lock()
-	wait := t.info.Mode == hook.TaskWait
-	r.mu.Unlock()
-	if !wait || !r.claim(t) {
+	if !claimed {
 		return false
 	}
-	if t.onDetach != nil && !t.onDetach() {
-		r.release(t)
-		return false
-	}
+	ok := t.onDetach == nil || t.onDetach()
 	r.mu.Lock()
-	t.settling = false
-	t.info.Mode = hook.TaskCallback
+	if ok {
+		t.info.Mode = hook.TaskCallback
+	}
+	r.unsettleLocked(t)
 	r.mu.Unlock()
-	return true
+	return ok
 }
 
 // Cancel cancels the task and its own tasks.
