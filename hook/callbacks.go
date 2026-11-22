@@ -125,13 +125,14 @@ type Loop struct {
 // callbacks: every callback is registered when the agent is built, and one
 // a host switches per turn acts on state this callback sets.
 //
-// A non-nil error ends the turn: the later BeforeLoop callbacks do not run,
-// LoopStarted is not emitted and no model is called; the turn ends with
-// OutcomeError and that error, as a loop that failed before its first model
-// call: AfterTurn runs, the reply it leaves in Stored (empty unless it sets
-// one) is stored, the session saved and the pending marker cleared (kept
-// when the cause wraps ErrShutdown), then TurnFinished. The stored message
-// stays.
+// A non-nil error (or a panic, as a *PanicError) ends the turn as a loop
+// that failed before its first model call: the later BeforeLoop callbacks
+// do not run, LoopStarted is not emitted and no model is called; the turn
+// ends with that error and OutcomeError (or, when the turn's context had
+// already ended, the outcome its cause decides, CauseOutcome); AfterTurn
+// runs, the reply it leaves in Stored (empty unless it sets one) is stored,
+// the session saved and the pending marker cleared (kept when the cause
+// wraps ErrShutdown), then TurnFinished. The stored message stays.
 type BeforeLoopFunc func(ctx context.Context, loop *Loop) error
 
 // AfterTurnFunc runs once at the end of every turn that ran BeforeTurn,

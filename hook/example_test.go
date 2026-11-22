@@ -111,11 +111,20 @@ func ExampleRun_consumer() {
 	// ok: It shipped on 20 November.
 }
 
+// loopState is a host's state for one turn, put on the context it passes to
+// Run (callbacks are registered once per agent and turns run concurrently,
+// so per-turn state never lives in a variable the callbacks share).
+type loopState struct {
+	breadcrumbs bool
+}
+
+type loopStateKey struct{}
+
 // A BeforeLoop callback that sets up a turn's model loop: the turn streams
 // only when its chat can show partial text, read once now, and a chat that
 // cannot be reached ends the turn before any model is called. The breadcrumb
 // consumer, registered with the agent, acts only when this callback switched
-// it on.
+// it on in the turn's state.
 func ExampleBeforeLoopFunc() {
 	type chat struct {
 		streams, reachable, breadcrumbs bool
@@ -125,28 +134,31 @@ func ExampleBeforeLoopFunc() {
 		"s-43": {streams: false, reachable: true},
 		"s-44": {reachable: false},
 	}
-	var showBreadcrumbs bool // the turn's state, read by a consumer
 	var before hook.BeforeLoopFunc = func(ctx context.Context, loop *hook.Loop) error {
 		scope, _ := hook.ScopeOf(ctx)
 		c := chats[scope.Session]
 		if !c.reachable {
 			return fmt.Errorf("chat %s cannot be reached", scope.Session)
 		}
+		// Assigned, not only turned on: an OnTextDelta is registered for
+		// every turn, so TextDeltas starts true.
 		loop.TextDeltas = c.streams
-		showBreadcrumbs = c.breadcrumbs
+		if st, ok := ctx.Value(loopStateKey{}).(*loopState); ok {
+			st.breadcrumbs = c.breadcrumbs
+		}
 		return nil
 	}
 
 	for _, session := range []string{"s-42", "s-43", "s-44"} {
-		ctx := hook.WithScope(context.Background(), hook.Scope{AgentID: "alice", Session: session})
-		// An OnTextDelta callback is registered, so TextDeltas starts true.
+		st := &loopState{}
+		ctx := context.WithValue(context.Background(), loopStateKey{}, st)
+		ctx = hook.WithScope(ctx, hook.Scope{AgentID: "alice", Session: session})
 		loop := hook.Loop{Turn: hook.Turn{Message: hook.UserText("Where is my order?")}, TextDeltas: true}
-		showBreadcrumbs = false
 		if err := before(ctx, &loop); err != nil {
 			fmt.Printf("%s: turn ends: %v\n", session, err)
 			continue
 		}
-		fmt.Printf("%s: text deltas %v, breadcrumbs %v\n", session, loop.TextDeltas, showBreadcrumbs)
+		fmt.Printf("%s: text deltas %v, breadcrumbs %v\n", session, loop.TextDeltas, st.breadcrumbs)
 	}
 	// Output:
 	// s-42: text deltas true, breadcrumbs true

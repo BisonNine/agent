@@ -21,9 +21,9 @@
 // These hold for every callback unless its type says otherwise.
 //
 //   - A Before… callback may edit the step's input through the pointer it is
-//     given. A non-nil replacement it returns skips the step: the replacement
-//     is used as the step's result, and the later callbacks of the same kind
-//     are not called. A non-nil error ends the step as its type documents.
+//     given. A non-nil replacement it returns (BeforeLoop has none) skips
+//     the step: the replacement is used as the step's result, and the later
+//     callbacks of the same kind are not called. A non-nil error ends the step as its type documents.
 //   - An After… callback edits the step's result in place through the
 //     pointer it is given. It cannot fail the step; to fail a tool call it
 //     sets an error result.

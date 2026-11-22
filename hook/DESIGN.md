@@ -117,7 +117,7 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 - 2.5 The message stored unless `AlreadyStored` (a compaction this starts:
   `OnCompaction`, `Compaction`), observed into memory; the context first
   assembled for the turn; the pending marker set. `BeforeLoop` (an error
-  ends the turn as a loop failure: to 2.8), then `LoopStarted`.
+  ends the turn as a loop failure: to 2.8 and 2.9), then `LoopStarted`.
 - 2.6 The model loop, up to `Limits.MaxIterations`:
   - 2.6.1 tool definitions (toolkit snapshot, `discovery`);
   - 2.6.2 `Assemble` (`Compaction{Evicted}`; a blocking pass
@@ -231,7 +231,7 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 
 | # | Behaviour | Host reference | Kind | Carried by |
 | --- | --- | --- | --- | --- |
-| 3.5.1 | Prompt cache key, temperature, streaming option | `newDispatch` | ENGINE | streaming only with an `OnTextDelta` |
+| 3.5.1 | Prompt cache key, temperature, streaming option | `newDispatch` | ENGINE | streaming only when `Loop.TextDeltas` (7.16) |
 | 3.5.2 | Timeout retry with jittered backoff | `requestModel`, `waitToRetry` | ENGINE | `Limits.Retries`, `RetryBackoff` |
 | 3.5.3 | Overflow: notice, forced compaction, `max_tokens` halved | `compressForRetry` | ENGINE + CALLBACK | notice in `OnCompaction` (`Overflow`, once per dispatch) |
 | 3.5.4 | Usage per call into the turn's | plugin `usage`, `turn_usage.go:addTurnUsage` | CONSUMER | `ModelCall` |
@@ -431,8 +431,8 @@ not listed.
     `ctx.Err()`, as `ModelCall.Err` already was;
   - 7.10d `TestUnresolvedAgent_RunsOnDefaultModelClient` and
     `TestUnresolvedAgent_DefaultModelTemperature` pass unchanged.
-- 7.11 **`TextDelta`** only with an `OnTextDelta` callback, as the engine
-  does; now documented.
+- 7.11 **`TextDelta`** only when `Loop.TextDeltas` is true after
+  `BeforeLoop` (by default, with an `OnTextDelta` callback); see 7.16b.
 - 7.13 **`ModelCall.Err`** is `ctx.Err()` once the turn's context ended:
   in the `WithFinish` hook, `if ctx.Err() != nil { err = ctx.Err() }`.
 - 7.14 **Store failure after `AfterTurn`**: the reply consumer sends the
@@ -455,30 +455,35 @@ not listed.
   `BeforeLoop` (`BeforeLoopFunc`, `Plugin.BeforeLoop`) with `Loop`
   (`Turn`, and `TextDeltas`, which starts true when an `OnTextDelta` is
   registered). It runs at the end of 2.5, in registration order; an error
-  or panic ends the turn with `OutcomeError` (`AfterTurn` runs, the pending
-  marker is cleared, one `TurnFinished`); `LoopStarted` follows the last
-  one. Callbacks are still registered only when the turn is built. Host
+  or panic ends the turn as a loop failure (`OutcomeError`, or
+  `CauseOutcome` for a stopped turn; `AfterTurn` runs, the pending marker
+  is cleared, one `TurnFinished`); `LoopStarted` follows the last one. Callbacks are still registered only when the turn is built. Host
   checklist:
-  - 7.16a in `engineTurn.begin`, after the pending marker, build
+  - 7.16a in `run`, after `begin` returned without error and with the
+    stage already `stageLoop` (so a failure takes the loop-error path:
+    `turnResult`, `AfterTurn`, `storeReply`, `clearPending`; not the
+    `begin`-failure path, which leaves the marker set), build
     `hook.Loop{Turn: *turn, TextDeltas: len(e.hooks.onTextDelta) > 0}`,
     run the `BeforeLoop` callbacks (stop at the first error; a panic is a
-    `*hook.PanicError`), keep `loop.TextDeltas` on the turn, then emit
-    `LoopStarted`. A `BeforeLoop` failure is a loop failure: the turn goes
-    through `AfterTurn`, `storeReply` and `clearPending` as a loop error
-    does (not the `BeforeTurn` path, which leaves the marker);
+    `*hook.PanicError`), keep `loop.TextDeltas` on the turn, emit
+    `LoopStarted` (moved out of `begin`), then `loop`. Today a panic in
+    `loopPlugins` re-panics out of the turn; it now ends the turn as a
+    `*hook.PanicError`;
   - 7.16b `newDispatch` asks for partial text when the turn's `TextDeltas`
     is true, not when an `OnTextDelta` is registered;
   - 7.16c move `loopPlugins`' work into one `BeforeLoop` callback
     registered in `turnHooksFor`: `recordPendingTurnSource` and
     `st.pendingSource`; the channel's streaming capability
     (`streamToolNarration && al.channelManager != nil &&
-    al.channelManager.SupportsStreaming(opts.Channel)`), read there, sets
-    `loop.TextDeltas` and makes the coalescer; the fallback notifier and
+    al.channelManager.SupportsStreaming(opts.Channel)`), read there, is
+    assigned to `loop.TextDeltas` (false included: with `stream` always
+    registered it starts true) and makes the coalescer; the fallback notifier and
     the breadcrumbs switch into `turnState`; `startProgressUpdates` on the
     turn's context;
   - 7.16d register `stream` (`OnTextDelta`), `fallback-notice`
-    (`OnFallback`) and `breadcrumbs` (`OnEvent`) with the other plugins,
-    each doing nothing until the `BeforeLoop` callback set its state;
+    (`OnFallback`) and `breadcrumbs` (`OnEvent`) after every other plugin
+    of `turnHooksFor`, where `loopPlugins` added them, each doing nothing
+    until the `BeforeLoop` callback set its state;
   - 7.16e delete `engineSpec.loopPlugins` and its loop in `begin`;
     `turn_reply_send_test.go` and `host_turn_helpers_test.go` run the
     `BeforeLoop` callback instead of calling `loopPlugins`.

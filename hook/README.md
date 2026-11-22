@@ -35,7 +35,7 @@ Watching is done with events; a callback exists only to change a step.
   `AfterTool`, `OnToolError`, and `DescribeImages` (one text for the
   images a batch's tools returned, for a model that cannot see them). A
   `Before…` callback may edit the step's input; a non-nil replacement it
-  returns skips the step. An `After…` callback edits the step's result in
+  returns skips the step (`BeforeLoop` returns only an error). An `After…` callback edits the step's result in
   place. Several of one kind run in registration order. Every callback is
   registered when the agent is built; one a host switches per turn acts on
   state its `BeforeLoop` sets.

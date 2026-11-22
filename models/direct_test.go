@@ -96,6 +96,9 @@ func TestDirectChainErrors(t *testing.T) {
 // (a CLI runs its own default model).
 func TestDirectChainEmptyModelID(t *testing.T) {
 	f := newFixture(t, []spec{m("haiku", "p1", "haiku-wire")})
+	if ch, err := f.cat.Direct("haiku", " "); err != nil || ch.Candidates()[0].Model != " " {
+		t.Fatalf("blank model id not kept as given: %v", err)
+	}
 	ch, err := f.cat.Direct("haiku", "")
 	if err != nil {
 		t.Fatalf("empty model id refused: %v", err)
