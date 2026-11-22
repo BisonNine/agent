@@ -158,6 +158,24 @@ project uses [Semantic Versioning](https://semver.org/).
   own process group with its output in a file (head and tail kept past the
   size limit) and a record, so jobs running at a restart are marked lost.
   Limits: jobs per owner, job run time, output size, log retention.
+- `ident` package: the agent id rule, `ValidID`, `NormalizeID`, `SameID`
+  and `RepairID` (1 to 64 ASCII letters, digits, `-` and `_`, starting with
+  a letter or digit; identity is the lower-case id). An input of which
+  nothing survives the repair normalizes to `""`, and two such inputs are
+  never the same agent.
+- `hook` package, the contract the agent loop will be built on, without the
+  loop: the callback types (`BeforeTurnFunc`, `AfterTurnFunc`,
+  `BeforeModelFunc`, `AfterModelFunc`, `OnModelErrorFunc`, `OnFallbackFunc`,
+  `BeforeToolFunc`, `AfterToolFunc`, `OnToolErrorFunc`, `OnCompactionFunc`,
+  `OnTextDeltaFunc`, `OnInterruptFunc`, `OnEventFunc`, bundled as a
+  `Plugin`) with what each may change; the events (`TurnStarted`,
+  `ModelCall`, `TextDelta`, `ToolCallStarted`, `ToolCallFinished`,
+  `Fallback`, `Compaction`, `Image`, `TaskStarted`, `TaskFinished`,
+  `TurnFinished`) and the guarantees of the stream; `Outcome`; the `Run`
+  handle; `Message`, `UserText` and run options; `Scope` with `WithScope`
+  and `ScopeOf`; the cancel causes and `InterruptedResult`; `TaskInfo` and
+  `TaskController`; `Limits`; `Memory`; `Redactor`. `hook/DESIGN.md` maps a
+  host's existing turn loop onto it.
 
 ### Changed
 

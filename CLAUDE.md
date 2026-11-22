@@ -2,8 +2,8 @@
 
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
 holding `toolspec`, `toolkit`, `discovery`, `spawnllm`, `ctxengine`,
-`cogmem`, `accounting`, `fsmode`, `modelspec`, `clock`, `models`, and the
-tool packages under `toolbox/` (`toolbox/shell`).
+`cogmem`, `accounting`, `fsmode`, `modelspec`, `clock`, `models`, `ident`,
+`hook`, and the tool packages under `toolbox/` (`toolbox/shell`).
 
 ## Status
 
@@ -45,6 +45,13 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   `RegisterClient`, `WithObserver` and `WithDeclinedMessage`.
 - `accounting` imports only the standard library. `spawnllm` may
   import it; `ctxengine` and `cogmem` do not.
+- `ident` (the agent id rule) imports only the standard library, so a
+  host's configuration can use it without the rest of the SDK.
+- `hook` (the contract the agent loop is built on) imports only `toolkit`,
+  `spawnllm/protocoltypes` (types, never the `spawnllm` package with its
+  clients), `accounting` and the standard library. It holds no logic: no
+  loop, no goroutine, no provider code. It never imports `models`,
+  `ctxengine`, `cogmem` or `discovery`; the loop does.
 - `toolbox/shell/proc` imports only `fsmode`, the standard library and its
   own `proctest`. It takes its modes as `Options.Modes` (`fsmode.Modes`).
 - `toolbox/shell` imports only `toolspec`, `fsmode`, its own `proc`, and the
