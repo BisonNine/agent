@@ -70,14 +70,32 @@ func newHarness(t *testing.T, mod func(*Config)) *harness {
 		t.Fatalf("New: %v", err)
 	}
 	h.tools = tools
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-		defer cancel()
-		if err := tools.Close(ctx); err != nil {
-			t.Errorf("Close: %v", err)
-		}
-	})
+	t.Cleanup(h.close)
 	return h
+}
+
+// close closes the tools. A process can escape the terminate signal (one
+// being forked as it is sent) and is then killed after the grace period,
+// which runs on the fake clock: while Close waits, the clock is moved on.
+func (h *harness) close() {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- h.tools.Close(ctx) }()
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				h.t.Errorf("Close: %v", err)
+			}
+			return
+		case <-tick.C:
+			h.clk.Advance(proc.DefaultGrace)
+		}
+	}
 }
 
 // run calls a tool as agent in session "s1" with a bounded real-time context.
@@ -553,9 +571,7 @@ func TestCloseStopsJobs(t *testing.T) {
 	if n := h.tools.StopAll("bob"); n != 1 {
 		t.Fatalf("StopAll(bob) = %d", n)
 	}
-	if err := h.tools.Close(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	h.close()
 	for _, id := range []string{a, b} {
 		if info, _ := h.tools.Manager().Get(id); info.Running() {
 			t.Errorf("%s still running", id)

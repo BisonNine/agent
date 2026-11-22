@@ -50,14 +50,29 @@ func newManager(t *testing.T, opts proc.Options) (*proc.Manager, *proctest.Clock
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	t.Cleanup(func() { closeManager(t, m) })
+	t.Cleanup(func() { closeManager(t, m, clk) })
 	return m, clk
 }
 
-func closeManager(t *testing.T, m *proc.Manager) {
+// closeManager closes m. A process can escape the terminate signal (one
+// being forked as it is sent) and is then killed after the grace period,
+// which runs on the fake clock: while Close waits, the clock is moved on.
+func closeManager(t *testing.T, m *proc.Manager, clk *proctest.Clock) {
 	t.Helper()
-	if err := m.Close(testCtx(t)); err != nil {
-		t.Errorf("Close: %v", err)
+	done := make(chan error, 1)
+	go func() { done <- m.Close(testCtx(t)) }()
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("Close: %v", err)
+			}
+			return
+		case <-tick.C:
+			clk.Advance(proc.DefaultGrace)
+		}
 	}
 }
 
@@ -438,7 +453,7 @@ func TestTimeLimitStopsJob(t *testing.T) {
 	if got := r.Info.Ended.Sub(r.Info.Started); got != time.Hour {
 		t.Fatalf("ran %v by the clock, want 1h", got)
 	}
-	closeManager(t, m)
+	closeManager(t, m, clk)
 	mu.Lock()
 	defer mu.Unlock()
 	if len(ended) != 1 || ended[0].ID != info.ID || !ended[0].Notify {
@@ -488,12 +503,12 @@ func TestLostAfterRestart(t *testing.T) {
 
 // Rule 9: shutdown stops every job and refuses new ones.
 func TestCloseStopsEveryJob(t *testing.T) {
-	m, _ := newManager(t, proc.Options{})
+	m, clk := newManager(t, proc.Options{})
 	a := start(t, m, proc.Spec{Owner: "alice", Command: "echo a; sleep 100"})
 	b := start(t, m, proc.Spec{Owner: "bob", Command: "echo b; sleep 100"})
 	waitMatch(t, m, a.ID, "a")
 	waitMatch(t, m, b.ID, "b")
-	closeManager(t, m)
+	closeManager(t, m, clk)
 	for _, id := range []string{a.ID, b.ID} {
 		got, _ := m.Get(id)
 		if got.State != proc.StateStopped || got.StopReason != proc.StopShutdown {
