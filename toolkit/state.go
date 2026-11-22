@@ -37,6 +37,10 @@ type catState struct {
 	disabled map[string]bool
 	// cfgs holds each set's settings, by the set's key.
 	cfgs map[uint64]*setConfig
+	// born maps every registered name to the version at which it was last
+	// added while absent, so a set can tell a name removed and added again
+	// (its counts start over) from one replaced in place (they carry on).
+	born map[string]uint64
 }
 
 func emptyState() *catState {
@@ -62,7 +66,35 @@ func (s *catState) clone() *catState {
 		sources:  maps.Clone(s.sources),
 		disabled: maps.Clone(s.disabled),
 		cfgs:     maps.Clone(s.cfgs),
+		born:     s.born,
 	}
+}
+
+// bornAfter returns next's born map, the generation that follows cur: a
+// name cur holds keeps its version, a new one takes next's. cur's map is
+// reused when the names are the same.
+func bornAfter(cur, next *catState) map[string]uint64 {
+	same := len(next.entries) == len(cur.born)
+	if same {
+		for name := range next.entries {
+			if _, ok := cur.born[name]; !ok {
+				same = false
+				break
+			}
+		}
+	}
+	if same {
+		return cur.born
+	}
+	out := make(map[string]uint64, len(next.entries))
+	for name := range next.entries {
+		if v, ok := cur.born[name]; ok {
+			out[name] = v
+		} else {
+			out[name] = next.version
+		}
+	}
+	return out
 }
 
 // cfg returns the settings of the set with key. A set with none (which

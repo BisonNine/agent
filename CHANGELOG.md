@@ -87,6 +87,10 @@ project uses [Semantic Versioning](https://semver.org/).
   tool is usable when it is on at both levels. A disabled tool stays
   registered but is offered to no model, discovery index or MCP client,
   and a call to it returns `tool "x" is disabled`.
+- `toolkit` quieter, bounded bookkeeping: a gate's result is not logged
+  (its caller logs its own decisions), a write that changes nothing logs
+  nothing, and `Stats` drops a tool's counts when the tool is removed (a
+  tool replaced under the same name keeps them).
 - `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
   that came from outside the process as data for the model.
 - `discovery` package, progressive tool discovery over a `toolkit`

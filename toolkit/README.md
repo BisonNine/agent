@@ -84,9 +84,12 @@ Rules:
   a tool not found, removed, not granted or disabled is refused as
   `Execute` refuses it and the gate is not called. Otherwise the gate gets
   that tool's `Info` (with `Meta`); a non-nil `Result` is returned without
-  running the tool or counting it in `Stats` (logged "Tool call refused"
-  when it is an expected refusal), and nil runs exactly the tool the gate
-  saw. A nil gate is `Execute`.
+  running the tool, counting it in `Stats` or logging anything (the
+  gate's caller logs its own decisions), and nil runs exactly the tool the
+  gate saw. A nil gate is `Execute`.
+- **`Stats`** counts, per set, the calls and errors of each tool that ran.
+  A tool's counts go when it is removed from the catalogue; a tool
+  replaced under the same name keeps them.
 - **Private state.** `Catalog` and `Set` have no exported fields; `List`,
   `Get` and the snapshot accessors return copies.
 
@@ -152,6 +155,8 @@ the `discovery` package's.
 
 `WithLogger(*slog.Logger)`; records carry `component=toolkit`. The default
 discards. Tool arguments are never logged.
+A write that changes nothing (a `Remove` or `Replace` that matches no
+tool) logs nothing, sends no notice and does not move `Version`.
 
 `WithTruncate(fn func(s string, limit int) string)` sets how the catalogue
 shortens text it logs (the `error` of "Tool execution failed" and "Tool

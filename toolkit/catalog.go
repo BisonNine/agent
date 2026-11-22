@@ -147,6 +147,9 @@ func (c *Catalog) change(fn func(next *catState) (changed bool)) {
 // changes set settings publishes a clone with the same version: each
 // changed setting carries its own. Caller holds c.mu.
 func (c *Catalog) commitLocked(cur, next *catState) {
+	if next.version != cur.version {
+		next.born = bornAfter(cur, next)
+	}
 	c.state.Store(next)
 	ev := event{oldState: cur, newState: next}
 	for s := range c.watched {
@@ -300,7 +303,9 @@ func (c *Catalog) ReplaceEntries(prefix string, entries []Entry) (added, removed
 		added = len(put)
 		return removed > 0 || added > 0
 	})
-	c.logger.Debug("Replaced tools by prefix", "prefix", prefix, "removed", removed, "added", added)
+	if removed > 0 || added > 0 {
+		c.logger.Debug("Replaced tools by prefix", "prefix", prefix, "removed", removed, "added", added)
+	}
 	return added, removed
 }
 

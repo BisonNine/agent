@@ -83,8 +83,9 @@ func TestExecuteGated_RefusalNotRun(t *testing.T) {
 	if st := c.Stats(); len(st) != 0 {
 		t.Errorf("Stats = %+v, want none", st)
 	}
-	if !strings.Contains(logs.String(), "Tool call refused") || strings.Contains(logs.String(), "Tool execution failed") {
-		t.Errorf("logs = %s", logs.String())
+	// The gate's caller logs its own decision: the SDK logs nothing.
+	if logs.Len() != 0 {
+		t.Errorf("a gate refusal was logged: %s", logs.String())
 	}
 
 	// A result that is not a refusal is returned as is and logs nothing extra.
@@ -93,8 +94,8 @@ func TestExecuteGated_RefusalNotRun(t *testing.T) {
 	if got := c.ExecuteGated(context.Background(), "refund", nil, nil, func(context.Context, Info) *Result { return plain }); got != plain {
 		t.Errorf("result = %+v, want the gate's", got)
 	}
-	if strings.Contains(logs.String(), "refused") || strings.Contains(logs.String(), "failed") {
-		t.Errorf("logs = %s", logs.String())
+	if logs.Len() != 0 {
+		t.Errorf("a gate result was logged: %s", logs.String())
 	}
 	if n := tool.runs.Load(); n != 0 {
 		t.Errorf("tool ran %d times", n)

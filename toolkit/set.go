@@ -74,12 +74,19 @@ type Set struct {
 	subs   map[uint64]func(Change)
 	nextID uint64
 
-	statMu sync.Mutex
-	stats  map[string]*Stat // internal name → its count
+	statMu   sync.Mutex
+	stats    map[string]*statEntry // internal name → its count
+	statSeen uint64                // the catalogue version stats were last pruned at
+}
+
+// statEntry is one tool's count and the incarnation of its name it counts.
+type statEntry struct {
+	stat Stat
+	born uint64 // catState.born of the name when counting began
 }
 
 func newSet(c *Catalog, key uint64) *Set {
-	return &Set{cat: c, key: key, subs: map[uint64]func(Change){}, stats: map[string]*Stat{}}
+	return &Set{cat: c, key: key, subs: map[uint64]func(Change){}, stats: map[string]*statEntry{}}
 }
 
 // load returns the current generation and the set's settings in it: one
@@ -259,30 +266,56 @@ type Stat struct {
 	Errors uint64 // calls whose result was an error
 }
 
-// Stats returns a count per tool of the calls that ran through the set
-// since it was created, sorted by name. Calls the set refused (an unknown,
-// ungranted, disabled or removed tool) are not counted.
+// Stats returns a count per tool of the calls that ran through the set,
+// sorted by name. Calls the set refused (an unknown, ungranted, disabled or
+// removed tool) are not counted. A tool's count is dropped when it is
+// removed from the catalogue; one replaced under the same name keeps it.
 func (s *Set) Stats() []Stat {
 	s.statMu.Lock()
 	defer s.statMu.Unlock()
+	s.pruneStatsLocked(s.cat.state.Load())
 	out := make([]Stat, 0, len(s.stats))
 	for _, name := range slices.Sorted(maps.Keys(s.stats)) {
-		out = append(out, *s.stats[name])
+		out = append(out, s.stats[name].stat)
 	}
 	return out
 }
 
+// count records one call of name. A name the catalogue no longer holds is
+// not counted, so a call finishing after its tool was removed leaves no
+// count behind.
 func (s *Set) count(name string, r *Result) {
 	s.statMu.Lock()
 	defer s.statMu.Unlock()
-	st, ok := s.stats[name]
+	st := s.cat.state.Load()
+	born, ok := st.born[name]
 	if !ok {
-		st = &Stat{Name: name}
-		s.stats[name] = st
+		return
 	}
-	st.Calls++
+	s.pruneStatsLocked(st)
+	e := s.stats[name]
+	if e == nil || e.born != born {
+		e = &statEntry{stat: Stat{Name: name}, born: born}
+		s.stats[name] = e
+	}
+	e.stat.Calls++
 	if r.IsError {
-		st.Errors++
+		e.stat.Errors++
+	}
+}
+
+// pruneStatsLocked drops the counts of names st no longer holds, or holds
+// as a later incarnation. It does the work once per catalogue version.
+// Caller holds statMu.
+func (s *Set) pruneStatsLocked(st *catState) {
+	if st.version == s.statSeen {
+		return
+	}
+	s.statSeen = st.version
+	for name, e := range s.stats {
+		if born, ok := st.born[name]; !ok || born != e.born {
+			delete(s.stats, name)
+		}
 	}
 }
 
@@ -313,8 +346,9 @@ type Gate func(ctx context.Context, info Info) *Result
 // running it. name is resolved as Execute resolves it, in one generation;
 // a tool not found, removed, not granted or disabled is refused as Execute
 // refuses it and gate is not called. Otherwise gate is called with that
-// tool's Info; a non-nil result is returned without running the tool (and
-// is not counted in Stats), and nil runs exactly the tool gate saw, never a
+// tool's Info; a non-nil result is returned without running the tool (it
+// is neither counted in Stats nor logged: the gate's caller logs its own
+// decisions), and nil runs exactly the tool gate saw, never a
 // tool resolved again. A nil gate makes it Execute.
 func (s *Set) ExecuteGated(ctx context.Context, name string, args map[string]any, cb AsyncCallback, gate Gate) *Result {
 	st, cfg := s.load()
@@ -328,8 +362,6 @@ func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name st
 	cb AsyncCallback, snap *Snapshot, gate Gate,
 ) (res *Result, noResult bool) {
 	log := s.cat.logger
-	log.InfoContext(ctx, "Tool execution started", "tool", name)
-
 	e, canonical := st.lookup(name)
 	if e == nil {
 		if snap != nil && snap.has(name) {
@@ -348,15 +380,14 @@ func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name st
 		return ErrorResult(fmt.Sprintf("tool %q is disabled", name)).WithError(Refusal(ErrToolDisabled)), false
 	}
 	if gate != nil {
+		// The gate's result is the caller's decision, and the caller's to
+		// log: nothing is logged for it here.
 		if refused := gate(ctx, s.info(st, cfg, e)); refused != nil {
-			if refused.IsError && IsExpectedRefusal(refused.Err) {
-				log.WarnContext(ctx, "Tool call refused",
-					"tool", name, "error", s.cat.truncate(refused.ForLLM, logErrorRunes))
-			}
 			return refused, false
 		}
 	}
 
+	log.InfoContext(ctx, "Tool execution started", "tool", name)
 	var result *Result
 	start := time.Now()
 	if async, ok := e.tool.(AsyncExecutor); ok && cb != nil {
