@@ -40,7 +40,8 @@ func (t *Tools) execHandler(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	}
 	background := boolArg(call.Args, "background", false)
 	notify := boolArg(call.Args, "notify", true)
-	timeout := t.timeoutArg(call.Args, "timeout_seconds", t.cfg.Timeout)
+	defTimeout, _ := t.currentTimeouts()
+	timeout := t.timeoutArg(call.Args, "timeout_seconds", defTimeout)
 	if background {
 		switch {
 		case t.unattended(call):
@@ -66,6 +67,8 @@ func (t *Tools) execHandler(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		return t.runSimple(ctx, command, dir, env, budget(ctx, timeout)), nil
 	}
 
+	// The route is taken before the process starts, so the job's notice can
+	// never come before it.
 	info, err := t.m.Start(ctx, proc.Spec{
 		Owner:    owner,
 		Command:  command,
@@ -74,11 +77,12 @@ func (t *Tools) execHandler(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		Notify:   background && notify,
 		Input:    background,
 		TrackDir: !background,
+		Route:    t.route(call),
 	})
 	if err != nil {
 		return startError(err), nil
 	}
-	t.audit(AuditEvent{Kind: AuditStart, Call: call, Owner: owner, JobID: info.ID, Command: command, Dir: dir, Background: background})
+	t.audit(AuditEvent{Kind: AuditStart, Call: call, Owner: owner, JobID: info.ID, Command: command, Dir: dir, Background: background, Route: info.Route})
 	if background {
 		return textResult(backgroundText(info)), nil
 	}
@@ -118,7 +122,7 @@ func (t *Tools) foreground(call *toolspec.ToolCall, owner string, info proc.Info
 	if r.Info.State != proc.StateStopped {
 		return t.finished(call, r) // it ended by itself before the stop
 	}
-	t.audit(AuditEvent{Kind: AuditStop, Call: call, Owner: owner, JobID: info.ID, Command: info.Command})
+	t.audit(AuditEvent{Kind: AuditStop, Call: call, Owner: owner, JobID: info.ID, Command: info.Command, Route: info.Route})
 	if r.Omitted == 0 {
 		t.remove(info.ID)
 	}
@@ -282,8 +286,8 @@ func (t *Tools) timeoutArg(args map[string]any, key string, def time.Duration) t
 	if !ok || n <= 0 {
 		return def
 	}
-	if n > int64(t.cfg.MaxTimeout/time.Second) {
-		return t.cfg.MaxTimeout
+	if _, maxTimeout := t.currentTimeouts(); n > int64(maxTimeout/time.Second) {
+		return maxTimeout
 	}
 	return time.Duration(n) * time.Second
 }

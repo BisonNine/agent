@@ -200,9 +200,12 @@ func waitText(r proc.WaitResult, waited time.Duration) string {
 // noticeText is the end-of-job notice for the agent.
 func noticeText(i proc.Info, last string) string {
 	var b strings.Builder
-	if i.State == proc.StateLost {
+	switch {
+	case i.State == proc.StateLost:
 		fmt.Fprintf(&b, "Shell job %s was lost: the service restarted while it ran. It was not restarted.", i.ID)
-	} else {
+	case i.State == proc.StateStopped && i.StopReason == proc.StopShutdown:
+		fmt.Fprintf(&b, "Shell job %s was stopped when the service restarted, and was not started again.", i.ID)
+	default:
 		fmt.Fprintf(&b, "Shell job %s ended: %s after %s.", i.ID, stateText(i), human(i.Ended.Sub(i.Started)))
 	}
 	fmt.Fprintf(&b, "\nCommand: %s\nOutput file: %s", shortCommand(i.Command), i.OutputFile)

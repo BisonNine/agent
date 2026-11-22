@@ -11,8 +11,9 @@
 //
 // The manager keeps a small JSON record next to each job's log, so jobs that
 // were running when the process died are marked lost at the next start
-// (never relaunched). Finished jobs' logs and records are removed after the
-// retention period.
+// (never relaunched), and jobs whose end Close kept quiet are announced
+// then. Finished jobs' logs and records are removed after the retention
+// period.
 //
 // Jobs need Unix process groups. On other platforms New works but Start
 // returns ErrUnsupported (see Supported).
@@ -124,8 +125,11 @@ type Options struct {
 	// Logger receives diagnostics. Nil: discarded.
 	Logger *slog.Logger
 	// OnEnd is called once for each job that ends (exited or stopped), from
-	// the job's own goroutine, and once for each job found lost by New,
-	// before New returns. It must not block for long.
+	// the job's own goroutine, and must not block for long. It is not called
+	// for a job that ends once Close has begun: the caller is shutting down.
+	// New calls it, before it returns, for each job found lost and for each
+	// job with Notify on that ended while the previous manager was closing
+	// (stopped with StopShutdown, or exited by itself), once.
 	OnEnd func(Info)
 }
 
@@ -144,6 +148,10 @@ type Spec struct {
 	Input bool
 	// TrackDir records the directory the command ends in (Info.EndDir).
 	TrackDir bool
+	// Route is an opaque value of the caller's, kept with the job and
+	// returned as Info.Route (so OnEnd receives it). It is held in memory
+	// only: a job loaded from its record by New has a nil Route.
+	Route any
 }
 
 // Info is a snapshot of a job.
@@ -166,6 +174,7 @@ type Info struct {
 	Notify       bool
 	Input        bool
 	EndDir       string // with Spec.TrackDir: where the command ended, if known
+	Route        any    // Spec.Route; nil for a job loaded from its record
 }
 
 // Running reports whether the job is still running.
@@ -199,19 +208,24 @@ type WaitResult struct {
 
 // Manager runs and tracks jobs. Its methods are safe for concurrent use.
 type Manager struct {
-	dir    string
-	limits Limits
-	modes  fsmode.Modes
-	grace  time.Duration
-	clock  Clock
-	log    *slog.Logger
-	onEnd  func(Info)
+	dir   string
+	modes fsmode.Modes
+	grace time.Duration
+	clock Clock
+	log   *slog.Logger
+	onEnd func(Info)
 
 	mu      sync.Mutex
 	jobs    map[string]*job
 	pending map[string]*job // reserved by Start, not yet launched
 	closed  bool
 	wg      sync.WaitGroup // job goroutines and starts in progress
+
+	// limMu guards the limits. It is a leaf lock: nothing else is taken
+	// while it is held.
+	limMu      sync.Mutex
+	limits     Limits
+	limChanged chan struct{} // closed and replaced by SetLimits
 }
 
 // Supported reports whether this platform can run jobs.
@@ -224,21 +238,12 @@ func New(opts Options) (*Manager, error) {
 	if opts.Dir == "" {
 		return nil, errors.New("proc: Dir is required")
 	}
-	l := opts.Limits
-	if l.MaxJobs < 0 || l.MaxJobTime < 0 || l.MaxOutputBytes < 0 || l.LogRetention < 0 || opts.Grace < 0 {
-		return nil, errors.New("proc: limits and grace must not be negative")
+	if opts.Grace < 0 {
+		return nil, errors.New("proc: grace must not be negative")
 	}
-	if l.MaxJobs == 0 {
-		l.MaxJobs = DefaultMaxJobs
-	}
-	if l.MaxJobTime == 0 {
-		l.MaxJobTime = DefaultMaxJobTime
-	}
-	if l.MaxOutputBytes == 0 {
-		l.MaxOutputBytes = DefaultMaxOutputBytes
-	}
-	if l.LogRetention == 0 {
-		l.LogRetention = DefaultLogRetention
+	l, err := withDefaults(opts.Limits)
+	if err != nil {
+		return nil, err
 	}
 	modes := opts.Modes.Or(fsmode.Modes{Dir: fsmode.DefaultDir, File: fsmode.DefaultFile})
 	dir, err := filepath.Abs(opts.Dir)
@@ -252,15 +257,16 @@ func New(opts Options) (*Manager, error) {
 		return nil, fmt.Errorf("proc: set log directory mode: %w", err)
 	}
 	m := &Manager{
-		dir:     dir,
-		limits:  l,
-		modes:   modes,
-		grace:   opts.Grace,
-		clock:   opts.Clock,
-		log:     opts.Logger,
-		onEnd:   opts.OnEnd,
-		jobs:    make(map[string]*job),
-		pending: make(map[string]*job),
+		dir:        dir,
+		modes:      modes,
+		grace:      opts.Grace,
+		clock:      opts.Clock,
+		log:        opts.Logger,
+		onEnd:      opts.OnEnd,
+		jobs:       make(map[string]*job),
+		pending:    make(map[string]*job),
+		limits:     l,
+		limChanged: make(chan struct{}),
 	}
 	if m.grace == 0 {
 		m.grace = DefaultGrace
@@ -272,24 +278,104 @@ func New(opts Options) (*Manager, error) {
 		m.log = slog.New(slog.DiscardHandler)
 	}
 	m.log = m.log.With("component", "shell")
-	lost, err := m.load()
+	announce, err := m.load()
 	if err != nil {
 		return nil, err
 	}
 	m.sweep()
 	if m.onEnd != nil {
-		for _, info := range lost {
+		for _, info := range announce {
 			m.onEnd(info)
 		}
 	}
 	return m, nil
 }
 
+// withDefaults refuses negative limits and gives zero ones their default.
+func withDefaults(l Limits) (Limits, error) {
+	if l.MaxJobs < 0 || l.MaxJobTime < 0 || l.MaxOutputBytes < 0 || l.LogRetention < 0 {
+		return Limits{}, errors.New("proc: limits must not be negative")
+	}
+	if l.MaxJobs == 0 {
+		l.MaxJobs = DefaultMaxJobs
+	}
+	if l.MaxJobTime == 0 {
+		l.MaxJobTime = DefaultMaxJobTime
+	}
+	if l.MaxOutputBytes == 0 {
+		l.MaxOutputBytes = DefaultMaxOutputBytes
+	}
+	if l.LogRetention == 0 {
+		l.LogRetention = DefaultLogRetention
+	}
+	return l, nil
+}
+
 // Dir returns the absolute log directory.
 func (m *Manager) Dir() string { return m.dir }
 
 // Limits returns the limits in force, defaults applied.
-func (m *Manager) Limits() Limits { return m.limits }
+func (m *Manager) Limits() Limits {
+	m.limMu.Lock()
+	defer m.limMu.Unlock()
+	return m.limits
+}
+
+// SetLimits replaces the limits, checked as by New: a negative field is
+// refused (changing nothing) and a zero one takes its default. Once it
+// returns they apply as follows:
+//   - MaxJobs to later starts; running jobs over a lowered limit are not
+//     stopped, but no start succeeds until the owner is below it.
+//   - MaxJobTime to running jobs too, measured from each job's start: one
+//     already older than a shortened limit is stopped at once with
+//     StopTimeLimit.
+//   - MaxOutputBytes to output running jobs write from now on. A head a
+//     log has already kept is not shrunk.
+//   - LogRetention at the next sweep (the next Start).
+func (m *Manager) SetLimits(l Limits) error {
+	l, err := withDefaults(l)
+	if err != nil {
+		return err
+	}
+	m.limMu.Lock()
+	m.limits = l
+	close(m.limChanged)
+	m.limChanged = make(chan struct{})
+	m.limMu.Unlock()
+
+	// Pending jobs are included: one that has not opened its log yet reads
+	// the new limit when it does; one that has is updated here.
+	m.mu.Lock()
+	jobs := m.runningLocked("")
+	for _, j := range m.pending {
+		jobs = append(jobs, j)
+	}
+	m.mu.Unlock()
+	for _, j := range jobs {
+		j.mu.Lock()
+		if j.out != nil && j.out.f != nil {
+			// The limit in force now, not l: a later SetLimits may have
+			// passed this one.
+			j.out.setLimit(m.Limits().MaxOutputBytes)
+		}
+		j.mu.Unlock()
+	}
+	return nil
+}
+
+// jobTimeLimit returns MaxJobTime and a channel closed when it may change.
+func (m *Manager) jobTimeLimit() (time.Duration, <-chan struct{}) {
+	m.limMu.Lock()
+	defer m.limMu.Unlock()
+	return m.limits.MaxJobTime, m.limChanged
+}
+
+// isClosed reports whether Close has begun.
+func (m *Manager) isClosed() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.closed
+}
 
 // Start starts spec as a job and returns at once. The job does not depend on
 // ctx: it runs until it ends, is stopped, or reaches the time limit. A start
@@ -326,6 +412,10 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Info, error) {
 	closed := m.closed
 	m.mu.Unlock()
 	if closed {
+		// The caller is told it did not start: never announce it.
+		j.mu.Lock()
+		j.notify = false
+		j.mu.Unlock()
 		j.stop(m.grace, StopShutdown)
 		return Info{}, ErrClosed
 	}
@@ -352,9 +442,9 @@ func (m *Manager) reserve(spec Spec) (*job, error) {
 			reserved++
 		}
 	}
-	if len(running)+reserved >= m.limits.MaxJobs {
+	if limit := m.Limits().MaxJobs; len(running)+reserved >= limit {
 		m.mu.Unlock()
-		return nil, &LimitError{Owner: spec.Owner, Max: m.limits.MaxJobs, Running: infos(running)}
+		return nil, &LimitError{Owner: spec.Owner, Max: limit, Running: infos(running)}
 	}
 	defer m.mu.Unlock()
 	id, err := m.newID()
@@ -370,6 +460,7 @@ func (m *Manager) reserve(spec Spec) (*job, error) {
 		input:   spec.Input,
 		state:   StateRunning,
 		notify:  spec.Notify,
+		route:   spec.Route,
 		started: m.clock.Now(),
 		done:    make(chan struct{}),
 		changed: make(chan struct{}),
@@ -624,6 +715,9 @@ func (m *Manager) removeJob(j *job) {
 
 // Close stops every job (terminate, grace, kill) and refuses new starts. It
 // returns when they have all ended, or with ctx's error if ctx ends first.
+// OnEnd is not called for the jobs that end from here on; those with Notify
+// on are recorded as not yet announced, and the next New over the same
+// directory announces them.
 func (m *Manager) Close(ctx context.Context) error {
 	m.mu.Lock()
 	m.closed = true
@@ -644,7 +738,7 @@ func (m *Manager) Close(ctx context.Context) error {
 
 // sweep removes ended jobs older than the retention period.
 func (m *Manager) sweep() {
-	cutoff := m.clock.Now().Add(-m.limits.LogRetention)
+	cutoff := m.clock.Now().Add(-m.Limits().LogRetention)
 	m.mu.Lock()
 	var ended []*job
 	for _, j := range m.jobs {

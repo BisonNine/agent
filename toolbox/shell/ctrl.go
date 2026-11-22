@@ -103,7 +103,7 @@ func (t *Tools) input(call *toolspec.ToolCall, owner string) *toolspec.Result {
 	case err != nil:
 		return errResult(fmt.Sprintf("Could not send input to job %s: %v.", info.ID, err))
 	}
-	t.audit(AuditEvent{Kind: AuditInput, Call: call, Owner: owner, JobID: info.ID, Command: info.Command, Bytes: len(text)})
+	t.audit(AuditEvent{Kind: AuditInput, Call: call, Owner: owner, JobID: info.ID, Command: info.Command, Bytes: len(text), Route: info.Route})
 	return textResult(fmt.Sprintf("Sent %d bytes to job %s.", len(text), info.ID))
 }
 
@@ -148,5 +148,5 @@ func (t *Tools) stopJob(call *toolspec.ToolCall, owner string, info proc.Info) {
 		t.log.Warn("shell job not stopped", "job", info.ID, "error", err)
 		return
 	}
-	t.audit(AuditEvent{Kind: AuditStop, Call: call, Owner: owner, JobID: info.ID, Command: info.Command})
+	t.audit(AuditEvent{Kind: AuditStop, Call: call, Owner: owner, JobID: info.ID, Command: info.Command, Route: info.Route})
 }

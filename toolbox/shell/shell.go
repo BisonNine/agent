@@ -79,6 +79,7 @@ type AuditEvent struct {
 	Dir        string // AuditStart: the working directory
 	Background bool   // AuditStart: started as a background job
 	Bytes      int    // AuditInput: bytes sent (never the content)
+	Route      any    // the job's Config.Route value
 }
 
 // Notice is the end-of-job notice for a job started with notify on (the
@@ -94,6 +95,10 @@ type Notice struct {
 	Duration   time.Duration
 	LastLines  string // the last lines of output
 	OutputFile string
+	// Route is what Config.Route returned when the job was about to start.
+	// It is nil for a job announced after a restart (lost, or stopped by
+	// the shutdown): route those by Owner.
+	Route any
 	// Text is the notice written for the agent, ready to deliver.
 	Text string
 }
@@ -136,9 +141,27 @@ type Config struct {
 	Notice func(Notice)
 	// Audit records starts, input and stops. Nil: not audited.
 	Audit func(AuditEvent)
+	// Route returns the host's value for routing a job's notice (where to
+	// deliver it, say). It is called once for every job about to start,
+	// foreground commands included (one kept at its timeout becomes a job
+	// whose end is announced), before the process starts; the value comes
+	// back as Notice.Route and AuditEvent.Route. A Notice is never
+	// delivered before Route has returned for its job. The value is kept in
+	// memory only: a job announced after a restart has a nil Route. If the
+	// start is then refused (a limit, shutdown) the value is dropped. Nil:
+	// Route is always nil.
+	Route func(call *toolspec.ToolCall) any
 	// Logger receives diagnostics, and is the manager's logger unless
 	// Jobs.Logger is set. Nil: discarded.
 	Logger *slog.Logger
+}
+
+// Settings are what Update can change while the tools are in use. A zero
+// field takes its default, as in Config and proc.Options.
+type Settings struct {
+	Timeout    time.Duration // the default foreground timeout
+	MaxTimeout time.Duration // the most timeout_seconds and a wait may ask for
+	Limits     proc.Limits   // the job limits (see proc.Manager.SetLimits)
 }
 
 // Tools is the shell tool provider.
@@ -149,6 +172,12 @@ type Tools struct {
 	grace time.Duration
 	jobs  bool // this platform runs jobs
 
+	// tmu guards the timeouts, which Update changes; cfg's copies are not
+	// read after New.
+	tmu        sync.Mutex
+	timeout    time.Duration
+	maxTimeout time.Duration
+
 	mu   sync.Mutex
 	dirs map[string]string // remembered working directory per agent and session
 }
@@ -156,27 +185,21 @@ type Tools struct {
 // New creates the tools and their process manager. Jobs found lost in
 // cfg.Jobs.Dir are announced through cfg.Notice before New returns.
 func New(cfg Config) (*Tools, error) {
-	if cfg.Timeout < 0 || cfg.MaxTimeout < 0 {
-		return nil, errors.New("shell: timeouts must not be negative")
-	}
-	if cfg.Timeout == 0 {
-		cfg.Timeout = DefaultTimeout
-	}
-	if cfg.MaxTimeout == 0 {
-		cfg.MaxTimeout = DefaultMaxTimeout
-	}
-	if cfg.Timeout > cfg.MaxTimeout {
-		return nil, fmt.Errorf("shell: timeout %v exceeds the maximum %v", cfg.Timeout, cfg.MaxTimeout)
+	timeout, maxTimeout, err := timeouts(cfg.Timeout, cfg.MaxTimeout)
+	if err != nil {
+		return nil, err
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.New(slog.DiscardHandler)
 	}
 	t := &Tools{
-		cfg:   cfg,
-		log:   cfg.Logger.With("component", "shell"),
-		grace: cfg.Jobs.Grace,
-		jobs:  proc.Supported(),
-		dirs:  make(map[string]string),
+		cfg:        cfg,
+		log:        cfg.Logger.With("component", "shell"),
+		grace:      cfg.Jobs.Grace,
+		jobs:       proc.Supported(),
+		timeout:    timeout,
+		maxTimeout: maxTimeout,
+		dirs:       make(map[string]string),
 	}
 	if t.grace == 0 {
 		t.grace = proc.DefaultGrace
@@ -198,6 +221,49 @@ func New(cfg Config) (*Tools, error) {
 	}
 	t.m = m
 	return t, nil
+}
+
+// timeouts checks the foreground timeouts and applies their defaults.
+func timeouts(timeout, maxTimeout time.Duration) (time.Duration, time.Duration, error) {
+	if timeout < 0 || maxTimeout < 0 {
+		return 0, 0, errors.New("shell: timeouts must not be negative")
+	}
+	if timeout == 0 {
+		timeout = DefaultTimeout
+	}
+	if maxTimeout == 0 {
+		maxTimeout = DefaultMaxTimeout
+	}
+	if timeout > maxTimeout {
+		return 0, 0, fmt.Errorf("shell: timeout %v exceeds the maximum %v", timeout, maxTimeout)
+	}
+	return timeout, maxTimeout, nil
+}
+
+// Update changes the timeouts and the job limits, checked as by New; on an
+// error nothing changes. It is safe to call at any time, from any
+// goroutine. The timeouts apply to calls that start after it returns: a
+// foreground command or a wait already running keeps the timeout it began
+// with. The limits apply as proc.Manager.SetLimits describes.
+func (t *Tools) Update(s Settings) error {
+	timeout, maxTimeout, err := timeouts(s.Timeout, s.MaxTimeout)
+	if err != nil {
+		return err
+	}
+	t.tmu.Lock()
+	defer t.tmu.Unlock()
+	if err := t.m.SetLimits(s.Limits); err != nil {
+		return fmt.Errorf("shell: %w", err)
+	}
+	t.timeout, t.maxTimeout = timeout, maxTimeout
+	return nil
+}
+
+// currentTimeouts returns the default and the maximum timeout in force.
+func (t *Tools) currentTimeouts() (time.Duration, time.Duration) {
+	t.tmu.Lock()
+	defer t.tmu.Unlock()
+	return t.timeout, t.maxTimeout
 }
 
 // Manager returns the process manager, for the host's own use (listing an
@@ -267,6 +333,13 @@ func (t *Tools) workspace(call *toolspec.ToolCall) string {
 	return t.cfg.Workspace(call)
 }
 
+func (t *Tools) route(call *toolspec.ToolCall) any {
+	if t.cfg.Route == nil {
+		return nil
+	}
+	return t.cfg.Route(call)
+}
+
 func (t *Tools) audit(e AuditEvent) {
 	if t.cfg.Audit != nil {
 		t.cfg.Audit(e)
@@ -289,6 +362,7 @@ func (t *Tools) jobEnded(info proc.Info) {
 		Duration:   info.Ended.Sub(info.Started),
 		LastLines:  lastLines(info.OutputFile, noticeLines, noticeBytes),
 		OutputFile: info.OutputFile,
+		Route:      info.Route,
 	}
 	n.Text = noticeText(info, n.LastLines)
 	t.cfg.Notice(n)

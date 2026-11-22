@@ -33,6 +33,7 @@ type job struct {
 	command string
 	dir     string
 	input   bool
+	route   any // the caller's Spec.Route; in memory only
 	started time.Time
 
 	pid     int
@@ -56,6 +57,9 @@ type job struct {
 	changed    chan struct{} // closed and replaced on new output and on end
 	cursor     int64         // logical output offset the next Wait starts from
 	removed    bool          // files deleted: never write the record again
+	// unannounced: the job ended with notify on while the manager was
+	// closing, so OnEnd was not called; the next New announces it.
+	unannounced bool
 }
 
 // isDone reports whether the job has ended. It needs no lock.
@@ -136,8 +140,10 @@ func (m *Manager) launch(j *job, spec Spec) error {
 	}
 	closeFiles(childEnds)
 
+	// The limit is read under j.mu so a concurrent SetLimits either is seen
+	// here or updates the log afterwards.
 	j.mu.Lock()
-	j.out = newLogFile(logf.Name(), logf, m.limits.MaxOutputBytes)
+	j.out = newLogFile(logf.Name(), logf, m.Limits().MaxOutputBytes)
 	j.mu.Unlock()
 	j.pid = cmd.Process.Pid
 	j.output = outR
@@ -228,6 +234,9 @@ func (j *job) finish(ps *os.ProcessState, waitErr error) {
 	}
 	j.stdinMu.Unlock()
 
+	// Read before taking j.mu: m.mu is never taken under a job's lock.
+	closing := j.m.isClosed()
+
 	// The final state is visible to info() from here, but the job counts as
 	// ended (Wait, SetNotify) only once done closes, after the record is
 	// saved, so a caller that saw the end never races the record.
@@ -236,6 +245,10 @@ func (j *job) finish(ps *os.ProcessState, waitErr error) {
 	if j.stopReason != "" {
 		j.state = StateStopped
 	}
+	// A stop for shutdown implies Close has begun even if closing was read
+	// just before it did. Its end is left for the next New to announce.
+	quiet := closing || j.stopReason == StopShutdown
+	j.unannounced = quiet && j.notify
 	j.exitCode = code
 	j.signal = signal
 	j.ended = j.m.clock.Now()
@@ -263,7 +276,7 @@ func (j *job) finish(ps *os.ProcessState, waitErr error) {
 	info := j.infoLocked()
 	j.mu.Unlock()
 	j.m.log.Debug("shell job ended", "job", j.id, "state", info.State, "exit_code", info.ExitCode, "signal", info.Signal)
-	if j.m.onEnd != nil {
+	if j.m.onEnd != nil && !quiet {
 		j.m.onEnd(info)
 	}
 }
@@ -281,15 +294,28 @@ func readEndDir(f *os.File) string {
 	return dir
 }
 
-// enforceTimeLimit stops the job when it runs past MaxJobTime.
+// enforceTimeLimit stops the job when it runs past MaxJobTime, measured from
+// its start. A change of the limit (SetLimits) re-arms the timer, so a job
+// already older than a shortened limit is stopped at once.
 func (j *job) enforceTimeLimit() {
-	t := j.m.clock.NewTimer(j.m.limits.MaxJobTime)
-	select {
-	case <-j.done:
-		t.Stop()
-	case <-t.C():
-		j.m.log.Info("shell job reached its time limit", "job", j.id, "limit", j.m.limits.MaxJobTime)
-		j.stop(j.m.grace, StopTimeLimit)
+	for {
+		limit, changed := j.m.jobTimeLimit()
+		t := j.m.clock.NewTimer(j.started.Add(limit).Sub(j.m.clock.Now()))
+		select {
+		case <-j.done:
+			t.Stop()
+			return
+		case <-changed:
+			t.Stop()
+		case <-t.C():
+			// The limit may have been raised as the timer fired.
+			if limit, _ = j.m.jobTimeLimit(); j.m.clock.Now().Before(j.started.Add(limit)) {
+				continue
+			}
+			j.m.log.Info("shell job reached its time limit", "job", j.id, "limit", limit)
+			j.stop(j.m.grace, StopTimeLimit)
+			return
+		}
 	}
 }
 
@@ -439,6 +465,7 @@ func (j *job) infoLocked() Info {
 		Notify:     j.notify,
 		Input:      j.input,
 		EndDir:     j.endDir,
+		Route:      j.route,
 	}
 	if j.state == StateExited || j.state == StateStopped {
 		info.ExitCode = j.exitCode

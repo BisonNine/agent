@@ -49,9 +49,15 @@ func newLogFile(path string, f *os.File, limit int64) *logFile {
 	return l
 }
 
+// setLimit sets the size the log is kept to: half head, half tail. Once the
+// log has been compacted its head is fixed in the file, so a new limit only
+// changes the tail: it keeps what the limit leaves after the head, and at
+// least half the limit.
 func (l *logFile) setLimit(limit int64) {
-	l.headKeep = limit / 2
-	l.tailKeep = limit - l.headKeep
+	if !l.compacted {
+		l.headKeep = limit / 2
+	}
+	l.tailKeep = max(limit-l.headKeep, limit-limit/2)
 	l.slack = max(limit/4, minSlack)
 }
 

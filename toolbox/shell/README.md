@@ -37,7 +37,10 @@ to files, and tracks them. `proc/proctest` has a fake clock for tests.
 - **Restart.** A job recorded as running when the manager starts was lost
   with the old process: it is marked `lost`, announced once, and never
   relaunched.
-- **Shutdown.** `Close` stops every job.
+- **Shutdown.** `Close` stops every job and delivers no notice, since the
+  host is stopping. A job it stopped with `notify` on is announced once by
+  the next `New` on the same directory (`StopReason` "shutdown": "Shell job
+  … was stopped when the service restarted, and was not started again.").
 - **Without shell_ctrl or unattended.** When `CtrlAvailable` says the caller
   has no `shell_ctrl`, or `Unattended` says nobody will collect a job, a
   foreground timeout stops the command and `background` is refused;
@@ -59,6 +62,19 @@ Foreground commands are jobs while they run, so they count towards
 `MaxJobs`. A foreground command whose whole output was returned leaves no
 log behind.
 
+**Changing them at run time.** `tools.Update(shell.Settings{...})` (or
+`Manager().SetLimits`) is checked like `New`: a negative value is refused
+and nothing changes; zero is the default. It applies to calls that start
+after it returns:
+
+| Setting | Takes effect |
+| --- | --- |
+| `Timeout`, `MaxTimeout` | for later calls; a foreground command already waiting keeps its timeout |
+| `MaxJobs` | for later starts; lowering it stops nothing, starts are refused until below it |
+| `MaxJobTime` | for running jobs too, from their start: one already older is stopped at once ("time limit") |
+| `MaxOutputBytes` | for output written from now on; a head already kept is not shrunk |
+| `LogRetention` | at the next sweep (the next start) |
+
 ## Mounting it in a host
 
 ```go
@@ -78,12 +94,48 @@ tools, err := shell.New(shell.Config{
     Unattended:    isUnattended,
     Notice:        deliverToConversation,        // once per job that asked to be told
     Audit:         recordAudit,                  // start, input (length only), stop
+    Route:         func(c *toolspec.ToolCall) any { return conversationOf(c) },
     Logger:        slog.Default(),
 })
 // Register tools (a toolspec.ToolProvider and HostMeta) under "shell".
 // "/cancel all" for an agent: tools.StopAll(owner); count: len(tools.Running(owner)).
+// Configuration reload: tools.Update(shell.Settings{Timeout: ..., MaxTimeout: ..., Limits: ...}).
 // Shutdown: tools.Close(ctx).
 ```
+
+### Config
+
+| Field | Zero value | Meaning |
+| --- | --- | --- |
+| `Jobs` | required `Dir` | the process manager's options (`proc.Options`); its `OnEnd` runs after the tools' own |
+| `Timeout`, `MaxTimeout` | 60 s, 600 s | default and largest foreground timeout; `Update` changes them |
+| `Guard` | allows all | returns why a command is refused, or "" |
+| `Env` | inherits | the child environment for a call |
+| `Workspace` | process directory | default working directory, and the base of a relative one |
+| `Owner` | `call.AgentID` | who owns the jobs a call starts |
+| `CtrlAvailable` | available | whether the caller has `shell_ctrl` |
+| `Unattended` | attended | whether nobody will collect a job |
+| `Notice` | no notices | delivers an end-of-job notice, once per job |
+| `Audit` | not audited | records starts, input and stops |
+| `Route` | nil route | the host's routing value for a job, see below |
+| `Logger` | discarded | diagnostics |
+
+### What the host needs to do
+
+- **Route notices with `Route`, not from the audit.** `Route` is called once
+  for every job about to start (foreground commands included: one kept at
+  its timeout is announced), before the process starts, and its value comes
+  back as `Notice.Route` and `AuditEvent.Route`. A notice is never delivered
+  before `Route` has returned for its job, so a job that ends at once is
+  still routed. `AuditStart` comes after `Start` returns and may come after
+  the notice.
+- **Route jobs announced after a restart by `Notice.Owner`.** The route is
+  kept in memory only, so a job found `lost`, or one stopped by the last
+  shutdown, has a nil `Route`. These notices are delivered during `New`.
+- **Do not expect notices from `Close`.** Jobs it stops are announced by
+  the next `New` instead.
+- **Apply a configuration reload with `Update`.** Tools built before the
+  reload then follow it; there is no need to rebuild them.
 
 A guard-refused or not-allowed call returns a result whose `Err` wraps
 `shell.ErrRefused`, so the host can log it as a refusal rather than a

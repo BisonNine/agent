@@ -32,6 +32,9 @@ type record struct {
 	PID        int       `json:"pid,omitempty"`
 	Notify     bool      `json:"notify,omitempty"`
 	Input      bool      `json:"input,omitempty"`
+	// Unannounced: it ended with notify on while the manager was closing;
+	// the next New announces it and clears this.
+	Unannounced bool `json:"unannounced,omitempty"`
 	// The log's layout, so its head, marker and tail can be told apart.
 	OutputBytes  int64 `json:"output_bytes"`
 	DroppedBytes int64 `json:"dropped_bytes,omitempty"`
@@ -65,6 +68,7 @@ func (m *Manager) saveRecord(j *job) {
 		PID:          j.pid,
 		Notify:       info.Notify,
 		Input:        info.Input,
+		Unannounced:  j.unannounced,
 		OutputBytes:  info.OutputBytes,
 		DroppedBytes: info.DroppedBytes,
 	}
@@ -97,15 +101,17 @@ func (m *Manager) writeRecord(rec record) error {
 	return nil
 }
 
-// load reads every record in the directory as an ended job. A job recorded
-// as running was lost with the process that ran it: it is marked lost and
-// returned so New can announce it. Leftover temporary files are removed.
+// load reads every record in the directory as an ended job, and returns the
+// jobs New must announce. A job recorded as running was lost with the
+// process that ran it: it is marked lost. A job whose end Close kept quiet
+// is marked announced. Either is saved before it is returned, so it is
+// announced at most once. Leftover temporary files are removed.
 func (m *Manager) load() ([]Info, error) {
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
 		return nil, fmt.Errorf("proc: read log directory: %w", err)
 	}
-	var lost []Info
+	var announce []Info
 	for _, e := range entries {
 		name := e.Name()
 		if strings.HasSuffix(name, ".cwd") || strings.HasSuffix(name, ".json.tmp") {
@@ -130,17 +136,22 @@ func (m *Manager) load() ([]Info, error) {
 			continue
 		}
 		j := m.restore(rec)
-		if rec.State == StateRunning {
+		switch {
+		case rec.State == StateRunning:
 			j.state = StateLost
 			j.ended = m.clock.Now()
 			m.saveRecord(j)
-			lost = append(lost, j.info())
+			announce = append(announce, j.info())
 			m.log.Info("shell job lost in a restart", "job", id, "owner", rec.Owner)
+		case rec.Unannounced:
+			j.unannounced = false
+			m.saveRecord(j)
+			announce = append(announce, j.info())
 		}
 		m.jobs[id] = j
 	}
-	sortByStart(lost)
-	return lost, nil
+	sortByStart(announce)
+	return announce, nil
 }
 
 // restore rebuilds an ended job from its record and its log file's size.

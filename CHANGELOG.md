@@ -183,10 +183,16 @@ project uses [Semantic Versioning](https://semver.org/).
   as a job; the directory a command ends in is the default for the next one.
   The host supplies the guard, environment, workspace, owner, end-of-job
   notice, audit, and whether the caller has `shell_ctrl` or is unattended.
+  `Config.Route` gives each job a host value, taken before the process
+  starts and returned on its `Notice` and `AuditEvent`s, so a notice can be
+  routed even for a job that ends at once. `Tools.Update(Settings)` changes
+  the timeouts and the job limits at run time.
 - `toolbox/shell/proc`: the process manager under it. Each job runs in its
   own process group with its output in a file (head and tail kept past the
   size limit) and a record, so jobs running at a restart are marked lost.
-  Limits: jobs per owner, job run time, output size, log retention.
+  Limits: jobs per owner, job run time, output size, log retention;
+  `SetLimits` changes them at run time. `Close` announces nothing: a job
+  with notify on that it stopped is announced once by the next `New`.
 - `ident` package: the agent id rule, `ValidID`, `NormalizeID`, `SameID`
   and `RepairID` (1 to 64 ASCII letters, digits, `-` and `_`, starting with
   a letter or digit; identity is the lower-case id). An input of which

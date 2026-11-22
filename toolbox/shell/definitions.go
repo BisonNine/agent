@@ -28,8 +28,10 @@ const (
 )
 
 // Definitions returns the tool definitions with bare names ("exec", "ctrl").
+// They state the timeouts in force when they are built.
 func (t *Tools) Definitions() []toolspec.ToolDefinition {
-	maxTimeout := float64(t.cfg.MaxTimeout.Seconds())
+	timeout, maxDuration := t.currentTimeouts()
+	maxTimeout := float64(maxDuration.Seconds())
 	minOne := float64(1)
 	return []toolspec.ToolDefinition{
 		{
@@ -40,8 +42,8 @@ func (t *Tools) Definitions() []toolspec.ToolDefinition {
 				{Name: "working_dir", Type: "string", Description: "Directory to run in; relative paths start at your workspace. Default: where your previous command ended, else your workspace"},
 				{
 					Name: "timeout_seconds", Type: "integer", Minimum: &minOne, Maximum: &maxTimeout,
-					Default:     int(t.cfg.Timeout.Seconds()),
-					Description: fmt.Sprintf("How long to wait for the command before returning (default %d, at most %d)", int(t.cfg.Timeout.Seconds()), int(maxTimeout)),
+					Default:     int(timeout.Seconds()),
+					Description: fmt.Sprintf("How long to wait for the command before returning (default %d, at most %d)", int(timeout.Seconds()), int(maxTimeout)),
 				},
 				{Name: "background", Type: "boolean", Description: "Start as a job and return at once"},
 				{Name: "notify", Type: "boolean", Default: true, Description: "For a job: tell you when it ends"},
