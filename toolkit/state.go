@@ -3,6 +3,7 @@ package toolkit
 import (
 	"maps"
 	"slices"
+	"strings"
 )
 
 // entry is one registered tool. It is never modified once published:
@@ -26,14 +27,19 @@ type catState struct {
 	offered map[string]string // internal name → the name it is offered under
 	extern  map[string]string // ExternalName → internal name
 	sources map[string]uint64 // toolset or provider name → registration id
+	// disabled holds the names switched off for everyone. A flag belongs
+	// to the name: it survives the tool being replaced, removed and added
+	// again, until the name is enabled.
+	disabled map[string]bool
 }
 
 func emptyState() *catState {
 	return &catState{
-		entries: map[string]*entry{},
-		offered: map[string]string{},
-		extern:  map[string]string{},
-		sources: map[string]uint64{},
+		entries:  map[string]*entry{},
+		offered:  map[string]string{},
+		extern:   map[string]string{},
+		sources:  map[string]uint64{},
+		disabled: map[string]bool{},
 	}
 }
 
@@ -41,9 +47,10 @@ func emptyState() *catState {
 // with seal. Entries are shared: they are immutable.
 func (s *catState) clone() *catState {
 	return &catState{
-		version: s.version,
-		entries: maps.Clone(s.entries),
-		sources: maps.Clone(s.sources),
+		version:  s.version,
+		entries:  maps.Clone(s.entries),
+		sources:  maps.Clone(s.sources),
+		disabled: maps.Clone(s.disabled),
 	}
 }
 
@@ -109,6 +116,22 @@ func (s *catState) fromSource(source string) []string {
 	var out []string
 	for name, e := range s.entries {
 		if e.source == source {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// group returns the registered names in group: the tools mounted by the
+// toolset or provider of that name when there is one, else the tools whose
+// internal name starts with group.
+func (s *catState) group(group string) []string {
+	if _, ok := s.sources[group]; ok {
+		return s.fromSource(group)
+	}
+	var out []string
+	for name := range s.entries {
+		if strings.HasPrefix(name, group) {
 			out = append(out, name)
 		}
 	}

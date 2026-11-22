@@ -40,6 +40,8 @@ var (
 	// ErrToolRemoved: the tool was in the snapshot the call came from and
 	// has been removed since.
 	ErrToolRemoved = errors.New("tool no longer available")
+	// ErrToolDisabled: the tool is registered but switched off.
+	ErrToolDisabled = errors.New("tool is disabled")
 	// ErrToolNotRegistered is ExecuteUnattended's refusal of a tool the set
 	// does not hold.
 	ErrToolNotRegistered = errors.New("tool not registered")
@@ -50,8 +52,9 @@ var (
 
 // setConfig is one immutable version of a set's own settings.
 type setConfig struct {
-	version uint64
-	allow   AllowChecker // nil grants every tool
+	version  uint64
+	allow    AllowChecker    // nil grants every tool
+	disabled map[string]bool // names switched off for this set (see catState.disabled)
 }
 
 // denyAll is the grant of a named set nobody has granted anything.
@@ -87,11 +90,17 @@ func (cfg *setConfig) granted(name string) bool {
 	return cfg.allow == nil || cfg.allow.IsToolAllowed(name)
 }
 
-// offered returns the tools the set offers under st and cfg: granted ones.
+// enabled reports whether name is on at both levels.
+func enabled(st *catState, cfg *setConfig, name string) bool {
+	return !st.disabled[name] && !cfg.disabled[name]
+}
+
+// offered returns the tools the set offers under st and cfg: granted and
+// enabled ones.
 func (s *Set) offered(st *catState, cfg *setConfig) map[string]*entry {
 	out := make(map[string]*entry, len(st.entries))
 	for name, e := range st.entries {
-		if cfg.granted(name) {
+		if enabled(st, cfg, name) && cfg.granted(name) {
 			out[name] = e
 		}
 	}
@@ -167,8 +176,8 @@ func (s *Set) subscribers() []subscriber {
 	return out
 }
 
-// info describes e as seen by the set under st.
-func (s *Set) info(st *catState, e *entry) Info {
+// info describes e as seen by the set under st and cfg.
+func (s *Set) info(st *catState, cfg *setConfig, e *entry) Info {
 	return Info{
 		Name:           e.name,
 		Published:      st.offered[e.name],
@@ -177,18 +186,19 @@ func (s *Set) info(st *catState, e *entry) Info {
 		Group:          e.group,
 		RevealTogether: e.reveal,
 		Source:         e.source,
-		Enabled:        true,
+		Enabled:        enabled(st, cfg, e.name),
 	}
 }
 
-// List returns every tool granted to the set, sorted by internal name.
+// List returns every tool granted to the set, enabled or not, sorted by
+// internal name.
 func (s *Set) List() []Info {
 	st := s.cat.state.Load()
 	cfg := s.cfg.Load()
 	out := make([]Info, 0, len(st.names))
 	for _, name := range st.names {
 		if cfg.granted(name) {
-			out = append(out, s.info(st, st.entries[name]))
+			out = append(out, s.info(st, cfg, st.entries[name]))
 		}
 	}
 	return out
@@ -200,25 +210,28 @@ func (s *Set) Listed() []Info { return s.Snapshot().Listed() }
 // Hidden returns the hidden tools the set offers now (Snapshot().Hidden()).
 func (s *Set) Hidden() []Info { return s.Snapshot().Hidden() }
 
-// Get returns the granted tool registered under exactly name.
+// Get returns the granted tool registered under exactly name, enabled or
+// not.
 func (s *Set) Get(name string) (Info, bool) {
 	st := s.cat.state.Load()
+	cfg := s.cfg.Load()
 	e, ok := st.entries[name]
-	if !ok || !s.cfg.Load().granted(name) {
+	if !ok || !cfg.granted(name) {
 		return Info{}, false
 	}
-	return s.info(st, e), true
+	return s.info(st, cfg, e), true
 }
 
 // Lookup is Get that also finds a tool by its ExternalName; Info.Name is
 // the internal name.
 func (s *Set) Lookup(name string) (Info, bool) {
 	st := s.cat.state.Load()
+	cfg := s.cfg.Load()
 	e, canonical := st.lookup(name)
-	if e == nil || !s.cfg.Load().granted(canonical) {
+	if e == nil || !cfg.granted(canonical) {
 		return Info{}, false
 	}
-	return s.info(st, e), true
+	return s.info(st, cfg, e), true
 }
 
 // Stat counts the calls of one tool that ran through a set.
@@ -263,6 +276,8 @@ func (s *Set) count(name string, r *Result) {
 //
 //   - no such tool: `tool "x" not found` (ErrToolNotFound)
 //   - not granted to the set: NotEnabledMessage, an expected refusal
+//   - disabled in the catalogue or the set: `tool "x" is disabled`, an
+//     expected refusal (ErrToolDisabled)
 //
 // The caller sets who the call is for on ctx (WithChat, WithSessionKey,
 // WithAgentID). Arguments are never logged.
@@ -288,6 +303,10 @@ func (s *Set) execute(ctx context.Context, name string, args map[string]any, cb 
 	if !cfg.granted(canonical) {
 		log.WarnContext(ctx, "Tool execution denied by agent allowlist", "tool", canonical)
 		return ErrorResult(NotEnabledMessage(name)).WithError(Refusal(fmt.Errorf("tool not permitted: %s", name)))
+	}
+	if !enabled(st, cfg, canonical) {
+		log.WarnContext(ctx, "Tool is disabled", "tool", canonical)
+		return ErrorResult(fmt.Sprintf("tool %q is disabled", name)).WithError(Refusal(ErrToolDisabled))
 	}
 
 	var result *Result

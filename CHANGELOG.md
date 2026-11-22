@@ -38,6 +38,12 @@ project uses [Semantic Versioning](https://semver.org/).
   configuration: agents keep their handles, named sets take next's grants,
   a running call finishes on its old tool, and each subscriber gets one
   notice.
+- `toolkit` enable and disable: `Disable`, `Enable` and `Enabled` on the
+  catalogue (off for everyone) and on a set (off for that agent), and
+  `DisableGroup` / `EnableGroup` by toolset, provider or name prefix. A
+  tool is usable when it is on at both levels. A disabled tool stays
+  registered but is offered to no model, discovery index or MCP client,
+  and a call to it returns `tool "x" is disabled`.
 - `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
   that came from outside the process as data for the model.
 - `modelspec` package: the shared definition of providers and models.

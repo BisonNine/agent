@@ -488,3 +488,5 @@ func TestInfoIsACopy(t *testing.T) {
 		t.Fatal("a returned copy altered the registry")
 	}
 }
+
+func toolSpecDeps() toolspec.Deps { return toolspec.Deps{} }

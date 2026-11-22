@@ -13,7 +13,8 @@
 // or hidden. The catalogue's read methods are its default set's, so a host
 // with one agent never sees the two levels. Both satisfy Registry, what an
 // agent is given. A configuration reload builds a new catalogue and hands
-// it over with Adopt. See README.md.
+// it over with Adopt. Tools can be switched off and on at either level
+// (Disable, Enable) without a reload. See README.md.
 //
 // License: MIT
 // Copyright (c) 2026 Tenebris Technologies Inc.

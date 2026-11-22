@@ -34,6 +34,7 @@ type Info struct {
 type Snapshot struct {
 	set     *Set
 	state   *catState
+	cfg     *setConfig
 	version uint64
 	names   []string // offered internal names, sorted
 	offered map[string]*entry
@@ -47,7 +48,7 @@ func newSnapshot(s *Set, st *catState, cfg *setConfig) *Snapshot {
 			names = append(names, name)
 		}
 	}
-	return &Snapshot{set: s, state: st, version: st.version + cfg.version, names: names, offered: offered}
+	return &Snapshot{set: s, state: st, cfg: cfg, version: st.version + cfg.version, names: names, offered: offered}
 }
 
 // Version is the set's Version when the snapshot was taken.
@@ -74,7 +75,7 @@ func (sn *Snapshot) filter(keep func(*entry) bool) []Info {
 	out := make([]Info, 0, len(sn.names))
 	for _, name := range sn.names {
 		if e := sn.offered[name]; keep(e) {
-			out = append(out, sn.set.info(sn.state, e))
+			out = append(out, sn.set.info(sn.state, sn.cfg, e))
 		}
 	}
 	return out
@@ -86,7 +87,7 @@ func (sn *Snapshot) Get(name string) (Info, bool) {
 	if !ok {
 		return Info{}, false
 	}
-	return sn.set.info(sn.state, e), true
+	return sn.set.info(sn.state, sn.cfg, e), true
 }
 
 // Lookup is Get that also finds a tool by its ExternalName; Info.Name is
