@@ -61,6 +61,15 @@ through `memory.OpenReadOnly` and its `Window()` / `State()` methods;
 `memory.ListSessions` and `memory.DeleteSession` enumerate and remove whole
 sessions. Truncation deletes window rows; nothing is logically skipped.
 
+Keys that differ only in `:`, `/`, `\` and `_` (`a:b`, `a/b`, `a_b`) map to
+one file, as keys that differ only in case do on a case-insensitive file
+system. A file belongs to the first key that writes it: `memory.OpenSession`
+and `memory.OpenSessionReadOnly` (which the store, the manager, the session
+tools and the migration use) refuse it to any other key with
+`*memory.KeyCollisionError`, as do every write transaction and
+`DeleteSession`, so two sessions never share a history. Listings report the
+file under the key it holds.
+
 Directories ctxengine creates are `0700` and its files (databases with their
 `-wal`/`-shm` files, `compact.jsonl`) are `0600`; existing files with another
 mode are changed to it, existing directories are left alone. To change the

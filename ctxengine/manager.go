@@ -741,7 +741,7 @@ func (m *Manager) getOrOpenArchive() *memory.ArchiveStore {
 		return m.archive
 	}
 	path := memory.ArchivePath(m.cfg.archiveDir, m.sessionKey)
-	store, err := memory.Open(path,
+	store, err := memory.OpenSession(m.cfg.archiveDir, m.sessionKey,
 		memory.WithFileModes(fsmode.Modes{Dir: m.cfg.folderPerm, File: m.cfg.filePerm}),
 		memory.WithLogger(m.cfg.logger))
 	if err != nil && !errors.Is(err, memory.ErrArchiveUnavailable) {

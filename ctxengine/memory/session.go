@@ -85,6 +85,10 @@ func ArchivePath(dir, sessionKey string) string {
 // state row (an archive that predates the window fold, or an empty one) is
 // skipped. Returns nil, nil if dir does not exist.
 //
+// A file is listed under the key it holds. When several keys map to one file
+// (see KeyCollisionError) only the one that wrote it first is a session; the
+// others were refused and are not listed. This never makes the listing fail.
+//
 // Unreadable archives are logged to logger, tagged with the component
 // "memory"; nil discards.
 func ListSessions(dir string, logger *slog.Logger) ([]string, error) {
@@ -122,13 +126,37 @@ func ListSessions(dir string, logger *slog.Logger) ([]string, error) {
 
 // DeleteSession removes <key>.archive.db and its -wal/-shm sidecars. A
 // missing file is not an error. Any open handle on the database must be
-// closed first (session.SQLiteStore.ForgetSession).
+// closed first (session.SQLiteStore.ForgetSession). A file that holds another
+// session is not removed: DeleteSession returns a *KeyCollisionError. A file
+// whose key cannot be read (a damaged one) is removed.
 func DeleteSession(dir, key string) error {
 	path := ArchivePath(dir, key)
+	if err := refuseOtherSession(path, key); err != nil {
+		return err
+	}
 	for _, p := range []string{path, path + "-wal", path + "-shm"} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("memory: delete session: %w", err)
 		}
+	}
+	return nil
+}
+
+// refuseOtherSession returns a *KeyCollisionError when the file at path
+// exists and holds a session other than key, and nil otherwise, including
+// when the key cannot be read.
+func refuseOtherSession(path, key string) error {
+	if _, err := os.Stat(path); err != nil {
+		return nil
+	}
+	db, err := openReadOnly(path)
+	if err != nil {
+		return nil
+	}
+	defer iox.CloseQuietly(slog.New(slog.DiscardHandler), db)
+	var collision *KeyCollisionError
+	if err := retryBusy(time.Now(), func() error { return checkKey(db, path, key) }); errors.As(err, &collision) {
+		return collision
 	}
 	return nil
 }
@@ -153,20 +181,25 @@ func fromUnixNano(n int64) time.Time {
 // reader returns the connection to read window and state rows from: the write
 // connection when the store owns one (so a read that follows a write on the
 // same handle never sees a WAL visibility gap), otherwise a short-lived
-// read-only connection that done closes.
-func (a *ArchiveStore) reader() (db *sql.DB, done func(), err error) {
+// read-only connection that done closes. On a store opened for a session key
+// the read runs in a transaction that has checked the key (readFrom).
+func (a *ArchiveStore) reader() (q querier, done func(), err error) {
 	if a.unavailable {
 		return nil, nil, ErrArchiveUnavailable
 	}
 	if a.db != nil {
 		a.mu.Lock()
-		return a.db, a.mu.Unlock, nil
+		q, end, err := a.readFrom(a.db)
+		if err != nil {
+			a.mu.Unlock()
+			return nil, nil, err
+		}
+		return q, func() {
+			end()
+			a.mu.Unlock()
+		}, nil
 	}
-	db, err = openReadOnly(a.path)
-	if err != nil {
-		return nil, nil, err
-	}
-	return db, func() { iox.CloseQuietly(a.logger(), db) }, nil
+	return a.openRead()
 }
 
 // Window returns the live history window ordered by seq. Returns an empty
@@ -325,13 +358,37 @@ var rollbackStmt = "ROLLBACK"
 // continues). fn runs while the file's write lock is held, so it must be
 // quick: a writer on another connection to the file waits up to the busy
 // timeout (2 s) for it, then fails with SQLITE_BUSY.
+//
+// On a store opened for a session key (OpenSession) the transaction first
+// checks, under the lock, that the file holds that key or none, and returns a
+// *KeyCollisionError without running fn otherwise: a key is written to the
+// file only while it holds none, never over another session's.
 func (a *ArchiveStore) Update(fn func(tx *StateTx) error) error {
 	if a.unavailable || a.db == nil {
 		return ErrArchiveUnavailable
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	return a.inTx(func(tx txConn) error { return fn(&StateTx{tx: tx}) })
+}
 
+// write runs fn on the write connection under the write mutex. On a store
+// opened for a session key it runs in a write transaction that first checks
+// the key, as Update does; on one opened by path each statement commits on
+// its own.
+func (a *ArchiveStore) write(fn func(ex execer) error) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.key == "" {
+		return fn(a.db)
+	}
+	return a.inTx(func(tx txConn) error { return fn(tx) })
+}
+
+// inTx runs fn in one write transaction begun with BEGIN IMMEDIATE, after
+// checking the key on a store opened for one, and commits, or rolls back
+// when fn fails or panics. The caller holds a.mu.
+func (a *ArchiveStore) inTx(fn func(tx txConn) error) error {
 	conn, err := a.db.Conn(context.Background())
 	if err != nil {
 		return err
@@ -347,7 +404,12 @@ func (a *ArchiveStore) Update(fn func(tx *StateTx) error) error {
 			a.rollback(tx)
 		}
 	}()
-	if err := fn(&StateTx{tx: tx}); err != nil {
+	if a.key != "" {
+		if err := checkKey(tx, a.path, a.key); err != nil {
+			return err
+		}
+	}
+	if err := fn(tx); err != nil {
 		return err
 	}
 	if _, err := tx.Exec("COMMIT"); err != nil {

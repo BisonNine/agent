@@ -137,7 +137,7 @@ func migrateSession(dir, base string, hasWindow bool, logger *slog.Logger) (key 
 	}
 	key = meta.Key
 
-	a, err := memory.Open(memory.ArchivePath(dir, key), memory.WithLogger(logger))
+	a, err := memory.OpenSession(dir, key, memory.WithLogger(logger))
 	if err != nil {
 		return key, false, fmt.Errorf("open archive: %w", err)
 	}

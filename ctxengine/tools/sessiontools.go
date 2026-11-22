@@ -138,7 +138,7 @@ func (h Host) openArchive(call *toolspec.ToolCall) (*memory.ArchiveStore, string
 	if r != nil {
 		return nil, "", r
 	}
-	a, err := memory.OpenReadOnly(memory.ArchivePath(h.SessionsDir, key), h.Logger)
+	a, err := memory.OpenSessionReadOnly(h.SessionsDir, key, h.Logger)
 	if err != nil {
 		return nil, "", h.archiveError("archive open error", key, err)
 	}

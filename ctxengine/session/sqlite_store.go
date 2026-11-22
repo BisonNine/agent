@@ -161,7 +161,7 @@ func (s *SQLiteStore) withHandle(key string, h *sessionHandle, noise memory.Nois
 	if h.archive == nil {
 		// Open logs the cause of a failure itself; the handle stays
 		// unopened so the next call retries.
-		a, err := memory.Open(memory.ArchivePath(s.dir, key), s.openOptions()...)
+		a, err := memory.OpenSession(s.dir, key, s.openOptions()...)
 		if err != nil {
 			return true, err
 		}
@@ -181,7 +181,9 @@ func (s *SQLiteStore) update(key string, fn func(tx *memory.StateTx) error) erro
 }
 
 // state reads the session_state row inside tx with Key filled in for a
-// session that has no row yet.
+// session that has no row yet. Writing that key back cannot overwrite another
+// session's: the archive was opened with OpenSession, so Update refuses the
+// transaction when the file holds a different key.
 func state(tx *memory.StateTx, key string) (memory.SessionState, error) {
 	st, err := tx.State()
 	if err != nil {
@@ -472,7 +474,9 @@ func (s *SQLiteStore) ClearPendingTurn(sessionKey string) error {
 // ListPendingSessions opens every *.archive.db in the store directory
 // read-only and returns the key of each session whose state has pending_turn
 // set. Databases that cannot be read are skipped. Returns nil, nil if the
-// directory does not exist.
+// directory does not exist. A file is reported under the key it holds; a key
+// that collided with it was refused and has no state of its own (see
+// memory.KeyCollisionError).
 func (s *SQLiteStore) ListPendingSessions() ([]string, error) {
 	entries, err := os.ReadDir(s.dir)
 	if os.IsNotExist(err) {

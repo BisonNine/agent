@@ -311,6 +311,27 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `ctxengine/memory`: two session keys that map to one file (`a:b`, `a/b`
+  and `a_b`, or keys differing only in case on a case-insensitive file
+  system) silently shared one history. A file now belongs to the first key
+  that writes it: opening it for another key (`memory.OpenSession`,
+  `memory.OpenSessionReadOnly`, which the store, the manager's archive, the
+  session tools and the JSONL migration use), writing to it and
+  `DeleteSession` are refused with `*memory.KeyCollisionError`
+  (`memory.ErrKeyCollision`), and its stored key is never overwritten.
+  `ListSessions` and `ListPendingSessions` list the file under the key it
+  holds. File names are unchanged.
+- `ctxengine/memory`: a session key containing `?` opened a different file
+  (the path ended at the `?`), and a read-only open of one containing `#` or
+  `%` could too. The path is now escaped in the SQLite URI, so the file
+  opened is the file named.
+- `ctxengine/memory`: two handles opening a brand-new session file at the same
+  moment could fail with "archive unavailable": switching the new file to
+  WAL needs the write lock, and SQLite answers a connection already holding a
+  read lock at once instead of waiting. `Open` now retries each idempotent
+  initialisation step within the busy timeout, and creates the schema in one
+  transaction, so a reader sees all of it or none.
+
 - `ctxengine/session`: `SQLiteStore` could silently lose messages when a
   session was forgotten (`ForgetSession`, as when a host evicts or deletes a
   session's manager) or the store closed while that session was being

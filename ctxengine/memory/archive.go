@@ -19,7 +19,8 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	"go.bison9.com/agent/ctxengine/internal/iox"
 	"go.bison9.com/agent/spawnllm"
@@ -29,6 +30,30 @@ import (
 // all subsequent operations are no-ops or empty returns. Exported so callers
 // can distinguish graceful-degradation failures from real errors.
 var ErrArchiveUnavailable = errors.New("memory: archive unavailable")
+
+// ErrKeyCollision matches (errors.Is) every *KeyCollisionError.
+var ErrKeyCollision = errors.New("memory: session file holds another session")
+
+// KeyCollisionError is returned when a session's file already holds a
+// different session: two keys that SanitizeSessionKey maps to one file name
+// (a:b, a/b and a_b), or that a case-insensitive file system treats as one.
+// Nothing is read from or written to the file, and its stored key is kept.
+type KeyCollisionError struct {
+	Requested string // the key the caller asked for
+	Stored    string // the key the file holds
+	Path      string // the session file
+}
+
+// Error names the requested key and the file, not the key the file holds:
+// that belongs to another session and the message may reach a user or a
+// model.
+func (e *KeyCollisionError) Error() string {
+	return fmt.Sprintf("memory: session %q cannot use %s: the file holds another session",
+		e.Requested, filepath.Base(e.Path))
+}
+
+// Is reports whether target is ErrKeyCollision.
+func (e *KeyCollisionError) Is(target error) bool { return target == ErrKeyCollision }
 
 // archiveSchema is the whole per-session database: the all-time message
 // archive with its FTS index, the summary checkpoints, the live window the
@@ -153,6 +178,7 @@ type SummaryMeta struct {
 type ArchiveStore struct {
 	db          *sql.DB
 	path        string
+	key         string       // the session key the file is opened for; "" when opened by path
 	mu          sync.Mutex   // held only for writes (Append, Delete)
 	unavailable bool         // set true when Open fails; all ops are no-ops
 	log         *slog.Logger // tagged with the component "memory"; nil discards
@@ -180,6 +206,39 @@ func OpenReadOnly(path string, log *slog.Logger) (*ArchiveStore, error) {
 	return &ArchiveStore{path: path, log: componentLog(log)}, nil
 }
 
+// OpenSessionReadOnly is OpenReadOnly for the session key's file under dir
+// (ArchivePath). When the file holds a different session it returns a
+// *KeyCollisionError and an unavailable store, having read nothing else. A
+// file Open has created but not yet initialised (it is opening it at this
+// moment) is ErrArchiveUnavailable, as a missing one is.
+func OpenSessionReadOnly(dir, key string, log *slog.Logger) (*ArchiveStore, error) {
+	a, err := OpenReadOnly(ArchivePath(dir, key), log)
+	if err != nil {
+		return a, err
+	}
+	unavailable := &ArchiveStore{path: a.path, unavailable: true}
+	db, done, err := a.openRead()
+	if err != nil {
+		return unavailable, err
+	}
+	defer done()
+	err = retryBusy(time.Now(), func() error {
+		ok, err := hasTable(db, "messages")
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrArchiveUnavailable
+		}
+		return checkKey(db, a.path, key)
+	})
+	if err != nil {
+		return unavailable, err
+	}
+	a.key = key
+	return a, nil
+}
+
 // busyTimeoutMillis is how long a connection waits for a lock before failing
 // with SQLITE_BUSY. Writers and readers both carry it in their DSN, so a
 // connection the pool opens to replace a discarded one has it too.
@@ -194,7 +253,138 @@ const busyTimeoutMillis = 2000
 // to clear. journal_mode is a property of the file the writer sets once, so
 // a reader does not set it.
 func openReadOnly(path string) (*sql.DB, error) {
-	return sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(%d)", path, busyTimeoutMillis))
+	return sql.Open("sqlite", archiveDSN(path, fmt.Sprintf("mode=ro&_pragma=busy_timeout(%d)", busyTimeoutMillis)))
+}
+
+// uriPathEscaper escapes the characters that end or change the path of a
+// SQLite file: URI. Every other character, the separators included, reaches
+// SQLite as it is, so the file opened is the file named.
+var uriPathEscaper = strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23")
+
+// archiveDSN returns the file: URI for the database at path with the query
+// params. Without the escaping a '?' in the path would end it (a key "a?b"
+// opening the file "a"), and a '#' or '%' would change it.
+func archiveDSN(path, params string) string {
+	return "file:" + uriPathEscaper.Replace(path) + "?" + params
+}
+
+// initRetryInterval is how long Open waits before it retries an
+// initialisation step another connection's initialisation made busy.
+const initRetryInterval = 10 * time.Millisecond
+
+// retryBusy runs fn, an idempotent step of opening an archive, until it
+// succeeds, fails with anything but SQLITE_BUSY, or the busy timeout has
+// passed since start. It covers what the busy handler does not: SQLite
+// answers SQLITE_BUSY at once, without waiting, when a connection holding a
+// read lock asks for the write lock, as switching a new file to WAL does, so
+// two connections opening one new file at the same moment would otherwise
+// have one of them fail.
+func retryBusy(start time.Time, fn func() error) error {
+	deadline := start.Add(busyTimeoutMillis * time.Millisecond)
+	for {
+		err := fn()
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		time.Sleep(initRetryInterval)
+	}
+}
+
+// isBusy reports whether err is SQLITE_BUSY, extended codes included.
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	return errors.As(err, &se) && se.Code()&0xff == sqlite3.SQLITE_BUSY
+}
+
+// storedKey returns the session key the database holds: "" when it has no
+// session_state table (an archive that predates it, or one a read-only
+// connection meets before the writer has created it) or no row yet.
+func storedKey(q queryRower) (string, error) {
+	if ok, err := hasTable(q, "session_state"); err != nil || !ok {
+		return "", err
+	}
+	var key string
+	err := q.QueryRowContext(context.Background(),
+		`SELECT key FROM session_state WHERE id = 1`).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return key, err
+}
+
+// hasTable reports whether the database has the table name.
+func hasTable(q queryRower, name string) (bool, error) {
+	var n int
+	err := q.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&n)
+	return n > 0, err
+}
+
+// querier is what a read runs its queries on: a database, or a read
+// transaction on one.
+type querier interface {
+	queryRower
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// readFrom returns what a read on db runs its queries on. On a store opened
+// by path that is db itself. On one opened for a session key it is a read
+// transaction that has checked the file still holds that key or none, so the
+// check and the read see one snapshot and a file another session took after
+// the open is not read; it returns a *KeyCollisionError for such a file.
+// end ends the transaction.
+func (a *ArchiveStore) readFrom(db *sql.DB) (q querier, end func(), err error) {
+	if a.key == "" {
+		return db, func() {}, nil
+	}
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	end = func() {
+		if err := tx.Rollback(); err != nil {
+			a.logger().Debug("archive read transaction end failed",
+				"path", a.path, "error", err.Error())
+		}
+	}
+	if err := checkKey(tx, a.path, a.key); err != nil {
+		end()
+		return nil, nil, err
+	}
+	return tx, end, nil
+}
+
+// openRead opens a short-lived read-only connection and returns what to
+// query on it (readFrom); done ends the read and closes the connection.
+func (a *ArchiveStore) openRead() (q querier, done func(), err error) {
+	db, err := openReadOnly(a.path)
+	if err != nil {
+		return nil, nil, err
+	}
+	q, end, err := a.readFrom(db)
+	if err != nil {
+		iox.CloseQuietly(a.logger(), db)
+		return nil, nil, err
+	}
+	return q, func() {
+		end()
+		iox.CloseQuietly(a.logger(), db)
+	}, nil
+}
+
+// checkKey returns a *KeyCollisionError when the database at path holds a
+// session other than key. A database that holds no key yet belongs to the
+// first key that writes one. Keys are compared exactly: neither the store nor
+// the migration changes a key before storing it.
+func checkKey(q queryRower, path, key string) error {
+	stored, err := storedKey(q)
+	if err != nil {
+		return fmt.Errorf("memory: read session key: %w", err)
+	}
+	if stored != "" && stored != key {
+		return &KeyCollisionError{Requested: key, Stored: stored, Path: path}
+	}
+	return nil
 }
 
 // Open opens (or creates) an archive database at path.
@@ -203,7 +393,26 @@ func openReadOnly(path string) (*sql.DB, error) {
 // set by opts (DefaultFolderPermissions, DefaultFilePermissions), and an
 // existing database and its -wal and -shm files are changed to the file mode.
 // On failure it returns a store with unavailable=true plus ErrArchiveUnavailable.
+//
+// Two connections may open one new file at the same moment: each step of the
+// initialisation is idempotent and waits, up to the busy timeout, for the
+// other connection's.
 func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
+	return openArchive(path, "", opts)
+}
+
+// OpenSession is Open for the session key's file under dir (ArchivePath).
+// When the file holds a different session it returns a *KeyCollisionError
+// and an unavailable store, having written nothing. The returned store
+// checks the key again in every Update, inside the transaction, so a file
+// another handle gave to a different session in the meantime is not
+// written either.
+func OpenSession(dir, key string, opts ...OpenOption) (*ArchiveStore, error) {
+	return openArchive(ArchivePath(dir, key), key, opts)
+}
+
+// openArchive opens the archive at path for key ("" when opened by path).
+func openArchive(path, key string, opts []OpenOption) (*ArchiveStore, error) {
 	cfg := openConfig{folderPerm: DefaultFolderPermissions, filePerm: DefaultFilePermissions}
 	for _, o := range opts {
 		o(&cfg)
@@ -215,9 +424,7 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
-	// The parameters follow the first '?', so a path without one reaches
-	// SQLite unchanged.
-	db, err := sql.Open("sqlite", fmt.Sprintf("%s?_pragma=busy_timeout(%d)", path, busyTimeoutMillis))
+	db, err := sql.Open("sqlite", archiveDSN(path, fmt.Sprintf("_pragma=busy_timeout(%d)", busyTimeoutMillis)))
 	if err != nil {
 		log.Warn("archive open failed",
 			"path", path, "error", err.Error())
@@ -227,16 +434,24 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 	// Single writer connection; no connection pooling needed.
 	db.SetMaxOpenConns(1)
 
+	start := time.Now()
+	exec := func(query string) error {
+		return retryBusy(start, func() error {
+			_, err := db.Exec(query)
+			return err
+		})
+	}
+
 	// Enable WAL mode for concurrent reader support.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if err := exec("PRAGMA journal_mode=WAL"); err != nil {
 		iox.CloseQuietly(log, db)
 		log.Warn("archive WAL failed",
 			"path", path, "error", err.Error())
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
-	// Create schema.
-	if _, err := db.Exec(archiveSchema); err != nil {
+	// Create schema in one transaction, so a reader sees all of it or none.
+	if err := exec("BEGIN IMMEDIATE;" + archiveSchema + "COMMIT;"); err != nil {
 		iox.CloseQuietly(log, db)
 		log.Warn("archive schema failed",
 			"path", path, "error", err.Error())
@@ -244,10 +459,10 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 	}
 
 	// FTS5 integrity check; rebuild if needed.
-	if _, err := db.Exec("INSERT INTO messages_fts(messages_fts) VALUES ('integrity-check')"); err != nil {
+	if err := exec("INSERT INTO messages_fts(messages_fts) VALUES ('integrity-check')"); err != nil {
 		log.Warn("archive FTS5 integrity check failed, rebuilding",
 			"path", path, "error", err.Error())
-		if _, rebuildErr := db.Exec("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')"); rebuildErr != nil {
+		if rebuildErr := exec("INSERT INTO messages_fts(messages_fts) VALUES ('rebuild')"); rebuildErr != nil {
 			iox.CloseQuietly(log, db)
 			log.Warn("archive FTS5 rebuild failed",
 				"path", path, "error", rebuildErr.Error())
@@ -255,7 +470,18 @@ func Open(path string, opts ...OpenOption) (*ArchiveStore, error) {
 		}
 	}
 
-	store := &ArchiveStore{db: db, path: path, log: log}
+	// Refuse a file that holds another session before anything is written
+	// to it (the legacy summaries import below writes).
+	if key != "" {
+		if err := retryBusy(start, func() error { return checkKey(db, path, key) }); err != nil {
+			iox.CloseQuietly(log, db)
+			log.Warn("archive refused",
+				"path", path, "error", err.Error())
+			return &ArchiveStore{path: path, unavailable: true}, err
+		}
+	}
+
+	store := &ArchiveStore{db: db, path: path, key: key, log: log}
 
 	// One-time import of legacy <base>.summaries.jsonl checkpoints into the
 	// summaries table. Best-effort: a failure logs and is ignored so it never
@@ -371,14 +597,13 @@ func (a *ArchiveStore) Append(seq int64, msg spawnllm.Message, createdAt time.Ti
 
 	text := deriveArchiveText(msg)
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	_, err = a.db.Exec(
-		`INSERT OR REPLACE INTO messages (seq, role, payload, text, created_at) VALUES (?, ?, ?, ?, ?)`,
-		seq, msg.Role, string(payload), text, createdAt.Unix(),
-	)
-	return err
+	return a.write(func(ex execer) error {
+		_, err := ex.Exec(
+			`INSERT OR REPLACE INTO messages (seq, role, payload, text, created_at) VALUES (?, ?, ?, ?, ?)`,
+			seq, msg.Role, string(payload), text, createdAt.Unix(),
+		)
+		return err
+	})
 }
 
 // PruneMessagesToCount deletes all but the newest n messages by seq. The
@@ -390,14 +615,13 @@ func (a *ArchiveStore) PruneMessagesToCount(n int) error {
 		return nil
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	_, err := a.db.Exec(
-		`DELETE FROM messages WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM messages) - ?`,
-		n,
-	)
-	return err
+	return a.write(func(ex execer) error {
+		_, err := ex.Exec(
+			`DELETE FROM messages WHERE seq <= (SELECT COALESCE(MAX(seq), 0) FROM messages) - ?`,
+			n,
+		)
+		return err
+	})
 }
 
 // PruneMessagesBefore deletes messages older than cutoff (created_at <
@@ -408,14 +632,13 @@ func (a *ArchiveStore) PruneMessagesBefore(cutoff time.Time) error {
 		return nil
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	_, err := a.db.Exec(
-		`DELETE FROM messages WHERE created_at < ?`,
-		cutoff.Unix(),
-	)
-	return err
+	return a.write(func(ex execer) error {
+		_, err := ex.Exec(
+			`DELETE FROM messages WHERE created_at < ?`,
+			cutoff.Unix(),
+		)
+		return err
+	})
 }
 
 // PruneSummariesToCount deletes all but the newest n summaries by id. No-op when
@@ -425,14 +648,13 @@ func (a *ArchiveStore) PruneSummariesToCount(n int) error {
 		return nil
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	_, err := a.db.Exec(
-		`DELETE FROM summaries WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM summaries) - ?`,
-		n,
-	)
-	return err
+	return a.write(func(ex execer) error {
+		_, err := ex.Exec(
+			`DELETE FROM summaries WHERE id <= (SELECT COALESCE(MAX(id), 0) FROM summaries) - ?`,
+			n,
+		)
+		return err
+	})
 }
 
 // PruneSummariesBefore deletes summaries older than cutoff (generated_at <
@@ -442,14 +664,13 @@ func (a *ArchiveStore) PruneSummariesBefore(cutoff time.Time) error {
 		return nil
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	_, err := a.db.Exec(
-		`DELETE FROM summaries WHERE generated_at < ?`,
-		cutoff.Unix(),
-	)
-	return err
+	return a.write(func(ex execer) error {
+		_, err := ex.Exec(
+			`DELETE FROM summaries WHERE generated_at < ?`,
+			cutoff.Unix(),
+		)
+		return err
+	})
 }
 
 // AppendSummary inserts one context-summary checkpoint and returns its new id.
@@ -460,10 +681,13 @@ func (a *ArchiveStore) AppendSummary(rec SummaryRecord) (int64, error) {
 		return 0, nil
 	}
 
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
-	return insertSummary(a.db, rec)
+	var id int64
+	err := a.write(func(ex execer) error {
+		var err error
+		id, err = insertSummary(ex, rec)
+		return err
+	})
+	return id, err
 }
 
 // insertSummary inserts one summaries row and returns its id. A zero
@@ -496,11 +720,11 @@ func (a *ArchiveStore) ListSummaries() ([]SummaryMeta, error) {
 		return nil, ErrArchiveUnavailable
 	}
 
-	db, err := openReadOnly(a.path)
+	db, done, err := a.openRead()
 	if err != nil {
 		return nil, err
 	}
-	defer iox.CloseQuietly(a.logger(), db)
+	defer done()
 
 	rows, err := db.QueryContext(context.Background(),
 		`SELECT id, generated_at, model, profile, source_seq_start, source_seq_end, covered_seq_start, covered_seq_end
@@ -547,11 +771,11 @@ func (a *ArchiveStore) GetSummary(id int64) (SummaryRecord, bool, error) {
 		return SummaryRecord{}, false, ErrArchiveUnavailable
 	}
 
-	db, err := openReadOnly(a.path)
+	db, done, err := a.openRead()
 	if err != nil {
 		return SummaryRecord{}, false, err
 	}
-	defer iox.CloseQuietly(a.logger(), db)
+	defer done()
 
 	var (
 		rec     SummaryRecord
@@ -587,8 +811,13 @@ func (a *ArchiveStore) MaxSeq() int64 {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	q, end, err := a.readFrom(a.db)
+	if err != nil {
+		return 0
+	}
+	defer end()
 	var maxSeq int64
-	row := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(seq), 0) FROM messages`)
+	row := q.QueryRowContext(context.Background(), `SELECT COALESCE(MAX(seq), 0) FROM messages`)
 	if err := row.Scan(&maxSeq); err != nil {
 		return 0
 	}
@@ -603,11 +832,11 @@ func (a *ArchiveStore) QueryRange(minSeq, maxSeq int64) ([]StoredMessage, error)
 		return nil, ErrArchiveUnavailable
 	}
 
-	db, err := openReadOnly(a.path)
+	db, done, err := a.openRead()
 	if err != nil {
 		return nil, err
 	}
-	defer iox.CloseQuietly(a.logger(), db)
+	defer done()
 
 	rows, err := db.QueryContext(context.Background(),
 		`SELECT seq, payload, created_at FROM messages WHERE seq BETWEEN ? AND ? ORDER BY seq`,
@@ -648,11 +877,11 @@ func (a *ArchiveStore) Search(ctx context.Context, query, role string, limit int
 		limit = 100
 	}
 
-	db, err := openReadOnly(a.path)
+	db, done, err := a.openRead()
 	if err != nil {
 		return nil, err
 	}
-	defer iox.CloseQuietly(a.logger(), db)
+	defer done()
 
 	rows, err := db.QueryContext(ctx,
 		`SELECT m.seq, m.payload, m.created_at
@@ -684,11 +913,11 @@ func (a *ArchiveStore) Bounds() (minSeq, maxSeq int64, err error) {
 		return 0, 0, ErrArchiveUnavailable
 	}
 
-	db, err := openReadOnly(a.path)
+	db, done, err := a.openRead()
 	if err != nil {
 		return 0, 0, err
 	}
-	defer iox.CloseQuietly(a.logger(), db)
+	defer done()
 
 	row := db.QueryRowContext(context.Background(),
 		`SELECT COALESCE(MIN(seq), 0), COALESCE(MAX(seq), 0) FROM messages`,
@@ -706,11 +935,11 @@ func (a *ArchiveStore) Stats() (count int, first, last time.Time, err error) {
 		return 0, time.Time{}, time.Time{}, ErrArchiveUnavailable
 	}
 
-	db, err := openReadOnly(a.path)
+	db, done, err := a.openRead()
 	if err != nil {
 		return 0, time.Time{}, time.Time{}, err
 	}
-	defer iox.CloseQuietly(a.logger(), db)
+	defer done()
 
 	var firstUnix, lastUnix int64
 	row := db.QueryRowContext(context.Background(),
@@ -736,11 +965,11 @@ func (a *ArchiveStore) MinSeqAfter(t time.Time) (int64, error) {
 		return 0, ErrArchiveUnavailable
 	}
 
-	db, err := openReadOnly(a.path)
+	db, done, err := a.openRead()
 	if err != nil {
 		return 0, err
 	}
-	defer iox.CloseQuietly(a.logger(), db)
+	defer done()
 
 	var minSeq int64
 	row := db.QueryRowContext(context.Background(),

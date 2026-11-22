@@ -54,6 +54,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"CreatedAtStamped", check.testCreatedAtStamped},
 		{"UnknownSession", check.testUnknownSession},
 		{"SessionIsolation", check.testSessionIsolation},
+		{"KeysNeverShareHistory", check.testKeysNeverShareHistory},
 		{"Summary", check.testSummary},
 		{"TruncateHistory", check.testTruncateHistory},
 		{"SetHistoryFreshSeqs", check.testSetHistoryFreshSeqs},
@@ -291,6 +292,33 @@ func (c check) testSessionIsolation() {
 	}
 	if got := s.GetSummary("telegram:1/2"); got != "" {
 		t.Errorf("summary leaked across sessions: %q", got)
+	}
+}
+
+// testKeysNeverShareHistory writes keys that one file-name rule maps to one
+// name (a:b, a/b, a_b). Two different keys never share a history: a store
+// either keeps them apart or refuses the later ones, and a refused key reads
+// empty. The first key is never refused.
+func (c check) testKeysNeverShareHistory() {
+	t, s := c.t, c.s
+	keys := []string{"a:b", "a/b", "a_b"}
+	noErr(t, s.AddMessage(keys[0], "user", keys[0]))
+	noErr(t, s.SetSummary(keys[0], keys[0]))
+	accepted := []bool{true, false, false}
+	for i, key := range keys[1:] {
+		accepted[i+1] = s.AddMessage(key, "user", key) == nil
+	}
+	for i, key := range keys {
+		h := s.GetHistory(key)
+		switch {
+		case accepted[i] && (len(h) != 1 || h[0].Content != key):
+			t.Errorf("%s history = %+v, want only its own message", key, h)
+		case !accepted[i] && len(h) != 0:
+			t.Errorf("refused %s reads %+v, want nothing", key, h)
+		}
+		if got := s.GetSummary(key); i > 0 && got != "" {
+			t.Errorf("%s summary = %q, want none", key, got)
+		}
 	}
 }
 
