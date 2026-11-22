@@ -8,6 +8,40 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- The agent. The root package `agent` is its front door: the `Agent`
+  interface (`ID`, `Name`, `Run`, `Interrupt`, `Cancel`, `Close`), the
+  capability interfaces `TaskController`, `ToolHolder` and `ModelHolder`,
+  `New(id, opts...)`, the `With…` options (models from a catalogue or a
+  set, tools, allow checker, sessions, memory, context options, limits,
+  project, clock, logger, log content, redactor, plugins and one option per
+  callback, each usable more than once, run in the order given) and aliases
+  of the `hook` types, so a host imports one package. It holds no loop and
+  starts no goroutine (a guard test).
+- `loop` package: the agent (`loop.Agent`, `loop.Spec`, `New`) and the turn
+  engine, moved from the first host unchanged. It does what the host did
+  around the engine with the SDK's packages: tool lists per model call from
+  the `toolkit` registry through `discovery`, gated execution, a `ctxengine`
+  manager per session (summaries from the `Summarize` models), memory
+  through `hook.Memory`, the instruction and the host's layers as the system
+  prompt. Runs of one session queue behind the running turn; sessions run
+  concurrently. It is the `hook.TaskRegistrar` on every tool call's context
+  and its `TaskController`. `New` refuses an invalid id, missing models, a
+  chat purpose with no model, or two tools offered under one name. An
+  agent without a session store keeps sessions in memory.
+- `agenttest` package: the conformance suite of `agent.Agent`
+  (`agenttest.Run(t, factory)`, the factory given a `Fixture`), on a
+  scripted model. The SDK's agent passes it in the gate.
+- `examples/chat`: an example host (two models, two tools, stdin and
+  stdout, Ctrl-C stops a reply), under 100 lines, tested on a scripted
+  model.
+- `hook`: the one model-caller interface, `Caller` with `CompleteRequest`,
+  `CompleteReply` and `ErrNoModelAvailable`; `ServedTools`, how an agent
+  gives a CLI model its tools for one turn.
+- `mcphost`: `Served`, a `hook.ServedTools` over a token `Store` and a
+  `CLIConfig`.
+- `cogmem`: `Memory` and `AsMemorySession`, a cogmem session as a
+  `hook.Memory`.
+
 - `mcphost` package: serves a `toolkit` registry over MCP streamable HTTP to
   models that run their own tool loop (CLI models). `Endpoint` (`New`,
   `Config`) is an `http.Handler` the host mounts where it likes: it lists
@@ -268,6 +302,13 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Breaking: `ctxengine.WithModelCaller` and `consolidate.NewWorker` take a
+  `hook.Caller`; `ctxengine.ModelCaller`, `ModelRequest`, `ModelReply`,
+  `ErrNoModel` and `consolidate.ModelCaller`, `ModelRequest`, `ModelReply`
+  are gone. A caller with no model left returns an error wrapping
+  `hook.ErrNoModelAvailable` (which `models.ErrNoModelAvailable` is), so a
+  `models.Set.Caller` serves both packages as it is. `models.Caller`,
+  `CompleteRequest` and `CompleteReply` are aliases of hook's.
 - Breaking: `LLMProvider.Chat`, `speech` `Transcribe` and `Synthesize`, and
   `imagegen` `Generate` and `Edit` take an `accounting.Identity` after the
   context. A call without an agent name, or with an agent or project
@@ -305,6 +346,11 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- Breaking: `spawnllm.Worker` with `New`, its options (`WithProvider`,
+  `WithProviderInstance`, `WithTools`, `WithMaxIterations`,
+  `WithLLMOptions`, `WithProgress`, `WithIdentity`, `WithAccounting`,
+  `WithLogger`, `WithLogContent`), `ProviderSpec`, `Event` and `Result`. The
+  agent loop replaces it; the provider clients stay.
 - Breaking: `memory.ArchiveStore.SetState`, `AppendWindow`, `ReplaceWindow`,
   `CommitCompaction` and `TruncateWindow`, which wrote a state read before
   the transaction; use `Update`.

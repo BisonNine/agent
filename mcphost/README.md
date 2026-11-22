@@ -66,6 +66,15 @@ agent is granted and an optional `Gate`; `CallContext` for values only it
 knows (the chat a reply goes to); the plugins that audit, redact and show
 tool activity; and delivery of a tool's output to people.
 
+## For the agent loop
+
+`Served{Store, CLI}` is the agent's `hook.ServedTools` (`agent.Spec.Served`):
+for each turn of a CLI model it issues a token for the turn's scope, returns
+`CLI.Access(token).Prompt` for the system prompt, and revokes the token when
+the turn ends or is stopped. For a `Bearer` endpoint the prompt is empty and
+the CLI needs the token in its server entry's header, which the engine has no
+way to hand it: use an `Argument` endpoint.
+
 ## Example
 
 ```go

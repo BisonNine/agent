@@ -21,7 +21,7 @@ Logging uses `log/slog`. A provider takes
 `WithLogger` (the HTTP providers, `speech`, `imagegen`) or `SetLogger` (the
 CLI providers). Without one, nothing is logged. Records carry the attribute
 `component`. A CLI's stdout and stderr are logged only with
-`WithLogContent(true)` (or `SetLogContent(true)` on a CLI provider).
+`SetLogContent(true)` on the CLI provider.
 
 ## Identity and accounting
 

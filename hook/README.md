@@ -92,6 +92,10 @@ the task (`Scope.Task`, `TaskID`), and a `TaskHandle` (`Finish`, `Detach`,
   own limits are the model's (`modelspec.Limits`).
 - `Memory` / `MemorySession`: optional long-term memory, opened per session
   (`Recall`, `Observe`, `ToolsUsed`, `Close`).
+- `ServedTools`: how the engine gives a CLI model (which runs its own tool
+  loop) the agent's tools for one turn: a credential scoped to the turn, the
+  prompt text carrying it, and its revocation when the turn ends or stops.
+  `mcphost.Served` implements it.
 - `Redactor`: what the engine applies to the error text and content it logs.
 - `Truncator`: what the engine shortens the request content it logs with
   (`Truncate` by default; a host with a "no truncate" switch passes its
