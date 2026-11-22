@@ -15,6 +15,19 @@ project uses [Semantic Versioning](https://semver.org/).
   `ResultToSpec`), `ToolToSchema` and `OpenObjectProperties`, the per-call
   context values (`WithChat`, `WithSessionKey`, `WithAgentID` and their
   getters) and `Tally`, a per-run count of tool calls and the last failure.
+- `toolkit` live registry: `New` (or `NewRegistry`) returns a `Catalog`,
+  safe to change from any goroutine while turns run. Writes: `Add`
+  (toolspec definitions) and `AddEntries`, both refusing a duplicate name
+  (`ErrDuplicate`); `Put`, which replaces; `Remove`; `Replace` and
+  `ReplaceEntries`, one atomic swap of every tool under a prefix;
+  `AddToolset` and `AddProvider`, which mount a named group and return a
+  function that removes it. Reads: `Snapshot` (one per model call: the
+  listed and hidden tools then offered, with `Execute`), `Execute`,
+  `ExecuteUnattended`, `List`, `Listed`, `Hidden`, `Get`, `Lookup`,
+  `Names`, `Stats` (calls and errors per tool) and `Version`. `Subscribe`
+  sends one `Change{Added, Removed, Changed}` per change and none for a
+  change that alters nothing. A call to a tool removed since its snapshot
+  returns the tool error `tool "x" is no longer available`.
 - `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
   that came from outside the process as data for the model.
 - `modelspec` package: the shared definition of providers and models.
