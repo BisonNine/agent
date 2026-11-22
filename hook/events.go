@@ -39,14 +39,14 @@ type TurnStarted struct {
 // the session was opened (and reset when the run asked), after the message
 // was stored (unless AlreadyStored) with any compaction that started, after
 // the session's context was first assembled for the turn (with any
-// compaction that ran) and the turn was marked pending; before the first
-// iteration's tool definitions, assembly and BeforeModel, so before every
-// ModelCallStarted. A turn BeforeTurn answered or refused, or one that ended
-// before its loop (the store refused its message), has none. It is
-// emitted on the turn's goroutine, so OnEvent sees it there, on the turn's
-// context, before the loop goes on: a host that starts something for the
-// model loop (a progress heartbeat, per-chat settings read once) starts it
-// here.
+// compaction that ran) and the pending marker was written (or its failure
+// logged); before the first iteration's tool definitions, assembly and
+// BeforeModel, so before every ModelCallStarted. A turn BeforeTurn answered
+// or refused, or one that ended before its loop (the store refused its
+// message), has none. It is emitted on the turn's goroutine, so OnEvent
+// sees it there, on the turn's context, before the loop goes on: a host
+// that starts something for the model loop (a progress heartbeat, per-chat
+// settings read once) starts it here.
 type LoopStarted struct {
 	EventHeader
 }

@@ -391,10 +391,13 @@ not listed.
     fields to every engine line. Host checklist:
     - 7.9.2a register `hook.Plugin{Name: "response-log", AfterModel: …}`
       first among the `AfterModel` plugins (before `images`), logging
-      "LLM response" under component `agent` at debug with `agent_id`,
+      "LLM response" through `logger.SDK()` (the engine's logger) under
+      component `agent` at debug with `agent_id`,
       `iteration`, `content_chars`, `tool_calls`, `reasoning_chars`,
       `target_channel`, `channel`, and `reasoning` when content may be
-      logged; it changes nothing;
+      logged; it changes nothing. The line's source file and line become
+      the callback's, as they would anyway when the engine moves to
+      `loop`;
     - 7.9.2b delete the engine's `logResponse` and its call in `iterate`,
       `turnHost.responseLogFields` and `llmTurnEnv.responseLogFields`.
 - 7.10 **Resolved: interim `modelFacts`, `directClients`, `spec.direct`,
@@ -403,8 +406,9 @@ not listed.
   model, opts...)`, whose options make its candidate report what the
   interim path reports: `WithDirectProvider("")` (the finish line's empty
   provider, and `d.provider`), `WithDirectLimits` (the agent's own max
-  tokens, context window, thinking level, no-tools, vision mode and request
-  timeout) and `WithDirectRequireReasoningContent` (the agent's model's
+  tokens, context window, thinking level, no-tools and vision mode; the
+  request timeout is the default model's client's, set when it was built,
+  so `RequestTimeout` is left 0 as today) and `WithDirectRequireReasoningContent` (the agent's model's
   provider setting, not the default model's). The chain still records no
   health, sends no observer event and never falls back; its protocol, and
   so temperature for a CLI, is the default model's. Host checklist:
@@ -461,12 +465,15 @@ not listed.
     what `loopPlugins` does now: `recordPendingTurnSource` (on the event's
     context) and `st.pendingSource`, the coalescer for a streaming channel,
     the fallback notifier and the breadcrumbs switch into `turnState`, and
-    `startProgressUpdates` on the turn's context;
+    `startProgressUpdates` on the turn's context. A panic there is now an
+    observer's (logged, the turn goes on), where in `begin` it reached the
+    turn;
   - 7.16c register `fallback-notice` (`OnFallback`) and `breadcrumbs`
     (`OnEvent`) with the other plugins, each doing nothing until the
     consumer set its state;
   - 7.16d register `stream` (`OnTextDelta`) only when the channel can
-    stream (`streamToolNarration && SupportsStreaming(opts.Channel)`),
+    stream (`streamToolNarration && al.channelManager != nil &&
+    al.channelManager.SupportsStreaming(opts.Channel)`),
     because the engine asks a provider for partial text only when an
     `OnTextDelta` is registered; that capability of the channel is read
     when the turn is built rather than at `LoopStarted`; the coalescer is

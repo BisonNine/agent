@@ -79,7 +79,7 @@
 //     AfterTurn, storing the reply and saving the session. Only the
 //     compaction deferred until after the reply falls outside it.
 //   - A turn that reaches its model loop has exactly one LoopStarted, after
-//     its message is stored and the turn marked pending, before its first
+//     its message is stored and the pending marker written, before its first
 //     ModelCallStarted (and before anything else of the loop). A turn
 //     BeforeTurn answered or refused, or that ended before its loop, has
 //     none.
