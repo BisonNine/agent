@@ -40,6 +40,46 @@ project uses [Semantic Versioning](https://semver.org/).
   `Fake`, a clock moved by hand (`Advance`, `Set`, `Waiters`,
   `BlockUntil`) whose `WithTimeout`/`WithDeadline` contexts end on fake
   time.
+- `toolkit` package, the tool core: `Tool` and its optional interfaces
+  (`AsyncExecutor`, `SessionScoped`, `ExternalNamer`, `DiscoveryGrouped`),
+  `Result` and its constructors, `Refusal` and `IsExpectedRefusal`,
+  `NotEnabledMessage`, the toolspec bridge (`FromSpec`, `ResultFromSpec`,
+  `ResultToSpec`), `ToolToSchema` and `OpenObjectProperties`, the per-call
+  context values (`WithChat`, `WithSessionKey`, `WithAgentID` and their
+  getters) and `Tally`, a per-run count of tool calls and the last failure.
+- `toolkit` live registry: `New` (or `NewRegistry`) returns a `Catalog`,
+  safe to change from any goroutine while turns run. Writes: `Add`
+  (toolspec definitions) and `AddEntries`, both refusing a duplicate name
+  (`ErrDuplicate`); `Put`, which replaces; `Remove`; `Replace` and
+  `ReplaceEntries`, one atomic swap of every tool under a prefix;
+  `AddToolset` and `AddProvider`, which mount a named group and return a
+  function that removes it. Reads: `Snapshot` (one per model call: the
+  listed and hidden tools then offered, with `Execute`), `Execute`,
+  `ExecuteUnattended`, `List`, `Listed`, `Hidden`, `Get`, `Lookup`,
+  `Names`, `Stats` (calls and errors per tool) and `Version`. `Subscribe`
+  sends one `Change{Added, Removed, Changed}` per change and none for a
+  change that alters nothing, in commit order, on a delivery goroutine:
+  a writer returns before its notice is delivered, and a panicking
+  subscriber is logged and skipped. A call to a tool removed since its snapshot
+  returns the tool error `tool "x" is no longer available`.
+- `toolkit` two levels, like `models`: a process-wide `Catalog` and a
+  per-agent `Set`, the tools one agent is granted. `Catalog.Set(id)` (a
+  named set, granting nothing until `Grant`), `View(allow)` (an unnamed
+  filtered view) and `Default`; `Set.Grant(allow AllowChecker)`. Both
+  satisfy `Registry`, what an agent is given. A call to a tool the set is
+  not granted returns `NotEnabledMessage` as an expected refusal.
+  `Catalog.Adopt(next)` swaps in a catalogue built from a new
+  configuration: agents keep their handles, named sets take next's grants,
+  a running call finishes on its old tool, and each subscriber gets one
+  notice.
+- `toolkit` enable and disable: `Disable`, `Enable` and `Enabled` on the
+  catalogue (off for everyone) and on a set (off for that agent), and
+  `DisableGroup` / `EnableGroup` by toolset, provider or name prefix. A
+  tool is usable when it is on at both levels. A disabled tool stays
+  registered but is offered to no model, discovery index or MCP client,
+  and a call to it returns `tool "x" is disabled`.
+- `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
+  that came from outside the process as data for the model.
 - `modelspec` package: the shared definition of providers and models.
   `Provider` and `Model` with the JSON form of the host configuration they
   came from; `Model.Validate`, `Provider.ValidateProtocol`,
