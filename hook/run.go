@@ -83,8 +83,8 @@ type Run interface {
 	// Interrupt stops this run's turn with ErrInterrupted, or drops this run
 	// from the queue. Other queued runs and the tasks it started are left.
 	Interrupt()
-	// Cancel stops the turn and every task it started, with cause (nil
-	// means ErrInterrupted).
+	// Cancel stops the turn and every task it started (TaskInfo.Turn), with
+	// theirs, with cause (nil means ErrInterrupted).
 	Cancel(cause error)
 	// Done is closed once TurnFinished has been emitted.
 	Done() <-chan struct{}

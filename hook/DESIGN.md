@@ -518,12 +518,19 @@ the SDK's will live in `agent/loop`.
 
 - `TaskRegistrar` (a `TaskController` plus `StartTask`) on the tool call's
   context: `WithTaskRegistrar`, `TaskRegistrarFrom`.
-- `StartTask(ctx, TaskStart{Info, Depth, OnCancel})` returns the task's
-  context and a `TaskHandle` (`ID`, `Info`, `Finish`, `Detach`, `Cancel`).
+- `StartTask(ctx, TaskStart{Info, Depth, OnCancel, OnDetach})` returns the
+  task's context and a `TaskHandle` (`ID`, `Info`, `Finish`, `Detach`,
+  `Cancel`).
+- The agent implements the registrar (`agent/loop`): it emits
+  `TaskStarted`/`TaskFinished` and is told of shutdown. The host keeps its
+  records through `OnCancel` and `OnDetach`. Until 5c the host's own
+  registry implements the interface and reports through its observers.
 - `Scope.Task` and `TaskID(ctx)`: the task a context runs in;
   `TaskScope(from, info, depth)`: the scope of a task's context.
-- `TaskController.CancelTask` returns the tasks it cancelled;
-  `ErrUnknownTask` for an id that is not the agent's.
+- `TaskController.CancelTask` returns a `TaskCancel` (`Cancelled`,
+  `AlreadyEnded`); `CancelAll` cancels every task with none escaping;
+  `ErrUnknownTask` for an id that is not the agent's (or ended long ago).
+- `TaskInfo.Turn`: the turn that started a task, which `Run.Cancel` uses.
 
 ### 9.2 Decisions
 
@@ -551,8 +558,12 @@ the SDK's will live in `agent/loop`.
   run exactly once by a cancel, before the task's context is cancelled and
   before `TaskFinished`; `false` means the task had already ended (its
   result is on its way) and the cancel leaves it alone and does not count
-  it. The registrar owns the in-memory `TaskState`; the host owns its
-  record (status, run marker, live set). *Rejected:* a `TaskStore`
+  it; once it returned true the task ends cancelled and a racing `Finish`
+  returns false. It may run inside `StartTask` (a task started under a
+  cancelled parent) and never under a registrar lock. `OnDetach` is the
+  same step for a detach (record mode `callback`, run marker, live set).
+  The registrar owns the in-memory `TaskState`; the host owns its record
+  (status, run marker, live set). *Rejected:* a `TaskStore`
   interface the registrar writes through: the host's settle step is one
   locked transaction over its record, marker and supervisor set, which a
   generic store interface would split or have to re-implement.
@@ -560,7 +571,11 @@ the SDK's will live in `agent/loop`.
   `TaskCallback` and the result: the host's consumer starts a new turn of
   the owner's session with it (D6). A `TaskWait` task's `TaskFinished`
   carries the result too, but its waiter has it; consumers skip it.
-- 9.2.5 **Shutdown is told, not inferred.** `Detach(cause)` cancels
+- 9.2.5 **Shutdown ends tasks without cancelling them.** At shutdown the
+  tasks' contexts end with a cause wrapping `ErrShutdown`, but `OnCancel`
+  does not run and no `TaskFinished` is emitted: their records stay
+  running, so the supervisor relaunches them after the restart, as today.
+  **Shutdown is told, not inferred.** `Detach(cause)` cancels
   instead of detaching when the registrar knows the agent is shutting down
   (its agent's `Close`, or `Cancel` with a cause wrapping `ErrShutdown`) or
   the cause wraps `ErrShutdown`; the turn is replayed after the restart
@@ -570,10 +585,13 @@ the SDK's will live in `agent/loop`.
   tool deciding between `Detach` and `Cancel` itself, which would need
   every such tool to know about shutdown.
 - 9.2.6 **The registrar is what `TaskController` is.** The agent's
-  `Tasks`/`CancelTask` and the registrar on its tools' contexts are one
-  registry seen per owner. `CancelTask` cascades to children first and
-  runs each `OnCancel`; `agent_cancel {"all": true}` cancels each of
-  `Tasks()`.
+  `Tasks`/`CancelTask`/`CancelAll` and the registrar on its tools'
+  contexts are one registry seen per owner (the registrar's agent; a
+  clone's scope carries its source's id). `CancelTask` cascades to children
+  first and runs each `OnCancel`; `agent_cancel {"all": true}` is
+  `CancelAll`. A waiter selects on its task's context as well as the
+  result: a context that ended with `State` cancelled means the waiter
+  builds its own "cancelled" result.
 
 ### 9.3 The host's checklist for adopting these types
 
@@ -589,7 +607,15 @@ the SDK's will live in `agent/loop`.
   `hook.WithScope(TaskScope(...))`, then add the ask chain on the returned
   context in `launchTask`.
 - [ ] `beforeCancel`/`cancelRun` becomes `TaskStart.OnCancel`, unchanged in
-  meaning.
+  meaning; the record part of `SubagentManager.detach` becomes
+  `TaskStart.OnDetach`.
+- [ ] `Task.stop`: run `beforeCancel` and the state change as one step, so
+  a worker ending between them cannot make a cancel report "already
+  finished" (today `beforeCancel` runs outside the `sync.Once`).
+- [ ] The supervisor's relaunch passes `Info.Parent` and `Info.Started`
+  from the record.
+- [ ] `Cancel`/`CancelAll` return `hook.TaskCancel`; `agent_cancel` reports
+  `AlreadyEnded` as "already finished".
 - [ ] `TaskRegistry.Observe` becomes `TaskStarted`/`TaskFinished` events;
   `Cancel` returns `[]hook.TaskInfo` as `CancelTask` does.
 - [ ] `sm.shuttingDown()` becomes the registrar being told of shutdown.

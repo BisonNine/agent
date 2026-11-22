@@ -50,6 +50,10 @@ type TaskInfo struct {
 	// Parent is the id of the task that started this one; empty for a task
 	// a turn started.
 	Parent string
+	// Turn is the id of the turn that started the task (directly, or through
+	// its parent tasks); Run.Cancel cancels the tasks of its turn by it.
+	// Empty for a task relaunched after a restart.
+	Turn string
 	// Kind says what the task is (for example "subagent", or a task model's
 	// kind); free text.
 	Kind string
@@ -72,16 +76,28 @@ type TaskController interface {
 	// Tasks lists the agent's running tasks, oldest first.
 	Tasks() []TaskInfo
 	// CancelTask cancels the agent's task taskID and, first, the tasks it
-	// started (with theirs, whatever agent owns them), with cause. It
-	// returns the tasks it cancelled, children first. A task that has
-	// already ended is not an error: it returns none. An id that is not a
-	// task of this agent fails with ErrUnknownTask (another agent's task is
-	// unknown, not refused). To cancel every task, cancel each of Tasks.
-	CancelTask(taskID string, cause error) ([]TaskInfo, error)
+	// started (with theirs, whatever agent owns them), with cause. A task
+	// that had already ended is not an error: it is reported in
+	// AlreadyEnded (its children may still have been cancelled). An id that
+	// is not a task of this agent fails with ErrUnknownTask; so may the id
+	// of a task that ended long ago and that the registry no longer keeps.
+	CancelTask(taskID string, cause error) (TaskCancel, error)
+	// CancelAll cancels every running task of the agent, with the tasks they
+	// started. A task started while it runs is cancelled too: none escapes.
+	CancelAll(cause error) TaskCancel
 }
 
-// ErrUnknownTask reports a task id that is not a running or ended task of
-// the agent asked.
+// TaskCancel is what a cancel did.
+type TaskCancel struct {
+	// Cancelled are the tasks this call cancelled, each after the tasks it
+	// started.
+	Cancelled []TaskInfo
+	// AlreadyEnded are the tasks asked for that had already ended (done,
+	// error, or cancelled earlier).
+	AlreadyEnded []TaskInfo
+}
+
+// ErrUnknownTask reports a task id that is not a task of the agent asked.
 var ErrUnknownTask = errors.New("unknown task")
 
 // TaskStart is what a tool gives StartTask.
@@ -89,10 +105,11 @@ type TaskStart struct {
 	// Info describes the task. ID is the caller's (a host that keeps a
 	// record per task uses the record's id) or, when empty, one the
 	// registrar makes. Kind, Label and Mode are the caller's. Session
-	// defaults to the caller's scope's session (where the result goes).
-	// Owner, Parent, State and the times are set by the registrar: Owner is
-	// the caller's scope's agent, Parent the task the caller runs in
-	// (TaskID of the caller's context).
+	// defaults to the caller's scope's session (where the result goes);
+	// Parent to the task the caller runs in (TaskID of its context); Turn to
+	// the caller's scope's turn id; Started to now. A caller relaunching a
+	// task after a restart sets Parent and Started from its record. The
+	// registrar sets Owner (its own agent), State and Ended.
 	Info TaskInfo
 	// Depth is the sub-agent depth the task runs at (its scope's Depth).
 	Depth int
@@ -102,63 +119,93 @@ type TaskStart struct {
 	// "cancelled" (and nothing relaunches the task) before the worker can
 	// notice. It returns false when the task had in fact already ended (its
 	// result is being delivered): the cancel then does nothing more to it,
-	// and the task is not among those reported cancelled. It must not call
-	// back into the registrar.
+	// and the task is reported in AlreadyEnded. Once it returned true (or
+	// when there is none) the task ends cancelled with the cause and is
+	// among those the cancel reports; a Finish racing it returns false.
+	//
+	// It runs on the goroutine of the cancel, never while the registrar
+	// holds a lock, and may run inside StartTask itself, before it returns,
+	// for a task started under a cancelled parent: a caller that holds a
+	// lock of its own while starting a task must allow for that. It must not
+	// call back into the registrar.
 	OnCancel func(cause error) bool
+	// OnDetach, when set, records in the caller's own record that the task
+	// is now a TaskCallback task (so a restart relaunches it). Detach runs
+	// it exactly once, before the mode changes, with the same rules as
+	// OnCancel: false means the task had already ended, and Detach then
+	// returns false.
+	OnDetach func() bool
 }
 
 // TaskRegistrar is how a tool running inside a turn starts work that must
 // outlive the turn: a sub-agent, a task-model job, an async tool's late
 // part. It is the agent's task registry as a tool reaches it, on the tool
-// call's context (TaskRegistrarFrom), and it is the same registry the
-// agent's TaskController lists and cancels.
+// call's context (TaskRegistrarFrom), and the same registry the agent's
+// TaskController lists and cancels.
 //
-// Shutdown: a registrar is told that its agent is shutting down (by the
-// agent's Close, or a Cancel whose cause wraps ErrShutdown) before the
-// agent's turns are cancelled. It never infers shutdown from a context's
-// cause: a call that reached a tool another way (a CLI model's tool call
-// over MCP) may end with a plain context.Canceled.
+// The agent implements it (agent/loop): it emits TaskStarted and
+// TaskFinished on the agent's event stream and is told when the agent shuts
+// down. A host keeps its records through TaskStart's OnCancel and OnDetach.
+// (A host that implements it itself before the engine moves, as the first
+// host does, reports through its own observers and its own shutdown flag.)
+//
+// Shutdown: the agent tells its registrar it is shutting down (its Close,
+// or a Cancel whose cause wraps ErrShutdown) before it cancels its turns.
+// Shutdown is not a cancellation of the tasks: their contexts end with a
+// cause wrapping ErrShutdown, but OnCancel does not run, no TaskFinished is
+// emitted, and their records stay as they are, so a restart relaunches
+// them. The one exception is a TaskWait task whose turn stops waiting
+// (Detach). The registrar never infers shutdown from a context's cause: a
+// call that reached a tool another way (a CLI model's tool call over MCP)
+// may end with a plain context.Canceled.
 type TaskRegistrar interface {
 	TaskController
 
 	// StartTask registers a task and returns the context it runs on and its
 	// handle. The context is not a child of ctx: no interrupt, cancel or
-	// deadline of the turn reaches it, and it carries none of ctx's values
-	// but a Scope (see TaskScope). A host that needs its own values on the
-	// task (who is waiting on the turn, for instance) puts them on the
-	// returned context itself, before running the work there.
+	// deadline of the turn reaches it, and ctx's own cancellation does not
+	// stop StartTask (a tool whose turn was just interrupted still starts
+	// its task). It carries none of ctx's values but a Scope (see
+	// TaskScope). A host that needs its own values on the task (who is
+	// waiting on the turn, for instance) puts them on the returned context
+	// itself, before running the work there.
 	//
 	// The task is running, listed by Tasks and announced with TaskStarted
-	// before StartTask returns. One started under a task that is being
-	// cancelled is cancelled at once (its context is done when returned).
-	// It fails with ErrShutdown once the agent is shutting down, and on a
-	// duplicate id.
+	// before StartTask returns. One started under a task that is being or
+	// has been cancelled is cancelled at once (OnCancel runs, and its
+	// context is done when returned). It fails with ErrShutdown once the
+	// agent is shutting down, and on a duplicate id.
 	StartTask(ctx context.Context, start TaskStart) (context.Context, TaskHandle, error)
 }
 
 // TaskHandle is the starter's hold on one task. Every method is safe from
 // any goroutine, at any time, also after the task ended.
+//
+// A turn waiting for a TaskWait task waits for its result from the worker
+// and for the task's context to end. When the context ends first, Info's
+// State says why: TaskCancelled, and the waiter builds its own result (the
+// task was cancelled); otherwise the result is on its way.
 type TaskHandle interface {
 	// ID is the task's id.
 	ID() string
 	// Info is the task's description now.
 	Info() TaskInfo
 	// Finish ends the task with its result: TaskError when the result is an
-	// error (IsError or Err), else TaskDone. It releases the task's context
-	// and emits TaskFinished with the result, whose Task.Mode says where it
-	// goes: a TaskWait task's result is its waiter's, a TaskCallback task's
-	// starts a new turn of the owner's session (the host routes it). It
-	// reports false, and does nothing, for a task already ended or
-	// cancelled.
+	// error (IsError or Err), else TaskDone (a nil result: done, with
+	// nothing to say). It releases the task's context and emits
+	// TaskFinished with the result, whose Task.Mode says where it goes: a
+	// TaskWait task's result is its waiter's, a TaskCallback task's starts a
+	// new turn of the owner's session (the host routes it). It reports
+	// false, and does nothing, for a task already ended or cancelled.
 	Finish(result *toolkit.Result) bool
 	// Detach is called by the turn waiting for a TaskWait task when it
-	// stops waiting, with the cause of its stop. The registrar decides:
-	// when the agent is shutting down (the registrar is told; see
-	// TaskRegistrar) or cause wraps ErrShutdown, the task is cancelled, since the turn will be replayed
-	// and start it again; otherwise it becomes a TaskCallback task, keeps
-	// running, and its result arrives later in TaskFinished. It reports
-	// whether the task was detached: false when it was cancelled or had
-	// already ended (its result is then the waiter's).
+	// stops waiting, with the cause of its stop. When the agent is shutting
+	// down (see TaskRegistrar) or cause wraps ErrShutdown, the task is
+	// cancelled (OnCancel runs), since the turn will be replayed and start
+	// it again. Otherwise OnDetach runs and the task becomes a TaskCallback
+	// task, keeps running, and its result arrives later in TaskFinished. It
+	// reports whether the task was detached: false when it was cancelled,
+	// had already ended, or is not (or no longer) a TaskWait task.
 	Detach(cause error) bool
 	// Cancel cancels the task (and, first, the tasks it started) with
 	// cause, as TaskController.CancelTask does; for a starter that cannot

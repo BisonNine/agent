@@ -297,7 +297,8 @@ func (r *fakeRun) Wait() hook.TurnResult {
 type fakeTasks struct{}
 
 func (fakeTasks) Tasks() []hook.TaskInfo                            { return nil }
-func (fakeTasks) CancelTask(string, error) ([]hook.TaskInfo, error) { return nil, nil }
+func (fakeTasks) CancelTask(string, error) (hook.TaskCancel, error) { return hook.TaskCancel{}, nil }
+func (fakeTasks) CancelAll(error) hook.TaskCancel                   { return hook.TaskCancel{} }
 
 type fakeMemory struct{}
 

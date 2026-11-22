@@ -258,7 +258,8 @@ project uses [Semantic Versioning](https://semver.org/).
   and run options; `Scope` with `WithScope` and `ScopeOf`; the cancel causes,
   `CauseOutcome` and `InterruptedResult`; `ErrSessionStore` and
   `SessionStoreError`; `TaskInfo`, `TaskController`, `ErrUnknownTask`, and
-  the task seam `TaskRegistrar`, `TaskStart`, `TaskHandle`,
+  `TaskCancel`, `TaskInfo.Turn`, and the task seam `TaskRegistrar`,
+  `TaskStart` (with `OnCancel`, `OnDetach`), `TaskHandle`,
   `WithTaskRegistrar`, `TaskRegistrarFrom`, `TaskID`, `TaskScope` and
   `Scope.Task`; `Limits`; `Memory`;
   `Redactor`; `Truncator` and its default `Truncate`, which shorten the

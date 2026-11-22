@@ -14,7 +14,10 @@ import (
 // knows (the chat a reply goes to, who is waiting on the turn) stay in the
 // host's own context keys.
 type Scope struct {
-	// AgentID is the agent's id as normalised by ident.NormalizeID.
+	// AgentID is the agent's id as normalised by ident.NormalizeID. A
+	// temporary clone of an agent (a sub-agent worker) runs under its
+	// source's id: its calls are accounted to, and its tasks owned by, the
+	// source.
 	AgentID string
 	// AgentName is the agent's friendly name, for logs and records; it may
 	// be empty.

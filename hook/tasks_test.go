@@ -11,9 +11,11 @@ import (
 	"go.bison9.com/agent/toolkit"
 )
 
-// fakeRegistrar is the smallest registrar the contract allows, enough to
-// show a tool starting a task: tasks run on contexts of their own, carry
-// TaskScope, and a waiting turn that stops waiting detaches its task.
+// fakeRegistrar shows the shape of the seam; it is not a conforming
+// registrar (no cascade, no events, no times, no shutdown). Its tasks run
+// on contexts of their own carrying TaskScope, a cancel runs OnCancel
+// before the context ends, and a waiting turn that stops waiting detaches
+// its task through OnDetach.
 type fakeRegistrar struct {
 	mu       sync.Mutex
 	tasks    map[string]*fakeHandle
@@ -25,6 +27,7 @@ type fakeHandle struct {
 	mu     sync.Mutex
 	info   hook.TaskInfo
 	cancel context.CancelCauseFunc
+	start  hook.TaskStart
 }
 
 func newFakeRegistrar() *fakeRegistrar { return &fakeRegistrar{tasks: map[string]*fakeHandle{}} }
@@ -37,7 +40,13 @@ func (r *fakeRegistrar) StartTask(ctx context.Context, start hook.TaskStart) (co
 	}
 	from, _ := hook.ScopeOf(ctx)
 	info := start.Info
-	info.Owner, info.Parent, info.State = from.AgentID, hook.TaskID(ctx), hook.TaskRunning
+	info.Owner, info.State = from.AgentID, hook.TaskRunning
+	if info.Parent == "" {
+		info.Parent = hook.TaskID(ctx)
+	}
+	if info.Turn == "" {
+		info.Turn = from.TurnID
+	}
 	if info.Session == "" {
 		info.Session = from.Session
 	}
@@ -47,7 +56,7 @@ func (r *fakeRegistrar) StartTask(ctx context.Context, start hook.TaskStart) (co
 	tctx := hook.WithScope(context.Background(), hook.TaskScope(from, info, start.Depth))
 	tctx = hook.WithTaskRegistrar(tctx, r)
 	tctx, cancel := context.WithCancelCause(tctx)
-	h := &fakeHandle{reg: r, info: info, cancel: cancel}
+	h := &fakeHandle{reg: r, info: info, cancel: cancel, start: start}
 	r.tasks[info.ID] = h
 	return tctx, h, nil
 }
@@ -64,17 +73,27 @@ func (r *fakeRegistrar) Tasks() []hook.TaskInfo {
 	return out
 }
 
-func (r *fakeRegistrar) CancelTask(id string, cause error) ([]hook.TaskInfo, error) {
+func (r *fakeRegistrar) CancelTask(id string, cause error) (hook.TaskCancel, error) {
 	r.mu.Lock()
 	h := r.tasks[id]
 	r.mu.Unlock()
 	if h == nil {
-		return nil, hook.ErrUnknownTask
+		return hook.TaskCancel{}, hook.ErrUnknownTask
 	}
 	if !h.Cancel(cause) {
-		return nil, nil
+		return hook.TaskCancel{AlreadyEnded: []hook.TaskInfo{h.Info()}}, nil
 	}
-	return []hook.TaskInfo{h.Info()}, nil
+	return hook.TaskCancel{Cancelled: []hook.TaskInfo{h.Info()}}, nil
+}
+
+func (r *fakeRegistrar) CancelAll(cause error) hook.TaskCancel {
+	var out hook.TaskCancel
+	for _, info := range r.Tasks() {
+		if c, err := r.CancelTask(info.ID, cause); err == nil {
+			out.Cancelled = append(out.Cancelled, c.Cancelled...)
+		}
+	}
+	return out
 }
 
 func (h *fakeHandle) ID() string { return h.info.ID }
@@ -97,13 +116,21 @@ func (h *fakeHandle) end(state hook.TaskState, cause error) bool {
 }
 
 func (h *fakeHandle) Finish(r *toolkit.Result) bool {
-	if r.IsError || r.Err != nil {
+	if r != nil && (r.IsError || r.Err != nil) {
 		return h.end(hook.TaskError, nil)
 	}
 	return h.end(hook.TaskDone, nil)
 }
 
-func (h *fakeHandle) Cancel(cause error) bool { return h.end(hook.TaskCancelled, cause) }
+func (h *fakeHandle) Cancel(cause error) bool {
+	if h.Info().State.Terminal() {
+		return false
+	}
+	if h.start.OnCancel != nil && !h.start.OnCancel(cause) {
+		return false
+	}
+	return h.end(hook.TaskCancelled, cause)
+}
 
 func (h *fakeHandle) Detach(cause error) bool {
 	h.reg.mu.Lock()
@@ -113,11 +140,14 @@ func (h *fakeHandle) Detach(cause error) bool {
 		h.Cancel(cause)
 		return false
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.info.State.Terminal() {
+	if i := h.Info(); i.State.Terminal() || i.Mode != hook.TaskWait {
 		return false
 	}
+	if h.start.OnDetach != nil && !h.start.OnDetach() {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	h.info.Mode = hook.TaskCallback
 	return true
 }
@@ -163,13 +193,13 @@ func TestTaskScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hook.TaskID(tctx) != "t-1" || h.Info().Owner != "alice" || h.Info().Parent != "" {
+	if hook.TaskID(tctx) != "t-1" || h.Info().Owner != "alice" || h.Info().Parent != "" || h.Info().Turn != alice.TurnID {
 		t.Fatalf("task = %+v, id on context %q", h.Info(), hook.TaskID(tctx))
 	}
 	// Not a child of the turn's context.
 	cancelled, cancel := context.WithCancel(turn)
 	cancel()
-	child, _, err := r.StartTask(context.WithoutCancel(cancelled), hook.TaskStart{Info: hook.TaskInfo{ID: "t-2"}})
+	child, _, err := r.StartTask(cancelled, hook.TaskStart{Info: hook.TaskInfo{ID: "t-2"}})
 	if err != nil || child.Err() != nil {
 		t.Fatalf("task context ended with its starter: %v, %v", err, child.Err())
 	}
@@ -177,8 +207,17 @@ func TestTaskScope(t *testing.T) {
 	if err != nil || ch.Info().Parent != "t-1" {
 		t.Fatalf("child of t-1: %+v, %v", ch.Info(), err)
 	}
-	if _, err := r.CancelTask("nope", hook.ErrInterrupted); err == nil {
-		t.Fatal("unknown task cancelled")
+	if _, err := r.CancelTask("nope", hook.ErrInterrupted); !errors.Is(err, hook.ErrUnknownTask) {
+		t.Fatalf("unknown task: %v", err)
+	}
+	if !h.Detach(hook.ErrInterrupted) || h.Detach(hook.ErrInterrupted) {
+		t.Fatal("a wait task detaches once")
+	}
+	if c, err := r.CancelTask("t-1", hook.ErrInterrupted); err != nil || len(c.Cancelled) != 1 || h.Info().State != hook.TaskCancelled {
+		t.Fatalf("cancel = %+v, %v", c, err)
+	}
+	if c, err := r.CancelTask("t-1", hook.ErrInterrupted); err != nil || len(c.AlreadyEnded) != 1 || h.Finish(nil) {
+		t.Fatalf("second cancel = %+v; Finish after cancel must be false", c)
 	}
 }
 
@@ -197,6 +236,9 @@ func ExampleTaskRegistrar() {
 		Depth: 1,
 		OnCancel: func(error) bool {
 			return true // the host marks its own record cancelled here
+		},
+		OnDetach: func() bool {
+			return true // the host marks its own record "callback" here
 		},
 	})
 	if err != nil {
