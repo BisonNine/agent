@@ -8,6 +8,15 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `toolkit` package, the tool core: `Tool` and its optional interfaces
+  (`AsyncExecutor`, `SessionScoped`, `ExternalNamer`, `DiscoveryGrouped`),
+  `Result` and its constructors, `Refusal` and `IsExpectedRefusal`,
+  `NotEnabledMessage`, the toolspec bridge (`FromSpec`, `ResultFromSpec`,
+  `ResultToSpec`), `ToolToSchema` and `OpenObjectProperties`, the per-call
+  context values (`WithChat`, `WithSessionKey`, `WithAgentID` and their
+  getters) and `Tally`, a per-run count of tool calls and the last failure.
+- `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
+  that came from outside the process as data for the model.
 - `modelspec` package: the shared definition of providers and models.
   `Provider` and `Model` with the JSON form of the host configuration they
   came from; `Model.Validate`, `Provider.ValidateProtocol`,

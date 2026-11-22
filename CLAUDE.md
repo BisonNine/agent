@@ -1,8 +1,8 @@
 # Bison9 Agent SDK
 
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
-holding `toolspec`, `spawnllm`, `ctxengine`, `cogmem`, `accounting`,
-`fsmode`, `modelspec`, and the tool packages under `toolbox/`
+holding `toolspec`, `toolkit`, `spawnllm`, `ctxengine`, `cogmem`,
+`accounting`, `fsmode`, `modelspec`, and the tool packages under `toolbox/`
 (`toolbox/shell`).
 
 ## Status
@@ -19,6 +19,10 @@ The packages used to be separate modules, and the module boundaries enforced
 these rules. Now the `imports_test.go` guard in each package does. Keep them:
 
 - `toolspec` imports only the standard library.
+- `toolkit` imports only `toolspec` and the standard library (its
+  subpackage `toolkit/untrusted` only the standard library). It never
+  imports `spawnllm`: tool definitions for a provider are built by the
+  caller from what the registry lists.
 - `fsmode` imports only the standard library; `spawnllm`, `ctxengine` and
   `cogmem` take their file and directory modes as an `fsmode.Modes`
   (`WithFileModes`).
