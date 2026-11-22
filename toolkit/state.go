@@ -16,6 +16,7 @@ type entry struct {
 	group  string
 	reveal bool
 	source string // toolset or provider namespace; "" for a tool added alone
+	meta   any    // the host's Entry.Meta, never inspected
 }
 
 // catState is one immutable generation of a catalogue: its tools and the

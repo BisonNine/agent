@@ -173,6 +173,7 @@ func newEntry(in Entry, source string) (*entry, error) {
 		group:  in.Group,
 		reveal: in.RevealTogether,
 		source: source,
+		meta:   in.Meta,
 	}, nil
 }
 
@@ -413,9 +414,19 @@ func (c *Catalog) Execute(ctx context.Context, name string, args map[string]any,
 	return c.def.Execute(ctx, name, args, cb)
 }
 
+// ExecuteGated is the default set's ExecuteGated.
+func (c *Catalog) ExecuteGated(ctx context.Context, name string, args map[string]any, cb AsyncCallback, gate Gate) *Result {
+	return c.def.ExecuteGated(ctx, name, args, cb, gate)
+}
+
 // ExecuteUnattended is the default set's ExecuteUnattended.
 func (c *Catalog) ExecuteUnattended(ctx context.Context, name string, args map[string]any) (string, error) {
 	return c.def.ExecuteUnattended(ctx, name, args)
+}
+
+// ExecuteUnattendedGated is the default set's ExecuteUnattendedGated.
+func (c *Catalog) ExecuteUnattendedGated(ctx context.Context, name string, args map[string]any, gate Gate) (string, error) {
+	return c.def.ExecuteUnattendedGated(ctx, name, args, gate)
 }
 
 // List is the default set's List.

@@ -20,6 +20,8 @@ type Info struct {
 	// Group and RevealTogether are the discovery group the tool belongs to.
 	Group          string
 	RevealTogether bool
+	// Meta is the host's Entry.Meta, from the same generation as Tool.
+	Meta any
 	// Source is the toolset or provider namespace that mounted the tool,
 	// "" for one added on its own.
 	Source string
@@ -112,7 +114,13 @@ func (sn *Snapshot) has(name string) bool {
 // `tool "x" is no longer available` (ErrToolRemoved). A call already
 // running when its tool is removed or replaced finishes on the old tool.
 func (sn *Snapshot) Execute(ctx context.Context, name string, args map[string]any, cb AsyncCallback) *Result {
+	return sn.ExecuteGated(ctx, name, args, cb, nil)
+}
+
+// ExecuteGated is Execute with gate asked, for the exact tool that would
+// run, whether it may (see Set.ExecuteGated).
+func (sn *Snapshot) ExecuteGated(ctx context.Context, name string, args map[string]any, cb AsyncCallback, gate Gate) *Result {
 	st, cfg := sn.set.load()
-	res, _ := sn.set.execute(ctx, st, cfg, name, args, cb, sn)
+	res, _ := sn.set.execute(ctx, st, cfg, name, args, cb, sn, gate)
 	return res
 }

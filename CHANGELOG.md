@@ -72,6 +72,11 @@ project uses [Semantic Versioning](https://semver.org/).
   configuration: agents keep their handles, named sets take next's grants,
   a running call finishes on its old tool, and each subscriber gets one
   notice.
+- `toolkit` host metadata and gated calls: `Entry.Meta`, the host's own
+  data about a tool, carried into `Info.Meta` in the tool's generation;
+  `ExecuteGated` and `ExecuteUnattendedGated` (a `Gate` decides, for the
+  exact tool a call resolved to, whether it runs), so a per-call policy
+  check and the run use the same tool.
 - `toolkit` logging: `WithTruncate(fn)` sets how the catalogue shortens
   the error text it logs for a failed or refused call (default: 500 runes
   plus "…"), so a host can log it in full; overwriting a hidden tool warns

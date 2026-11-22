@@ -18,6 +18,11 @@ type Entry struct {
 	// asks discovery to reveal the whole group when one member is revealed.
 	Group          string
 	RevealTogether bool
+	// Meta is the host's own data about the tool (a policy exemption, a
+	// label), carried unchanged into Info.Meta and published in the same
+	// generation as the tool. toolkit never inspects or copies it: treat it
+	// as immutable once registered. nil by default.
+	Meta any
 }
 
 // EntryFromSpec returns def as a listed Entry published under ns (see

@@ -201,6 +201,7 @@ func (s *Set) info(st *catState, cfg *setConfig, e *entry) Info {
 		Hidden:         e.hidden,
 		Group:          e.group,
 		RevealTogether: e.reveal,
+		Meta:           e.meta,
 		Source:         e.source,
 		Enabled:        enabled(st, cfg, e.name),
 	}
@@ -299,15 +300,32 @@ func (s *Set) count(name string, r *Result) {
 // The caller sets who the call is for on ctx (WithChat, WithSessionKey,
 // WithAgentID). Arguments are never logged.
 func (s *Set) Execute(ctx context.Context, name string, args map[string]any, cb AsyncCallback) *Result {
+	return s.ExecuteGated(ctx, name, args, cb, nil)
+}
+
+// Gate decides, for the tool a call resolved to, whether it may run.
+// Returning a non-nil Result refuses the call: that Result is returned and
+// the tool is not run. It is called at most once per call, with the Info of
+// the exact tool that would run, from the same generation.
+type Gate func(ctx context.Context, info Info) *Result
+
+// ExecuteGated is Execute with a check between resolving the tool and
+// running it. name is resolved as Execute resolves it, in one generation;
+// a tool not found, removed, not granted or disabled is refused as Execute
+// refuses it and gate is not called. Otherwise gate is called with that
+// tool's Info; a non-nil result is returned without running the tool (and
+// is not counted in Stats), and nil runs exactly the tool gate saw, never a
+// tool resolved again. A nil gate makes it Execute.
+func (s *Set) ExecuteGated(ctx context.Context, name string, args map[string]any, cb AsyncCallback, gate Gate) *Result {
 	st, cfg := s.load()
-	res, _ := s.execute(ctx, st, cfg, name, args, cb, nil)
+	res, _ := s.execute(ctx, st, cfg, name, args, cb, nil, gate)
 	return res
 }
 
-// execute runs name against one generation (st, cfg). noResult reports a
-// tool that returned nil.
+// execute runs name against one generation (st, cfg), asking gate first
+// when it is non-nil. noResult reports a tool that returned nil.
 func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name string, args map[string]any,
-	cb AsyncCallback, snap *Snapshot,
+	cb AsyncCallback, snap *Snapshot, gate Gate,
 ) (res *Result, noResult bool) {
 	log := s.cat.logger
 	log.InfoContext(ctx, "Tool execution started", "tool", name)
@@ -328,6 +346,15 @@ func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name st
 	if !enabled(st, cfg, canonical) {
 		log.WarnContext(ctx, "Tool is disabled", "tool", canonical)
 		return ErrorResult(fmt.Sprintf("tool %q is disabled", name)).WithError(Refusal(ErrToolDisabled)), false
+	}
+	if gate != nil {
+		if refused := gate(ctx, s.info(st, cfg, e)); refused != nil {
+			if refused.IsError && IsExpectedRefusal(refused.Err) {
+				log.WarnContext(ctx, "Tool call refused",
+					"tool", name, "error", s.cat.truncate(refused.ForLLM, logErrorRunes))
+			}
+			return refused, false
+		}
 	}
 
 	var result *Result
@@ -370,6 +397,15 @@ func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name st
 // returns nil fails with `tool "x" returned no result`. The check and the
 // call use the same generation.
 func (s *Set) ExecuteUnattended(ctx context.Context, name string, args map[string]any) (string, error) {
+	return s.ExecuteUnattendedGated(ctx, name, args, nil)
+}
+
+// ExecuteUnattendedGated is ExecuteUnattended with gate asked, for the
+// exact tool that would run, whether it may (see ExecuteGated). gate is not
+// called for a tool ExecuteUnattended refuses. A refusal from gate is
+// returned as ExecuteUnattended returns an error result: an error carrying
+// its ForLLM text, or that text when the result is not an error.
+func (s *Set) ExecuteUnattendedGated(ctx context.Context, name string, args map[string]any, gate Gate) (string, error) {
 	st, cfg := s.load()
 	info, ok := s.get(st, cfg, name)
 	if !ok {
@@ -378,7 +414,7 @@ func (s *Set) ExecuteUnattended(ctx context.Context, name string, args map[strin
 	if scoped, isScoped := info.Tool.(SessionScoped); isScoped && scoped.IsSessionScoped() {
 		return "", fmt.Errorf("tool %q: %w", name, ErrToolSessionScoped)
 	}
-	res, noResult := s.execute(ctx, st, cfg, name, args, nil, nil)
+	res, noResult := s.execute(ctx, st, cfg, name, args, nil, nil, gate)
 	if noResult {
 		return "", fmt.Errorf("tool %q returned no result", name)
 	}

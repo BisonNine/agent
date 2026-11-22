@@ -50,7 +50,10 @@ Writes: `Add` and `AddEntries` (refuse a duplicate name), `Put`
 (replaces), `Remove`, `Replace` and `ReplaceEntries` (every tool under a
 prefix swapped in one step), `AddToolset`, `AddProvider`. An `Entry` is a
 `Tool` plus how it is offered: listed or `Hidden`, and its discovery
-`Group` and `RevealTogether`.
+`Group` and `RevealTogether`. `Meta` is the host's own data about the tool
+(a policy exemption, say): toolkit never inspects or copies it, carries it
+into `Info.Meta` in the same generation as the tool, and expects it to stay
+unchanged once registered. `EntryFromSpec` leaves it nil.
 
 Rules:
 
@@ -75,6 +78,15 @@ Rules:
   grant and switches are published together; each read (a snapshot, a
   call, `List`, `Get`) works from one of them, so it never pairs one
   configuration's tools with another's grant, even during `Adopt`.
+- **Check and run the same tool.** A host that decides per call whether a
+  tool may run passes a `Gate` to `ExecuteGated` (on a set, a snapshot or
+  the catalogue) or `ExecuteUnattendedGated`. The name is resolved once;
+  a tool not found, removed, not granted or disabled is refused as
+  `Execute` refuses it and the gate is not called. Otherwise the gate gets
+  that tool's `Info` (with `Meta`); a non-nil `Result` is returned without
+  running the tool or counting it in `Stats` (logged "Tool call refused"
+  when it is an expected refusal), and nil runs exactly the tool the gate
+  saw. A nil gate is `Execute`.
 - **Private state.** `Catalog` and `Set` have no exported fields; `List`,
   `Get` and the snapshot accessors return copies.
 
