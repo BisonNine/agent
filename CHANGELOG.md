@@ -84,6 +84,17 @@ project uses [Semantic Versioning](https://semver.org/).
   and a call to it returns `tool "x" is disabled`.
 - `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
   that came from outside the process as data for the model.
+- `discovery` package, progressive tool discovery over a `toolkit`
+  registry. `Hidden` and `HideEntries` hide tools (a hidden tool may still
+  be called at any time), with `AlwaysShown` and `AlwaysShownFunc` pins;
+  `Index` searches an agent's hidden tools with BM25 or a regular
+  expression, answering for the snapshot each query names (`Search`,
+  `SearchRegex`, `Details`, `Namespaces`, `MaxResults`); `MetaTools`
+  provides `search_tools` and `get_tool_details` with the same names,
+  schemas and text as the host's, for one registry or resolved per agent;
+  `ToolDefs` returns one model call's tool definitions for a provider that
+  loads deferred tools natively (`Native`) or not, with a `Session`
+  recording the tool references a conversation's results carried.
 - `modelspec` package: the shared definition of providers and models.
   `Provider` and `Model` with the JSON form of the host configuration they
   came from; `Model.Validate`, `Provider.ValidateProtocol`,
