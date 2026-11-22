@@ -17,6 +17,7 @@ import (
 // take plain functions of their signature, and a Plugin holds one of each.
 var (
 	_ hook.Event = hook.TurnStarted{}
+	_ hook.Event = hook.LoopStarted{}
 	_ hook.Event = hook.ModelCallStarted{}
 	_ hook.Event = hook.ModelCall{}
 	_ hook.Event = hook.ModelAnswer{}
@@ -67,6 +68,7 @@ func TestEventHeader(t *testing.T) {
 	h := hook.EventHeader{Scope: alice, At: at}
 	events := []hook.Event{
 		hook.TurnStarted{EventHeader: h},
+		hook.LoopStarted{EventHeader: h},
 		hook.ToolCallFinished{EventHeader: h},
 		hook.TurnFinished{EventHeader: h, Outcome: hook.OutcomeOK},
 	}

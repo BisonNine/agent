@@ -18,8 +18,10 @@ Watching is done with events; a callback exists only to change a step.
 - **Events.** `Run.Events()` is one turn's stream (a Go iterator,
   `for ev, err := range run.Events()`); `OnEvent` sees every run of the
   agent, including those the host holds no handle for. The events are
-  `TurnStarted`; per provider call `ModelCallStarted` and `ModelCall` (the
-  provider's own response, before any callback: logging, usage, dumps);
+  `TurnStarted`; `LoopStarted` (the model loop about to start, once the
+  message is stored: where a host starts what lives for the loop); per
+  provider call `ModelCallStarted` and `ModelCall` (the provider's own
+  response, before any callback: logging, usage, dumps);
   `ModelAnswer` (the answer after `AfterModel`: what a UI shows);
   `TextDelta`; `Fallback`; per batch of tool calls `ToolBatchStarted`,
   `ToolCallStarted`, `ToolCallFinished`, `ToolBatchFinished` and

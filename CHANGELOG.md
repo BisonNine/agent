@@ -214,9 +214,9 @@ project uses [Semantic Versioning](https://semver.org/).
   `Plugin`) with what each may change; the events (`TurnStarted`,
   `ModelCall`, `TextDelta`, `ToolCallStarted`, `ToolCallFinished`,
   `Fallback`, `Compaction`, `Image`, `TaskStarted`, `TaskFinished`,
-  `TurnFinished`, and for the host's turn loop `ModelCallStarted`,
-  `ModelAnswer`, `ToolBatchStarted`, `ToolBatchFinished`,
-  `ToolResultStored`) and the guarantees of the stream, including a turn's
+  `TurnFinished`, and for the host's turn loop `LoopStarted`,
+  `ModelCallStarted`, `ModelAnswer`, `ToolBatchStarted`,
+  `ToolBatchFinished`, `ToolResultStored`) and the guarantees of the stream, including a turn's
   span and what a panic in each kind of callback does (`PanicError`);
   `DescribeImagesFunc`; `Outcome`; the `Run` handle; `Message`, `UserText`
   and run options; `Scope` with `WithScope` and `ScopeOf`; the cancel causes,

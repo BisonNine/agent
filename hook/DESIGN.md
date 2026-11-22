@@ -115,8 +115,8 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 - 2.4 The session: its `ctxengine` manager and memory session, reset with
   `ResetSession`; the turn's chain begun and the window set to its model.
 - 2.5 The message stored unless `AlreadyStored` (a compaction this starts:
-  `OnCompaction`, `Compaction`), observed into memory; the pending marker
-  set.
+  `OnCompaction`, `Compaction`), observed into memory; the context first
+  assembled for the turn; the pending marker set. `LoopStarted`.
 - 2.6 The model loop, up to `Limits.MaxIterations`:
   - 2.6.1 tool definitions (toolkit snapshot, `discovery`);
   - 2.6.2 `Assemble` (`Compaction{Evicted}`; a blocking pass
@@ -207,7 +207,7 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 
 | # | Behaviour | Host reference | Kind | Carried by |
 | --- | --- | --- | --- | --- |
-| 3.4.1 | Progress heartbeat with a tool count | `turn_hooks.go` (plugin `progress`), `loop_tools.go:startProgressUpdates` | CONSUMER | `TurnStarted`, `ToolBatchFinished`, `TurnFinished` |
+| 3.4.1 | Progress heartbeat with a tool count | `turn_hooks.go:loopPlugins`, `loop_tools.go:startProgressUpdates` | CONSUMER | `LoopStarted`, `ToolBatchFinished`, `TurnFinished` |
 | 3.4.2 | One eviction notice per turn | plugin `evictions`, `publishEvictionNotice` | CONSUMER | `Compaction{Evicted}`, `TurnFinished` |
 | 3.4.3 | Streaming, flushed before the reply | plugin `stream`, `stream_coalescer.go` | CALLBACK + CONSUMER | `OnTextDelta`; flush on `TurnFinished` |
 | 3.4.4 | Dispatch and request logs | `logDispatchTarget`, `logRequest`; `logResponse` | ENGINE; CALLBACK | generic fields, `hook.Truncator` (1.3.13); "LLM response" from `AfterModel` (7.9) |
@@ -440,6 +440,40 @@ not listed.
   replace messages instead of editing them in place.
 - 7.12 **`BeforeModel`, `OnModelError`** are registered but not yet called:
   wire them as section 2 says.
+- 7.16 **Resolved: interim `loopPlugins`.** The host records the pending
+  turn's source, reads three per-chat settings (streaming, the fallback
+  notice, tool activity) and starts the progress heartbeat when the model
+  loop starts: after `BeforeTurn`, the stored message, the first assembly
+  (with its compaction) and the pending marker. No existing point matched:
+  `TurnStarted` and `BeforeTurn` come before the message is stored (and
+  for turns that never reach the loop); the first `BeforeModel` and
+  `ModelCallStarted` come after the first iteration's assembly (its
+  eviction and compaction notices) and after the dispatch decided whether
+  to stream. Added: the event `LoopStarted`, emitted at the end of 2.5, once
+  per turn that reaches its loop, on the turn's goroutine and context.
+  Plugins cannot be registered from an event, so the callbacks are
+  registered when the turn is built and act on what the consumer set.
+  Host checklist:
+  - 7.16a emit `hook.LoopStarted{EventHeader: e.header()}` at the end of
+    `engineTurn.begin`, where `loopPlugins` runs; delete
+    `engineSpec.loopPlugins` and its loop;
+  - 7.16b in `turnHooksFor`, one `OnEvent` consumer on `LoopStarted` does
+    what `loopPlugins` does now: `recordPendingTurnSource` (on the event's
+    context) and `st.pendingSource`, the coalescer for a streaming channel,
+    the fallback notifier and the breadcrumbs switch into `turnState`, and
+    `startProgressUpdates` on the turn's context;
+  - 7.16c register `fallback-notice` (`OnFallback`) and `breadcrumbs`
+    (`OnEvent`) with the other plugins, each doing nothing until the
+    consumer set its state;
+  - 7.16d register `stream` (`OnTextDelta`) only when the channel can
+    stream (`streamToolNarration && SupportsStreaming(opts.Channel)`),
+    because the engine asks a provider for partial text only when an
+    `OnTextDelta` is registered; that capability of the channel is read
+    when the turn is built rather than at `LoopStarted`; the coalescer is
+    still made at `LoopStarted`, and a delta before it is impossible;
+  - 7.16e `turn_reply_send_test.go` and `host_turn_helpers_test.go` start
+    the loop's plugins by emitting `LoopStarted` instead of calling
+    `loopPlugins`.
 
 ## 8. Open questions
 

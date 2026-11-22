@@ -34,6 +34,23 @@ type TurnStarted struct {
 	Options RunOptions
 }
 
+// LoopStarted is a turn's model loop about to start. It is emitted once,
+// for a turn that reached its model loop: after BeforeTurn let it run, after
+// the session was opened (and reset when the run asked), after the message
+// was stored (unless AlreadyStored) with any compaction that started, after
+// the session's context was first assembled for the turn (with any
+// compaction that ran) and the turn was marked pending; before the first
+// iteration's tool definitions, assembly and BeforeModel, so before every
+// ModelCallStarted. A turn BeforeTurn answered or refused, or one that ended
+// before its loop (the store refused its message), has none. It is
+// emitted on the turn's goroutine, so OnEvent sees it there, on the turn's
+// context, before the loop goes on: a host that starts something for the
+// model loop (a progress heartbeat, per-chat settings read once) starts it
+// here.
+type LoopStarted struct {
+	EventHeader
+}
+
 // ModelCallStarted is one provider call about to be made: emitted for each
 // model the agent's models call for a dispatch (a skipped model gets none),
 // just before the call. Exactly one ModelCall follows it. A host that counts
