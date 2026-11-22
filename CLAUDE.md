@@ -2,7 +2,8 @@
 
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
 holding `toolspec`, `spawnllm`, `ctxengine`, `cogmem`, `accounting`,
-`fsmode` and `modelspec`.
+`fsmode`, `modelspec`, and the tool packages under `toolbox/`
+(`toolbox/shell`).
 
 ## Status
 
@@ -31,6 +32,10 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   `spawnllm`, and does not log.
 - `accounting` imports only the standard library. `spawnllm` may
   import it; `ctxengine` and `cogmem` do not.
+- `toolbox/shell/proc` imports only `fsmode`, the standard library and its
+  own `proctest`. It takes its modes as `Options.Modes` (`fsmode.Modes`).
+- `toolbox/shell` imports only `toolspec`, `fsmode`, its own `proc`, and the
+  standard library. Nothing else in the SDK imports `toolbox`.
 - `internal/` directories stay inside their package (`spawnllm/internal`,
   `ctxengine/internal`); do not hoist them to the module root.
 - Logging is `log/slog`, injected per instance (`WithLogger` or the

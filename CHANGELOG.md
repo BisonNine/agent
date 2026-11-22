@@ -48,6 +48,19 @@ project uses [Semantic Versioning](https://semver.org/).
   carried, and `DispatchStatus.ToolCalls`: the tool calls in an API response,
   or those in Codex's event stream.
 
+- `toolbox/shell`: the shell tools as a `toolspec` provider. `shell_exec`
+  runs a command (new arguments `timeout_seconds`, `background`, `notify`);
+  `shell_ctrl` lists, waits on (`until` a matching line), sends input to, or
+  stops background jobs. Long output returns its head and tail and names
+  the log file; a foreground command still running at its timeout is kept
+  as a job; the directory a command ends in is the default for the next one.
+  The host supplies the guard, environment, workspace, owner, end-of-job
+  notice, audit, and whether the caller has `shell_ctrl` or is unattended.
+- `toolbox/shell/proc`: the process manager under it. Each job runs in its
+  own process group with its output in a file (head and tail kept past the
+  size limit) and a record, so jobs running at a restart are marked lost.
+  Limits: jobs per owner, job run time, output size, log retention.
+
 ### Changed
 
 - Breaking: `LLMProvider.Chat`, `speech` `Transcribe` and `Synthesize`, and

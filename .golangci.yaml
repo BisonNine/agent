@@ -101,10 +101,11 @@ linters:
       # newexpr rewrites toolspec.Allow(true) to new(true). Allow is the
       # toolspec API's documented way to set DefaultAllow and says what the
       # pointer means; new(true) does not. The same holds for the small
-      # pointer helpers in ctxengine and cogmem.
+      # pointer helpers in ctxengine and cogmem, and for the tool packages
+      # under toolbox.
       - linters:
           - modernize
-        path: ^(toolspec|ctxengine|cogmem)/
+        path: ^(toolspec|ctxengine|cogmem|toolbox)/
         text: ^newexpr
       # Deferred in ctxengine and cogmem (house decision): each fix is an API
       # change or its own mechanical pass. spawnllm has no findings, so the
