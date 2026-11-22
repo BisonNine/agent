@@ -3,7 +3,8 @@
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
 holding `toolspec`, `toolkit`, `discovery`, `spawnllm`, `ctxengine`,
 `cogmem`, `accounting`, `fsmode`, `modelspec`, `clock`, `models`, `ident`,
-`hook`, `loop`, `mcphost`, and the tool packages under `toolbox/` (`toolbox/shell`).
+`hook`, `loop`, the root package `agent`, `agenttest`, `mcphost`, the
+`examples`, and the tool packages under `toolbox/` (`toolbox/shell`).
 
 ## Status
 
@@ -56,6 +57,12 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   clients), `accounting` and the standard library. It holds no logic: no
   loop, no goroutine, no provider code. It never imports `models`,
   `ctxengine`, `cogmem` or `discovery`; the loop does.
+- The root package `agent` is a front door: only `agent.go` (the `Agent`
+  interface, the capability interfaces, `New`), `options.go` and
+  `aliases.go`, with their tests. It imports only `loop`, `hook`, `models`,
+  `toolkit`, `clock`, `ctxengine` (with `session`) and `context`, `log/slog`,
+  `time`; it holds no loop and starts no goroutine (`imports_test.go`).
+  Nothing in the SDK imports it except `agenttest` and `examples`.
 - `loop` (the agent and its turn engine: `loop.Spec`, `loop.Agent`) imports
   only `hook`, `models`, `modelspec`, `toolkit`, `discovery`, `ctxengine`
   (with `ctxengine/session`), `accounting`, `clock`, `ident`, `spawnllm`
