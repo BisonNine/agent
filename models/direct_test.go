@@ -89,3 +89,71 @@ func TestDirectChainErrors(t *testing.T) {
 		t.Fatalf("empty model id: %v", err)
 	}
 }
+
+// A direct chain's other calls follow the same rules: Caller makes one call
+// whatever the model's health and switch and records nothing; Do calls fn
+// once; Client takes only the chain's own name; a call cut short by its
+// context returns the context's error.
+func TestDirectChainOtherCalls(t *testing.T) {
+	f := newFixture(t, []spec{m("haiku", "p1", "haiku-wire")})
+	f.park(t, "haiku", 500)
+	if err := f.cat.Disable("haiku"); err != nil {
+		t.Fatal(err)
+	}
+	ch, err := f.cat.Direct("haiku", "custom-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ch.Purpose() != "" {
+		t.Fatalf("purpose = %q", ch.Purpose())
+	}
+
+	reply, err := ch.Caller(alice).Complete(t.Context(), models.CompleteRequest{System: "s", User: "u"})
+	if err != nil || reply.Model != "custom-model" {
+		t.Fatalf("Complete = %+v, %v", reply, err)
+	}
+	f.fake.Script("custom-model", modelstest.Status(500, 0))
+	if _, err := ch.Caller(alice).Complete(t.Context(), models.CompleteRequest{}); err == nil {
+		t.Fatal("Complete hid the client's error")
+	}
+	f.fake.Script("custom-model")
+	if h, _ := f.cat.Get("haiku"); h.Health.Available {
+		t.Fatal("haiku recovered through a direct call")
+	}
+	if cur := f.cat.Current(models.Chat); cur.Serving != "" {
+		t.Fatalf("a direct call was recorded as serving: %+v", cur)
+	}
+	if p, r, fb, ex := f.obs.counts(); p+r+fb+ex != 0 {
+		t.Fatalf("observer events: %d %d %d %d", p, r, fb, ex)
+	}
+
+	calls := 0
+	if _, _, err := ch.Do(t.Context(), func(context.Context, models.Candidate) error { calls++; return nil }); err != nil || calls != 1 {
+		t.Fatalf("Do: %d calls, %v", calls, err)
+	}
+
+	if _, release, err := ch.Client("custom-model"); err != nil {
+		t.Fatalf("Client(own name): %v", err)
+	} else {
+		release()
+	}
+	if _, _, err := ch.Client("haiku"); !errors.Is(err, models.ErrUnknownModel) {
+		t.Fatalf("Client(other name): %v", err)
+	}
+
+	hold := make(chan struct{})
+	started := make(chan struct{})
+	f.fake.Script("custom-model", modelstest.Step{Hold: hold, Started: started})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		_, err := ch.Chat(ctx, alice, models.Request{})
+		done <- err
+	}()
+	<-started
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cut short: %v, want context.Canceled", err)
+	}
+	close(hold)
+}

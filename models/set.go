@@ -696,11 +696,14 @@ func (c *Catalog) Client(name string) (client spawnllm.LLMProvider, release func
 // name's client with a wire model id the catalogue does not define (model):
 // for instance an agent whose configured models do not resolve, served by a
 // default model's client. The chain's candidate is named model, with name's
-// provider and protocol, and the catalogue's limit defaults as its limits.
-// A call on it calls the client once: health is neither read nor recorded,
-// the enable switches are ignored, there is no fallback, no observer event
-// and no record of what is serving, and an error is returned as the client
-// gave it. It fails with ErrUnknownModel when the catalogue has no model
+// provider and protocol, and the catalogue's limit defaults as its limits
+// (a caller with limits of its own for the model applies them itself). Its
+// Name is the wire id model, not a catalogue name, and Client takes that
+// name. A call on it (Chat, Do, Caller) calls the client once: health is
+// neither read nor recorded, the enable switches are ignored, there is no
+// fallback, no observer event and no record of what is serving, and an
+// error is returned as the client gave it, unless ctx ended (then
+// ctx.Err()). It fails with ErrUnknownModel when the catalogue has no model
 // name, and modelspec.ErrModelRequired when model is empty.
 func (c *Catalog) Direct(name, model string) (*Chain, error) {
 	if strings.TrimSpace(model) == "" {

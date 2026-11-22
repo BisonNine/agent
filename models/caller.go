@@ -89,6 +89,9 @@ func (ch *Chain) complete(ctx context.Context, id accounting.Identity, req Compl
 	if req.JSONObject {
 		opts = map[string]any{openai_compat.ResponseFormatJSONObjectOption: true}
 	}
+	if ch.direct != "" {
+		return ch.completeDirect(ctx, id, Request{Messages: messages, Options: opts}, cfg)
+	}
 	if cfg.classify == nil {
 		cfg.classify = completeVerdict
 	}
@@ -162,4 +165,22 @@ func (ch *Chain) complete(ctx context.Context, id accounting.Identity, req Compl
 		detail += fmt.Sprintf(", %d disabled", disabled)
 	}
 	return CompleteReply{}, &NoModelError{Purpose: ch.purpose, Detail: detail}
+}
+
+// completeDirect is complete on a chain made by Direct: one call, with no
+// skip, health or serving record, the client's error returned unless ctx
+// ended.
+func (ch *Chain) completeDirect(ctx context.Context, id accounting.Identity, req Request, cfg *callConfig) (CompleteReply, error) {
+	if err := ctx.Err(); err != nil {
+		return CompleteReply{}, err
+	}
+	c := ch.cands[0]
+	resp, err := ch.chatOnce(ctx, id, c, req, cfg)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CompleteReply{Model: c.Model}, ctxErr
+		}
+		return CompleteReply{Model: c.Model}, err
+	}
+	return CompleteReply{Content: resp.Content, FinishReason: resp.FinishReason, Model: c.Model}, nil
 }
