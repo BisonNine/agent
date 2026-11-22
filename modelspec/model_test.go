@@ -1,0 +1,127 @@
+package modelspec
+
+import (
+	"encoding/json"
+	"slices"
+	"strings"
+	"testing"
+)
+
+func TestModel_Validate(t *testing.T) {
+	tests := []struct {
+		name  string
+		model Model
+		want  string // the whole error text; "" for none
+	}{
+		{name: "valid", model: Model{ModelName: "test", Model: "gpt-4o", Provider: "openai"}},
+		{name: "missing model_name", model: Model{Model: "gpt-4o", Provider: "openai"}, want: "model_name is required"},
+		{name: "missing model", model: Model{ModelName: "test", Provider: "openai"}, want: "model is required"},
+		{name: "missing provider", model: Model{ModelName: "test", Model: "gpt-4o"}, want: `model "test": provider is required`},
+		{name: "empty", model: Model{}, want: "model_name is required"},
+		{
+			name:  "bad reasoning_effort",
+			model: Model{ModelName: "grok-3", Model: "grok-3", Provider: "openai", ReasoningEffort: "extreme"},
+			want:  `model "grok-3": invalid reasoning_effort "extreme" (valid: none, low, medium, high, or omit)`,
+		},
+		{
+			name:  "reserved extra_body key",
+			model: Model{ModelName: "the-model", Model: "m", Provider: "openai", ExtraBody: map[string]any{"top_p": 1}},
+			want:  `model "the-model": extra_body key "top_p" collides with a managed request field`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.model.Validate()
+			switch {
+			case tc.want == "" && err != nil:
+				t.Errorf("unexpected error: %v", err)
+			case tc.want != "" && (err == nil || err.Error() != tc.want):
+				t.Errorf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestModel_ReasoningEffortValues(t *testing.T) {
+	for _, level := range []string{"", "none", "low", "medium", "high"} {
+		m := Model{ModelName: "m", Model: "gpt", Provider: "openai", ReasoningEffort: level}
+		if err := m.Validate(); err != nil {
+			t.Errorf("Validate(%q) returned error: %v", level, err)
+		}
+	}
+}
+
+func TestModel_ExtraBodyCollisionRejected(t *testing.T) {
+	cases := []string{
+		"model", "messages", "stream", "tools", "tool_choice",
+		"parallel_tool_calls", "reasoning_effort", "temperature",
+		"max_tokens", "max_completion_tokens", "top_p", "n",
+		"session_id", "cache_control",
+	}
+	if got := ReservedBodyKeys(); !slices.Equal(got, slices.Sorted(slices.Values(cases))) {
+		t.Errorf("ReservedBodyKeys() = %v, want %v", got, cases)
+	}
+	for _, key := range cases {
+		m := Model{ModelName: "the-model", Model: "whatever", Provider: "openai", ExtraBody: map[string]any{key: 1}}
+		err := m.Validate()
+		if err == nil {
+			t.Errorf("extra_body key %q: expected validation error", key)
+			continue
+		}
+		if !strings.Contains(err.Error(), "the-model") || !strings.Contains(err.Error(), key) {
+			t.Errorf("key %q: error should name the model and the key: %v", key, err)
+		}
+	}
+}
+
+func TestModel_ExtraBodyAllowedKeysPass(t *testing.T) {
+	m := Model{
+		ModelName: "m",
+		Model:     "gpt",
+		Provider:  "openai",
+		ExtraBody: map[string]any{
+			"custom_xai_thinking": map[string]any{"budget": 1024},
+			"safety_settings":     []any{"strict"},
+		},
+	}
+	if err := m.Validate(); err != nil {
+		t.Errorf("unexpected validation error: %v", err)
+	}
+}
+
+func TestModel_JSON(t *testing.T) {
+	original := Model{
+		ModelName:       "grok",
+		Model:           "grok-3",
+		Provider:        "example",
+		ReasoningEffort: "high",
+		ExtraBody:       map[string]any{"search_parameters": map[string]any{"mode": "auto"}},
+		Enabled:         true,
+	}
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	want := `{"model_name":"grok","model":"grok-3","provider":"example","enabled":true,` +
+		`"reasoning_effort":"high","extra_body":{"search_parameters":{"mode":"auto"}}}`
+	if string(data) != want {
+		t.Errorf("Marshal = %s\nwant      %s", data, want)
+	}
+
+	// enabled is always written: false is a setting, not an absence.
+	data, err = json.Marshal(Model{})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if want := `{"model_name":"","model":"","provider":"","enabled":false}`; string(data) != want {
+		t.Errorf("zero Model = %s, want %s", data, want)
+	}
+
+	var got Model
+	if err := json.Unmarshal([]byte(`{"model_name":"slow-local","model":"local","request_timeout":300}`), &got); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.RequestTimeout != 300 {
+		t.Errorf("RequestTimeout = %d, want 300", got.RequestTimeout)
+	}
+}

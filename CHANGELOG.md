@@ -8,6 +8,18 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `modelspec` package: the shared definition of providers and models.
+  `Provider` and `Model` with the JSON form of the host configuration they
+  came from; `Model.Validate`, `Provider.ValidateProtocol`,
+  `Provider.HasCredentials`, `ReservedBodyKeys` and the vision modes; a
+  protocol registry (`RegisterProtocol`, `LookupProtocol`, `Protocols`,
+  `IsCLIProtocol`, `TaskOnlyProtocol`); the CLI table (`CLIAgents`,
+  `CLIAgentByProtocol`, `CLIArgs`, `CLIEnv`); the `Cooldown` policy and its
+  defaults; a versioned `Document` (providers, models and optional per-agent
+  assignments) with `Parse`, `LoadFile`, `Marshal` and `Validate`; secret
+  references (`env:NAME`, `file:/path`) resolved into a copy by
+  `ResolveSecrets` with a `Resolver` such as `DefaultResolver`; and
+  `ResolveLimits`, a model's per-request limits over caller defaults.
 - `fsmode` package: `Modes{Dir, File}`, the modes of the directories and
   files a package creates, with the owner-only defaults `DefaultDir` (0700)
   and `DefaultFile` (0600).

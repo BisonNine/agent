@@ -1,8 +1,8 @@
 # Bison9 Agent SDK
 
 `go.bison9.com/agent` (repository `github.com/BisonNine/agent`): one Go module
-holding `toolspec`, `spawnllm`, `ctxengine`, `cogmem`, `accounting` and
-`fsmode`.
+holding `toolspec`, `spawnllm`, `ctxengine`, `cogmem`, `accounting`,
+`fsmode` and `modelspec`.
 
 ## Status
 
@@ -27,6 +27,8 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   `google/uuid` and `yaml.v3`. It never imports `spawnllm` or `ctxengine`.
 - `ctxengine` imports only `spawnllm`, `toolspec`, `fsmode`, the standard
   library and SQLite. It never imports `cogmem`.
+- `modelspec` imports only the standard library. It never imports
+  `spawnllm`, and does not log.
 - `accounting` imports only the standard library. `spawnllm` may
   import it; `ctxengine` and `cogmem` do not.
 - `internal/` directories stay inside their package (`spawnllm/internal`,
