@@ -91,7 +91,8 @@ func collapseUnderscores(s string) string {
 }
 
 // HideEntries returns a copy of entries with every tool hidden except those
-// an AlwaysShown pin keeps listed. A hidden entry with no Group takes the
+// an AlwaysShown pin keeps listed and search_tools and get_tool_details,
+// which are always listed. A hidden entry with no Group takes the
 // group its tool reports through toolkit.DiscoveryGrouped, if any. An entry
 // with no tool is copied as is (the catalogue refuses it).
 func HideEntries(entries []toolkit.Entry, opts ...HideOption) []toolkit.Entry {
@@ -105,7 +106,7 @@ func HideEntries(entries []toolkit.Entry, opts ...HideOption) []toolkit.Entry {
 		if e.Tool == nil {
 			continue
 		}
-		out[i].Hidden = !cfg.pinned(e.Tool)
+		out[i].Hidden = !isMetaTool(e.Tool) && !cfg.pinned(e.Tool)
 		if out[i].Hidden && e.Group == "" {
 			if g, ok := e.Tool.(toolkit.DiscoveryGrouped); ok {
 				out[i].Group, out[i].RevealTogether = g.DiscoveryGroup()
@@ -140,6 +141,16 @@ func (h hiddenToolset) Tools(ctx context.Context) ([]toolkit.Entry, error) {
 		return nil, err
 	}
 	return HideEntries(entries, h.opts...), nil
+}
+
+// isMetaTool reports whether t is one of this package's meta-tools.
+func isMetaTool(t toolkit.Tool) bool {
+	switch t.(type) {
+	case *searchTool, *detailsTool:
+		return true
+	default:
+		return false
+	}
 }
 
 // externalName is t's ExternalName, or "" when it has none.

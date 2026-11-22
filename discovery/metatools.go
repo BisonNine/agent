@@ -50,6 +50,9 @@ func MetaTools(resolve func(ctx context.Context) *Index) toolkit.Toolset {
 
 // MetaTools is MetaTools answering always from ix: search_tools'
 // Description then lists the namespaces of ix's registry's hidden tools.
+// It is for a catalogue that serves one agent (or for a set's own tools):
+// every set granted these tools would search ix's registry. With several
+// agents on one catalogue, use MetaTools(resolve).
 func (ix *Index) MetaTools() toolkit.Toolset {
 	return metaToolset{resolve: func(context.Context) *Index { return ix }, fixed: ix}
 }

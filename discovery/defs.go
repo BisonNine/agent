@@ -55,7 +55,7 @@ func ToolDefs(snap *toolkit.Snapshot, sess *Session, native bool) Defs {
 	all := snap.List()
 	var hidden []doc
 	for _, in := range all {
-		if in.Hidden {
+		if _, search := in.Tool.(*searchTool); in.Hidden && !search {
 			adv := externalName(in.Tool)
 			if adv == "" {
 				adv = in.Name
@@ -77,14 +77,14 @@ func ToolDefs(snap *toolkit.Snapshot, sess *Session, native bool) Defs {
 	}
 	var late []pending
 	for _, in := range all {
-		def := Def{
-			Name:        in.Published,
-			Description: in.Tool.Description(),
-			Parameters:  toolkit.OpenObjectProperties(in.Tool.Parameters()),
-		}
+		def := Def{Name: in.Published, Parameters: toolkit.OpenObjectProperties(in.Tool.Parameters())}
 		if _, ok := in.Tool.(*searchTool); ok {
+			// Never deferred, as spawnllm treats its tool-search tool.
 			def.ToolSearch = true
 			def.Description = searchDesc
+			in.Hidden = false
+		} else {
+			def.Description = in.Tool.Description()
 		}
 		if native {
 			sent := def

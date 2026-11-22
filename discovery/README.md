@@ -37,6 +37,9 @@ ix := discovery.NewIndex(alice, discovery.MaxResults(10))   // one per Registry 
 reg.AddToolset(ctx, ix.MetaTools())                          // search_tools, get_tool_details
 ```
 
+`ix.MetaTools()` answers from `ix`'s registry for every caller: use it on a
+catalogue that serves one agent.
+
 `search_tools` (BM25 by default, `regex: true` for a regular expression)
 and `get_tool_details` have the same names, descriptions, argument schemas
 and result text as before they moved here. Their results carry
@@ -80,7 +83,10 @@ sess.Record(result.ToolReferences)
 - `InContext` is the listed tools plus the revealed ones, either way.
 - `search_tools` is marked `ToolSearch`, with the snapshot's hidden
   namespaces in its description.
-- No hidden tools (discovery off): the registry's full list, no flags.
+- No hidden tools (discovery off): the registry's full list, with no flag
+  but `ToolSearch` on `search_tools` if it is mounted.
+- `search_tools` and `get_tool_details` are never hidden by `Hidden` or
+  `HideEntries`, and `search_tools` is never deferred.
 
 `Def` is the package's own type; the caller copies it into its provider
 type (`spawnllm.ToolDefinition`). `spawnllm.DeferredToolsCapable` satisfies

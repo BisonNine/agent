@@ -135,11 +135,14 @@ func (ix *Index) corpusFor(snap *toolkit.Snapshot) *corpus {
 	}
 	c := buildCorpus(snap, names)
 	ix.mu.Lock()
-	if ix.cur == nil || c.version >= ix.cur.version {
+	cached := ix.cur == nil || c.version >= ix.cur.version
+	if cached {
 		ix.cur = c
 	}
 	ix.mu.Unlock()
-	ix.logger.Debug("Discovery index rebuilt", "tools", len(c.docs), "version", c.version)
+	if cached {
+		ix.logger.Debug("Discovery index rebuilt", "tools", len(c.docs), "version", c.version)
+	}
 	return c
 }
 
@@ -155,7 +158,7 @@ func buildCorpus(snap *toolkit.Snapshot, names []string) *corpus {
 			name:        in.Name,
 			published:   in.Published,
 			advertised:  adv,
-			description: in.Tool.Description(),
+			description: toolDescription(in.Tool),
 			group:       in.Group,
 			reveal:      in.RevealTogether,
 		})
@@ -166,6 +169,15 @@ func buildCorpus(snap *toolkit.Snapshot, names []string) *corpus {
 		docs:    docs,
 		bm25:    newBM25Engine(docs, func(d doc) string { return d.published + " " + d.description }),
 	}
+}
+
+// toolDescription is t's description; search_tools' plain one, since its
+// full one is built from the index being built.
+func toolDescription(t toolkit.Tool) string {
+	if _, ok := t.(*searchTool); ok {
+		return searchDescription
+	}
+	return t.Description()
 }
 
 // Search ranks snap's hidden tools against a natural-language query (BM25
@@ -182,13 +194,14 @@ func (ix *Index) Search(snap *toolkit.Snapshot, query string) []Hit {
 
 // SearchRegex returns snap's hidden tools whose published name or
 // description matches pattern, case-insensitively, in internal-name order,
-// at most MaxResults of them. It fails when pattern does not compile.
+// at most MaxResults of them (an empty slice when none). It fails when
+// pattern does not compile.
 func (ix *Index) SearchRegex(snap *toolkit.Snapshot, pattern string) ([]Hit, error) {
 	re, err := regexp.Compile("(?i)" + pattern)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compile regex pattern %q: %w", pattern, err)
 	}
-	var out []Hit
+	out := []Hit{}
 	for _, d := range ix.corpusFor(snap).docs {
 		if re.MatchString(d.published) || re.MatchString(d.description) {
 			out = append(out, Hit{Name: d.published, Description: d.description})
@@ -208,15 +221,21 @@ func (ix *Index) Details(snap *toolkit.Snapshot, name string) (Details, bool) {
 		return Details{}, false
 	}
 	d := Details{Schema: toolkit.ToolToSchema(in.Tool), Published: in.Published}
+	if _, ok := in.Tool.(*searchTool); ok {
+		// As ToolDefs lists it: with this snapshot's hidden namespaces.
+		if fn, ok := d.Schema["function"].(map[string]any); ok {
+			fn["description"] = searchDescriptionFor(ix.Namespaces(snap))
+		}
+	}
 	if !in.Hidden {
 		return d, true
 	}
 	d.References = []string{in.Published}
 	if in.RevealTogether && in.Group != "" {
 		var group []string
-		for _, sib := range ix.corpusFor(snap).docs {
-			if sib.name != in.Name && sib.group == in.Group {
-				group = append(group, sib.published)
+		for _, sib := range snap.Hidden() {
+			if sib.Name != in.Name && sib.Group == in.Group {
+				group = append(group, sib.Published)
 			}
 		}
 		sort.Strings(group)

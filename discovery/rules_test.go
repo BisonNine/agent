@@ -295,7 +295,7 @@ func TestDiscovery_GrantsAndDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	ix := NewIndex(alice)
-	if _, err := c.AddToolset(t.Context(), ix.MetaTools()); err != nil {
+	if _, err := c.AddToolset(t.Context(), MetaTools(func(context.Context) *Index { return ix })); err != nil {
 		t.Fatal(err)
 	}
 	visible := []string{"crm_lookup", "crm_refund"}
@@ -495,5 +495,64 @@ func TestSession(t *testing.T) {
 	wg.Wait()
 	if n := len(s.Revealed()); n != 12 {
 		t.Errorf("revealed %d names, want 12", n)
+	}
+}
+
+// The meta-tools stay listed when their toolset is hidden, search_tools is
+// never deferred, and a search still works (no index recursion).
+func TestMetaTools_NeverHidden(t *testing.T) {
+	c := toolkit.New()
+	ix := NewIndex(c)
+	mustAdd(t, c, hidden(newMockTool("crm_lookup", "Look up a customer"), "", false))
+	if _, err := c.AddToolset(t.Context(), Hidden(ix.MetaTools())); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(c.Snapshot().Listed()); got != 2 {
+		t.Fatalf("listed %d tools, want the 2 meta-tools", got)
+	}
+
+	// Mounted hidden by hand: search_tools is still sent and searchable.
+	h := toolkit.New()
+	hix := NewIndex(h)
+	mustAdd(t, h,
+		hidden(newMockTool("crm_lookup", "Look up a customer"), "", false),
+		toolkit.Entry{Tool: &searchTool{resolve: func(context.Context) *Index { return hix }, fixed: hix}, Hidden: true},
+	)
+	for _, native := range []bool{true, false} {
+		defs := ToolDefs(h.Snapshot(), nil, native)
+		if !slices.Contains(defNames(defs.Send), SearchToolName) || !slices.Contains(defNames(defs.InContext), SearchToolName) {
+			t.Errorf("native=%v: search_tools not sent: %v", native, defNames(defs.Send))
+		}
+		for _, d := range defs.Send {
+			if d.Name == SearchToolName && (d.Deferred || !strings.HasSuffix(d.Description, "groups: crm.")) {
+				t.Errorf("native=%v: search_tools = %+v", native, d)
+			}
+		}
+	}
+	if res := call(t, h, SearchToolName, map[string]any{"query": "customer"}); !slices.Equal(res.ToolReferences, []string{"crm_lookup"}) {
+		t.Errorf("search: %+v", res)
+	}
+}
+
+func TestMaxResults_BelowOneKeepsDefault(t *testing.T) {
+	for _, n := range []int{0, -3} {
+		if got := NewIndex(toolkit.New(), MaxResults(n)).maxResults; got != DefaultMaxResults {
+			t.Errorf("MaxResults(%d) = %d, want %d", n, got, DefaultMaxResults)
+		}
+	}
+}
+
+// get_tool_details on search_tools shows the description the tool list
+// carries, with the agent's hidden namespaces, also when resolved per agent.
+func TestToolDetails_SearchToolDescription(t *testing.T) {
+	c := toolkit.New()
+	ix := NewIndex(c)
+	mustAdd(t, c, hidden(newMockTool("crm_lookup", "Look up a customer"), "", false))
+	if _, err := c.AddToolset(t.Context(), MetaTools(func(context.Context) *Index { return ix })); err != nil {
+		t.Fatal(err)
+	}
+	res := call(t, c, DetailsToolName, map[string]any{"name": SearchToolName})
+	if res.IsError || !strings.Contains(res.ForLLM, "Discoverable tool groups: crm.") || len(res.ToolReferences) != 0 {
+		t.Errorf("details of search_tools: %+v", res)
 	}
 }
