@@ -19,6 +19,7 @@ import (
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
 	"go.bison9.com/agent/fsmode"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -79,7 +80,7 @@ type Manager struct {
 	ageCompactionDue bool
 
 	// caller is the host's summarization model; nil disables compaction.
-	caller ModelCaller
+	caller hook.Caller
 
 	// refusedModels tracks summarization models that refused this session's
 	// content on content-policy grounds. Such models are skipped on subsequent

@@ -16,9 +16,10 @@ import (
 
 	"go.bison9.com/agent/cogmem/consolidate"
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/hook"
 )
 
-// e2eModel is the host's ModelCaller: it records every request and answers
+// e2eModel is the host's hook.Caller: it records every request and answers
 // with one fixed consolidation Output. It closes done once it has replied so
 // the test can wait for the run without sleeping.
 type e2eModel struct {
@@ -27,22 +28,22 @@ type e2eModel struct {
 	once      sync.Once
 
 	mu   sync.Mutex
-	reqs []consolidate.ModelRequest
+	reqs []hook.CompleteRequest
 }
 
-func (m *e2eModel) Complete(_ context.Context, req consolidate.ModelRequest) (consolidate.ModelReply, error) {
+func (m *e2eModel) Complete(_ context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	m.mu.Lock()
 	m.reqs = append(m.reqs, req)
 	m.mu.Unlock()
 	defer m.once.Do(func() { close(m.done) })
 	// No Model in the reply: the run must fall back to WithModelName.
-	return consolidate.ModelReply{Content: e2eReply(m.generalID), FinishReason: "stop"}, nil
+	return hook.CompleteReply{Content: e2eReply(m.generalID), FinishReason: "stop"}, nil
 }
 
-func (m *e2eModel) requests() []consolidate.ModelRequest {
+func (m *e2eModel) requests() []hook.CompleteRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]consolidate.ModelRequest(nil), m.reqs...)
+	return append([]hook.CompleteRequest(nil), m.reqs...)
 }
 
 const (

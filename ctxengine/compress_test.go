@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -70,11 +71,11 @@ type mockLLM struct {
 	callCount     int
 }
 
-func (m *mockLLM) Complete(_ context.Context, _ ModelRequest) (ModelReply, error) {
+func (m *mockLLM) Complete(_ context.Context, _ hook.CompleteRequest) (hook.CompleteReply, error) {
 	i := m.callCount
 	m.callCount++
 	if i < len(m.errors) && m.errors[i] != nil {
-		return ModelReply{Model: m.model}, m.errors[i]
+		return hook.CompleteReply{Model: m.model}, m.errors[i]
 	}
 	resp := ""
 	if i < len(m.responses) {
@@ -84,17 +85,17 @@ func (m *mockLLM) Complete(_ context.Context, _ ModelRequest) (ModelReply, error
 	if i < len(m.finishReasons) {
 		fr = m.finishReasons[i]
 	}
-	return ModelReply{Content: resp, FinishReason: fr, Model: m.model}, nil
+	return hook.CompleteReply{Content: resp, FinishReason: fr, Model: m.model}, nil
 }
 
-// testChain walks a list of models the way the host's ModelCaller does: a
+// testChain walks a list of models the way the host's caller (hook.Caller) does: a
 // model named in Exclude is skipped, a transport error moves on to the next
-// model, the first reply wins, and ErrNoModel is returned when nothing is left.
+// model, the first reply wins, and hook.ErrNoModelAvailable is returned when nothing is left.
 type testChain struct {
 	models []*mockLLM
 }
 
-func (c *testChain) Complete(ctx context.Context, req ModelRequest) (ModelReply, error) {
+func (c *testChain) Complete(ctx context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	var lastErr error
 	lastModel := ""
 	for _, m := range c.models {
@@ -110,14 +111,14 @@ func (c *testChain) Complete(ctx context.Context, req ModelRequest) (ModelReply,
 		return reply, nil
 	}
 	if lastErr != nil {
-		return ModelReply{Model: lastModel}, lastErr
+		return hook.CompleteReply{Model: lastModel}, lastErr
 	}
-	return ModelReply{}, ErrNoModel
+	return hook.CompleteReply{}, hook.ErrNoModelAvailable
 }
 
-// chainOf wraps models as one ModelCaller; no models means no caller (the
+// chainOf wraps models as one hook.Caller; no models means no caller (the
 // manager then reports "nothing" without summarizing).
-func chainOf(models []*mockLLM) ModelCaller {
+func chainOf(models []*mockLLM) hook.Caller {
 	if len(models) == 0 {
 		return nil
 	}
@@ -353,15 +354,15 @@ func TestCompress_HostErrorNeatened(t *testing.T) {
 }
 
 // noModelCaller is a host whose whole chain is unavailable (every model in
-// cooldown or excluded): it answers ErrNoModel without dispatching.
+// cooldown or excluded): it answers hook.ErrNoModelAvailable without dispatching.
 type noModelCaller struct {
 	err   error
 	calls int
 }
 
-func (c *noModelCaller) Complete(_ context.Context, _ ModelRequest) (ModelReply, error) {
+func (c *noModelCaller) Complete(_ context.Context, _ hook.CompleteRequest) (hook.CompleteReply, error) {
 	c.calls++
-	return ModelReply{}, c.err
+	return hook.CompleteReply{}, c.err
 }
 
 // TestCompress_HostNoModelReportsSkipped verifies that when the host has no
@@ -370,7 +371,7 @@ func (c *noModelCaller) Complete(_ context.Context, _ ModelRequest) (ModelReply,
 // why nothing ran.
 func TestCompress_HostNoModelReportsSkipped(t *testing.T) {
 	store := &compressTestStore{history: makeConversation(10, 200)}
-	host := &noModelCaller{err: fmt.Errorf("%w: 1 in cooldown", ErrNoModel)}
+	host := &noModelCaller{err: fmt.Errorf("%w: 1 in cooldown", hook.ErrNoModelAvailable)}
 	mgr := newCompressManager(t, store, nil, WithModelCaller(host))
 	mgr.msgCount = len(store.history)
 
@@ -402,9 +403,9 @@ func TestCompress_HostNoModelReportsSkipped(t *testing.T) {
 func TestCompress_ExcludeGrowsWithinOneCall(t *testing.T) {
 	store := &compressTestStore{history: makeConversation(10, 200)}
 	var seen [][]string
-	stubborn := &recordingCaller{reply: func(req ModelRequest) ModelReply {
+	stubborn := &recordingCaller{reply: func(req hook.CompleteRequest) hook.CompleteReply {
 		seen = append(seen, append([]string(nil), req.Exclude...))
-		return ModelReply{Content: invalidSummaryJSON("uncited"), Model: "stubborn"}
+		return hook.CompleteReply{Content: invalidSummaryJSON("uncited"), Model: "stubborn"}
 	}}
 	mgr := newCompressManager(t, store, nil, WithModelCaller(stubborn))
 	mgr.msgCount = len(store.history)
@@ -428,12 +429,12 @@ func TestCompress_ExcludeGrowsWithinOneCall(t *testing.T) {
 	}
 }
 
-// recordingCaller is a ModelCaller driven by a function of the request.
+// recordingCaller is a hook.Caller driven by a function of the request.
 type recordingCaller struct {
-	reply func(ModelRequest) ModelReply
+	reply func(hook.CompleteRequest) hook.CompleteReply
 }
 
-func (c *recordingCaller) Complete(_ context.Context, req ModelRequest) (ModelReply, error) {
+func (c *recordingCaller) Complete(_ context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	return c.reply(req), nil
 }
 

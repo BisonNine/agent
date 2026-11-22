@@ -11,8 +11,8 @@ import (
 )
 
 // models imports only modelspec, spawnllm (with its provider packages),
-// accounting, clock, fsmode and the standard library. It never imports a
-// host. Test files, and the modelstest package below it, are held to the same
+// accounting, clock, fsmode, hook (whose model-caller types it aliases) and
+// the standard library. It never imports a host. Test files, and the modelstest package below it, are held to the same
 // rule.
 func TestImportsRespectLayering(t *testing.T) {
 	allowed := []string{
@@ -22,6 +22,7 @@ func TestImportsRespectLayering(t *testing.T) {
 		"go.bison9.com/agent/accounting",
 		"go.bison9.com/agent/clock",
 		"go.bison9.com/agent/fsmode",
+		"go.bison9.com/agent/hook",
 	}
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

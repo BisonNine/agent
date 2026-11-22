@@ -31,6 +31,7 @@ import (
 	cronmsg "go.bison9.com/agent/ctxengine/internal/testcron"
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -45,7 +46,7 @@ const (
 	e2eChatID      = "chat-42"
 )
 
-// e2eSummarizer is a ModelCaller that reads the [#N] seq prefixes out of the
+// e2eSummarizer is a hook.Caller that reads the [#N] seq prefixes out of the
 // summarization prompt and answers with a valid summary citing them, so every
 // reference in the stored summary points at a message the engine actually
 // sent it. It records every request so tests can inspect Exclude lists and
@@ -53,7 +54,7 @@ const (
 type e2eSummarizer struct {
 	model    string
 	fail     bool
-	requests []ModelRequest
+	requests []hook.CompleteRequest
 }
 
 var promptSeqRE = regexp.MustCompile(`(?m)^\[#(\d+)\] \[`)
@@ -80,17 +81,17 @@ func mustPromptSeqs(t *testing.T, user string) []int64 {
 	return seqs
 }
 
-func (s *e2eSummarizer) Complete(_ context.Context, req ModelRequest) (ModelReply, error) {
+func (s *e2eSummarizer) Complete(_ context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	s.requests = append(s.requests, req)
 	if s.fail {
-		return ModelReply{Content: "I have nothing structured to say.", Model: s.model}, nil
+		return hook.CompleteReply{Content: "I have nothing structured to say.", Model: s.model}, nil
 	}
 	seqs, err := promptSeqs(req.User)
 	if err != nil {
-		return ModelReply{}, err
+		return hook.CompleteReply{}, err
 	}
 	if len(seqs) == 0 {
-		return ModelReply{Content: "{}", Model: s.model}, nil
+		return hook.CompleteReply{Content: "{}", Model: s.model}, nil
 	}
 	first, last, mid := seqs[0], seqs[len(seqs)-1], seqs[len(seqs)/2]
 	body := fmt.Sprintf(`{"version":2,`+
@@ -99,7 +100,7 @@ func (s *e2eSummarizer) Complete(_ context.Context, req ModelRequest) (ModelRepl
 		`"key_moments":[{"refs":[{"seq_start":%d}],"role":"user","summary":"e2e moment"}],`+
 		`"message_index":[{"seq_start":%d,"seq_end":%d,"role":"user","label":"e2e range"}]}`,
 		first, last, mid, last, first, last)
-	return ModelReply{Content: body, Model: s.model}, nil
+	return hook.CompleteReply{Content: body, Model: s.model}, nil
 }
 
 // e2eStore opens the real SQLite session store rooted at dir.
@@ -116,7 +117,7 @@ func e2eStore(t *testing.T, dir string) *session.SQLiteStore {
 // a 3000-token window so ten-odd turns of 240-character messages cross the
 // normal threshold, a 5% retain budget so one pass lands well under target,
 // and the archive on the same directory as the store.
-func e2eOpts(dir string, caller ModelCaller, extra ...Option) []Option {
+func e2eOpts(dir string, caller hook.Caller, extra ...Option) []Option {
 	return slices.Concat([]Option{
 		WithArchiveDir(dir),
 		WithModelCaller(caller),
@@ -642,7 +643,7 @@ func seedParallelGroupHistory(t *testing.T, dir string) {
 // seeded 1105 tokens are past the safety line, and a 130-token tail budget
 // that fits #7-#9 (30 tokens) but not the 1045-token tool group before them —
 // the budget boundary lands inside the parallel group.
-func tightOpts(dir string, caller ModelCaller) []Option {
+func tightOpts(dir string, caller hook.Caller) []Option {
 	return []Option{
 		WithArchiveDir(dir),
 		WithModelCaller(caller),
@@ -1437,14 +1438,14 @@ func TestE2E_CompactionReporterDeliversToLastAssembleChannel(t *testing.T) {
 	}
 }
 
-// excludeRecorder wraps a ModelCaller and records the Exclude list of every
+// excludeRecorder wraps a hook.Caller and records the Exclude list of every
 // request it forwards.
 type excludeRecorder struct {
-	inner    ModelCaller
+	inner    hook.Caller
 	excludes [][]string
 }
 
-func (r *excludeRecorder) Complete(ctx context.Context, req ModelRequest) (ModelReply, error) {
+func (r *excludeRecorder) Complete(ctx context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	r.excludes = append(r.excludes, append([]string(nil), req.Exclude...))
 	return r.inner.Complete(ctx, req)
 }

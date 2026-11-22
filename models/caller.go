@@ -7,35 +7,19 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 	"go.bison9.com/agent/spawnllm/openai_compat"
 )
 
-// CompleteRequest is one single-shot model call: a system and a user message.
-// It is the request ctxengine (summaries) and cogmem (consolidation) make.
-type CompleteRequest struct {
-	System, User string
-	// JSONObject asks for a JSON-object response where the client supports it.
-	JSONObject bool
-	// Exclude lists wire model ids (as CompleteReply.Model reports them)
-	// that must not serve this request.
-	Exclude []string
-}
-
-// CompleteReply is the answer to a CompleteRequest. Model is the wire model id
-// of the model that gave it; on an error, the last model tried, if any.
-type CompleteReply struct {
-	Content      string
-	FinishReason string
-	Model        string
-}
-
-// Caller is the one model-caller interface: what a summarizer or a memory
-// consolidator needs from a model chain. Chain.Caller and Set.Caller return
-// one.
-type Caller interface {
-	Complete(ctx context.Context, req CompleteRequest) (CompleteReply, error)
-}
+// CompleteRequest, CompleteReply and Caller are hook's: the one model-caller
+// interface, declared in the leaf so ctxengine and cogmem take it without
+// importing models.
+type (
+	CompleteRequest = hook.CompleteRequest
+	CompleteReply   = hook.CompleteReply
+	Caller          = hook.Caller
+)
 
 // Caller returns a Caller that makes its calls on this chain, for id, with
 // the call options given (WithPrepare, WithNotify, WithFinish, WithClassify).

@@ -22,21 +22,16 @@ import (
 
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 )
 
-// maxCompressAttempts bounds the number of ModelCaller.Complete calls one
+// maxCompressAttempts bounds the number of hook.Caller.Complete calls one
 // summarization call may make. Each unusable reply (refusal, invalid JSON, a
 // summary that fails validation) adds its model to the exclusion list and the
 // host is asked again; this cap keeps a host that ignores Exclude, or a long
 // chain of unusable models, from burning calls without limit.
 const maxCompressAttempts = 4
-
-// ErrNoModel is the error a ModelCaller returns when nothing in its chain can
-// serve the request — every model is excluded, in cooldown, or unconfigured.
-// The engine records it once per summarization call rather than as one failed
-// attempt per model.
-var ErrNoModel = errors.New("no summarization model available")
 
 // doCompress performs LLM-based compression of the conversation history.
 // It summarizes the oldest messages into a structured Summary, retains a tail
@@ -484,7 +479,7 @@ func (m *Manager) handleSafetyNetPostLoop(
 	return ErrCompressionPartial
 }
 
-// callModel asks the host's ModelCaller for a summary and returns the first
+// callModel asks the host's caller (hook.Caller) for a summary and returns the first
 // one that passes validation. A reply whose summary fails to parse, lacks cited
 // material, or cannot be trimmed within summaryTokenLimit is recorded, its
 // model is added to the request's Exclude list, and the host is asked again —
@@ -524,7 +519,7 @@ func (m *Manager) callModel(
 		}
 	}
 
-	req := ModelRequest{
+	req := hook.CompleteRequest{
 		System:     buildSummarizationPrompt(existing, archiveMin, archiveMax, aggressive, compressionProfile),
 		User:       "Messages to summarize:\n\n" + formatStoredMessagesForSummary(toSummarize, m.noiseKey()),
 		JSONObject: true,
@@ -562,7 +557,7 @@ func (m *Manager) callModel(
 		dur := time.Since(start)
 		model := reply.Model
 		if err != nil {
-			if errors.Is(err, ErrNoModel) {
+			if errors.Is(err, hook.ErrNoModelAvailable) {
 				// Nothing left to try. Report it once when it is the whole
 				// story (every model excluded or cooling before any call);
 				// after a recorded attempt it only says the chain ran out.

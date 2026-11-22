@@ -21,6 +21,7 @@ import (
 
 	"go.bison9.com/agent/ctxengine"
 	"go.bison9.com/agent/ctxengine/session"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -35,30 +36,30 @@ const (
 // writes points at archived rows the tools can be asked for.
 type citingSummarizer struct {
 	cite     int64
-	requests []ctxengine.ModelRequest
+	requests []hook.CompleteRequest
 }
 
 var toolsPromptSeqRE = regexp.MustCompile(`(?m)^\[#(\d+)\] \[`)
 
-func (s *citingSummarizer) Complete(_ context.Context, req ctxengine.ModelRequest) (ctxengine.ModelReply, error) {
+func (s *citingSummarizer) Complete(_ context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	s.requests = append(s.requests, req)
 	var seqs []int64
 	for _, m := range toolsPromptSeqRE.FindAllStringSubmatch(req.User, -1) {
 		n, err := strconv.ParseInt(m[1], 10, 64)
 		if err != nil {
-			return ctxengine.ModelReply{}, fmt.Errorf("prompt seq %q: %w", m[1], err)
+			return hook.CompleteReply{}, fmt.Errorf("prompt seq %q: %w", m[1], err)
 		}
 		seqs = append(seqs, n)
 	}
 	if len(seqs) == 0 {
-		return ctxengine.ModelReply{Content: "{}", Model: "e2e-model"}, nil
+		return hook.CompleteReply{Content: "{}", Model: "e2e-model"}, nil
 	}
 	first, last := seqs[0], seqs[len(seqs)-1]
 	body := fmt.Sprintf(`{"version":2,`+
 		`"state":{"goals":[{"text":"track the zebra manifest","refs":[{"seq_start":%d,"seq_end":%d}]}]},`+
 		`"key_moments":[{"refs":[{"seq_start":%d}],"role":"tool","summary":"manifest fetched"}]}`,
 		first, last, s.cite)
-	return ctxengine.ModelReply{Content: body, Model: "e2e-model"}, nil
+	return hook.CompleteReply{Content: body, Model: "e2e-model"}, nil
 }
 
 // TestE2E_ToolsReadTheEngineArchive compacts a real session and then answers

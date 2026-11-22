@@ -17,6 +17,7 @@ import (
 
 	cronmsg "go.bison9.com/agent/ctxengine/internal/testcron"
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -99,16 +100,16 @@ func (s *seqWindowStore) SetHistory(_ string, _ []spawnllm.Message) error {
 // summaryRecorder is a summarization model that records each request and
 // returns a valid summary: reply, or validSummaryJSON when reply is empty.
 type summaryRecorder struct {
-	requests []ModelRequest
+	requests []hook.CompleteRequest
 	reply    string
 }
 
-func (c *summaryRecorder) Complete(_ context.Context, req ModelRequest) (ModelReply, error) {
+func (c *summaryRecorder) Complete(_ context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	c.requests = append(c.requests, req)
 	if c.reply != "" {
-		return ModelReply{Content: c.reply}, nil
+		return hook.CompleteReply{Content: c.reply}, nil
 	}
-	return ModelReply{Content: validSummaryJSON("reports")}, nil
+	return hook.CompleteReply{Content: validSummaryJSON("reports")}, nil
 }
 
 var summarySeqRe = regexp.MustCompile(`(?m)^\[#(\d+)\] \[`)
@@ -132,7 +133,7 @@ func (c *summaryRecorder) summarizedSeqs(t *testing.T) []int64 {
 
 // newAgeTriggeredManager returns a manager whose age trigger fires on store
 // (anything 7 days old) and retains 5 days, with the host's cron noise key.
-func newAgeTriggeredManager(t *testing.T, store *seqWindowStore, caller ModelCaller, opts ...Option) *Manager {
+func newAgeTriggeredManager(t *testing.T, store *seqWindowStore, caller hook.Caller, opts ...Option) *Manager {
 	t.Helper()
 	return newTestManager(t, store, append([]Option{
 		WithContextWindow(1_000_000), // far below every percentage trigger

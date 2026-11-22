@@ -128,27 +128,28 @@ store does not keep them.
 
 ## What it does not own
 
-- **Models.** It never calls a provider. Compaction goes through a
-  `ModelCaller` the host supplies:
+- **Models.** It never calls a provider. Compaction goes through the one
+  model-caller interface, `hook.Caller` (`WithModelCaller`), which a
+  `models.Set` or `models.Chain` gives (`Caller`):
 
   ```go
-  type ModelRequest struct {
+  type CompleteRequest struct {
       System, User string
       JSONObject   bool     // ask for a JSON-object response where supported
       Exclude      []string // models the engine has learned to avoid
   }
-  type ModelReply struct{ Content, FinishReason, Model string }
-  type ModelCaller interface {
-      Complete(ctx context.Context, req ModelRequest) (ModelReply, error)
+  type CompleteReply struct{ Content, FinishReason, Model string }
+  type Caller interface {
+      Complete(ctx context.Context, req CompleteRequest) (CompleteReply, error)
   }
   ```
 
-  The host owns model selection, credentials, transport, retries on
-  transport errors and cooldowns, and honours `Exclude`. The engine owns its
-  output: it classifies refusals, remembers refusing models per session, and
-  calls again with a longer `Exclude`. The same shape serves
-  [cogmem](../cogmem), so one host client and one
-  test fake serve both.
+  The caller owns model selection, credentials, transport, retries on
+  transport errors and cooldowns, and honours `Exclude`; it returns an error
+  wrapping `hook.ErrNoModelAvailable` when nothing can serve the request. The
+  engine owns its output: it classifies refusals, remembers refusing models
+  per session, and calls again with a longer `Exclude`. The same interface
+  serves [cogmem](../cogmem).
 - **The system prompt.** The host passes it as ordered layers; the engine
   only inserts its summary between the layers marked before and after it.
 - **Memory.** Nothing here knows what a memory system is. The host asks its
@@ -163,7 +164,7 @@ store does not keep them.
 
 - Pass a `*slog.Logger` with `WithLogger` (silent otherwise), and the same
   logger to `session.WithLogger` and the session tools' `Host.Logger`.
-- Provide a `ModelCaller` for compaction.
+- Provide a `hook.Caller` for compaction (`WithModelCaller`).
 - Call `AddUserMessage`/`AddAssistantMessage`/`AddToolCallMessage`/
   `AddToolResult` as the conversation happens, and `Assemble` before every
   model call.

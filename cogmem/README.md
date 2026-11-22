@@ -140,31 +140,30 @@ the same store, or add an additional retrieval provider beside cogmem.
 ## How consolidation calls a model
 
 cogmem does not call a model itself and doesn't depend on any provider library.
-`consolidate.ModelCaller` is a one-method interface that the host implements:
+The worker takes the one model-caller interface, `hook.Caller`, declared in
+the `hook` leaf (a `models.Set` or `models.Chain` gives one with `Caller`):
 
 ```go
-// ModelRequest is one call to a model. The host owns which model answers,
-// credentials, transport, retries on transport errors and cooldowns.
-type ModelRequest struct {
+type CompleteRequest struct {
     System     string
     User       string
     JSONObject bool     // ask for a JSON-object response where the provider supports it
     Exclude    []string // model names the caller has learned to avoid for this call
 }
 
-// ModelReply is the answer. Model names which model produced it.
-type ModelReply struct {
+// CompleteReply is the answer. Model names which model produced it.
+type CompleteReply struct {
     Content      string
     FinishReason string
     Model        string
 }
 
-type ModelCaller interface {
-    Complete(ctx context.Context, req ModelRequest) (ModelReply, error)
+type Caller interface {
+    Complete(ctx context.Context, req CompleteRequest) (CompleteReply, error)
 }
 ```
 
-The split is deliberate. The host owns the models: it walks its own chain,
+The split is deliberate. The caller owns the models: it walks its own chain,
 skipping any model named in `Exclude`, and returns an error only when no model
 is left to try or a transport failure could not be routed around. It does not
 look at the content. cogmem owns its output format: the worker sends the
@@ -177,8 +176,7 @@ is kept for the next run; a host error is recorded as `error`. The run names
 the model whose reply was accepted, or the last one tried, falling back to
 `WithModelName` when a reply carries no model name.
 
-The same request/reply shape is used by the context engine, so one host client
-can serve both.
+The context engine takes the same interface, so one caller serves both.
 
 ## Host obligations
 
@@ -225,3 +223,16 @@ Any trademarks referenced are the property of their respective owners, used for 
 THIS SOFTWARE IS PROVIDED “AS IS,” WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Made in Canada with internationally sourced components.
+
+## As an agent's memory
+
+`cogmem.Memory` is a `hook.Memory` for the agent loop: a function that opens
+the `*Session` for an agent's session (`hook.Scope`), built the way the host
+builds its sessions. `AsMemorySession(s)` adapts one session; a nil session
+does nothing.
+
+```go
+agent.WithMemory(cogmem.Memory(func(ctx context.Context, s hook.Scope) (*cogmem.Session, error) {
+    return cogmem.NewSession(cogmem.SessionOptions{ /* the host's store and settings */ }), nil
+}))
+```

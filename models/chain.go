@@ -10,13 +10,15 @@ import (
 
 	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/clock"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/modelspec"
 	"go.bison9.com/agent/spawnllm"
 )
 
 // ErrNoModelAvailable reports a purpose with no model to try: none assigned,
-// or every one disabled. The error that wraps it names the purpose.
-var ErrNoModelAvailable = errors.New("no model available")
+// or every one disabled. The error that wraps it names the purpose. It is
+// hook.ErrNoModelAvailable.
+var ErrNoModelAvailable = hook.ErrNoModelAvailable
 
 // NoModelError is the error for a purpose with no model to try.
 type NoModelError struct {

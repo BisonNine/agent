@@ -97,6 +97,9 @@ the task (`Scope.Task`, `TaskID`), and a `TaskHandle` (`Finish`, `Detach`,
   (`Truncate` by default; a host with a "no truncate" switch passes its
   own).
 
-The session store is `ctxengine`'s own `session.SessionStore`, the clock
-`clock.Clock`, and the model-caller `models.Caller`; this package does not
-declare copies of them. The agent id rule is the `ident` package.
+The one model-caller interface is declared here: `Caller`
+(`Complete(ctx, CompleteRequest) (CompleteReply, error)`) and
+`ErrNoModelAvailable`, which `models` aliases and `ctxengine` (summaries) and
+`cogmem` (consolidation) take, so neither imports `models`. The session store
+is `ctxengine`'s own `session.SessionStore` and the clock `clock.Clock`; this
+package does not declare copies of them. The agent id rule is the `ident` package.

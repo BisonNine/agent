@@ -106,7 +106,7 @@ func (r *CompactionReport) hasRefusal() bool {
 }
 
 // hasCooldown reports whether any attempt was skipped for, or failed into, a
-// cooldown (billing/auth/rate-limit/overload). The host's ModelCaller names
+// cooldown (billing/auth/rate-limit/overload). The host's caller (hook.Caller) names
 // the cooldown in its error when it skipped every model for one.
 func (r *CompactionReport) hasCooldown() bool {
 	for _, a := range r.Attempts {

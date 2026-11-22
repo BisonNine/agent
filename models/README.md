@@ -162,6 +162,9 @@ without an agent is refused before any client is called.
 
 ## One model-caller interface
 
+Declared in `hook` (so `ctxengine` and `cogmem` take it without importing
+`models`) and aliased here, with `ErrNoModelAvailable`:
+
 ```go
 type Caller interface {
 	Complete(ctx context.Context, req CompleteRequest) (CompleteReply, error)

@@ -19,6 +19,7 @@ import (
 
 	"go.bison9.com/agent/cogmem/store"
 	"go.bison9.com/agent/fsmode"
+	"go.bison9.com/agent/hook"
 )
 
 // leaseTTL bounds how long a single RunOnce may hold the per-archive lease.
@@ -42,34 +43,6 @@ func Observe(ctx context.Context, st *store.Store, seq int64, role, text string,
 	return true, nil
 }
 
-// ModelRequest is one call to a model. The host owns which model answers,
-// credentials, transport, retries on transport errors and cooldowns.
-type ModelRequest struct {
-	System     string
-	User       string
-	JSONObject bool     // ask for a JSON-object response where the provider supports it
-	Exclude    []string // model names the caller has learned to avoid for this call
-}
-
-// ModelReply is the answer. Model names which model produced it.
-type ModelReply struct {
-	Content      string
-	FinishReason string
-	Model        string
-}
-
-// ModelCaller is how the worker reaches a model. The host implements it and
-// owns the model chain: it returns an error only when no model is available
-// after honouring req.Exclude, or on a transport failure it could not route
-// around. It does not validate the content. cogmem owns its output format, so
-// the worker parses each reply itself and, when one is empty or not a
-// consolidation Output, excludes that model and asks again (see
-// maxModelAttempts). The interface is decoupled from providers so the worker
-// never imports a provider package.
-type ModelCaller interface {
-	Complete(ctx context.Context, req ModelRequest) (ModelReply, error)
-}
-
 // maxModelAttempts bounds how many replies one run will ask for before giving
 // up. Each unusable reply adds its model to Exclude for the next attempt.
 const maxModelAttempts = 4
@@ -83,7 +56,7 @@ var errInvalidOutput = errors.New("memory model output was not valid JSON")
 // store's inbox into memory operations.
 type Worker struct {
 	st    *store.Store
-	model ModelCaller
+	model hook.Caller
 
 	batchOpts      BatchOptions
 	proposeDomains bool
@@ -153,7 +126,7 @@ func WithFileModes(m fsmode.Modes) Option {
 
 // NewWorker builds a Worker over a store and a model caller. The debug dump
 // modes default to the store's; WithFileModes overrides them.
-func NewWorker(st *store.Store, model ModelCaller, opts ...Option) *Worker {
+func NewWorker(st *store.Store, model hook.Caller, opts ...Option) *Worker {
 	w := &Worker{
 		st:         st,
 		model:      model,
@@ -394,9 +367,9 @@ func domainLabel(name, id string) string {
 // success reply is the accepted answer; on failure it is the last one tried,
 // so its Model still names the model to record. A host error is returned as
 // is; exhausting the attempts returns errInvalidOutput.
-func (w *Worker) callModel(ctx context.Context, runID, system, user string) (Output, ModelReply, error) {
-	req := ModelRequest{System: system, User: user, JSONObject: true}
-	var last ModelReply
+func (w *Worker) callModel(ctx context.Context, runID, system, user string) (Output, hook.CompleteReply, error) {
+	req := hook.CompleteRequest{System: system, User: user, JSONObject: true}
+	var last hook.CompleteReply
 	for attempt := 1; attempt <= maxModelAttempts; attempt++ {
 		reply, err := w.model.Complete(ctx, req)
 		if err != nil {

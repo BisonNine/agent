@@ -28,7 +28,7 @@ type Job struct {
 func (j Job) key() string { return j.Dir }
 
 // WorkerFactory builds a Worker for a Job. The host supplies it: it opens the
-// store at store.DBPath(job.Dir) and selects the ModelCaller. Returning an
+// store at store.DBPath(job.Dir) and selects the hook.Caller. Returning an
 // error skips the job (logged, not fatal).
 type WorkerFactory func(Job) (*Worker, error)
 

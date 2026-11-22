@@ -12,6 +12,7 @@ import (
 
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/fsmode"
+	"go.bison9.com/agent/hook"
 )
 
 // Default modes for the directories and files ctxengine creates: owner-only.
@@ -151,7 +152,7 @@ type managerConfig struct {
 	triggerDays   int
 	compressModel ModelChain
 	// caller is the host's summarization model; nil disables compaction.
-	caller              ModelCaller
+	caller              hook.Caller
 	archiveMessageCount int
 	archiveDays         int
 	// summaryMaxCount caps the number of stored summaries (keep newest N).
@@ -318,7 +319,7 @@ func WithCompressModel(model ModelChain) Option {
 // chain (fallbacks, cooldowns) inside Complete; the engine re-calls with a
 // longer Exclude list when a reply is unusable. Without a caller, compaction
 // reports "nothing" and never summarizes.
-func WithModelCaller(c ModelCaller) Option {
+func WithModelCaller(c hook.Caller) Option {
 	return func(cfg *managerConfig) { cfg.caller = c }
 }
 

@@ -13,24 +13,25 @@ import (
 	"testing"
 
 	"go.bison9.com/agent/ctxengine/memory"
+	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/spawnllm"
 )
 
 // seqTrackingLLM captures the request sent to the model for inspection.
 type seqTrackingLLM struct {
-	captured ModelRequest
+	captured hook.CompleteRequest
 	called   bool
 	response string
 	err      error
 }
 
-func (l *seqTrackingLLM) Complete(_ context.Context, req ModelRequest) (ModelReply, error) {
+func (l *seqTrackingLLM) Complete(_ context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	l.captured = req
 	l.called = true
 	if l.err != nil {
-		return ModelReply{}, l.err
+		return hook.CompleteReply{}, l.err
 	}
-	return ModelReply{Content: l.response}, nil
+	return hook.CompleteReply{Content: l.response}, nil
 }
 
 // seqStore is a SessionStore that returns StoredMessages with explicit seq numbers.

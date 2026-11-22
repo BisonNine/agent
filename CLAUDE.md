@@ -31,16 +31,20 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   (`WithFileModes`).
 - `spawnllm` imports only `toolspec`, `accounting`, `fsmode`, the standard
   library, `google/uuid` and provider SDKs.
-- `cogmem` imports only `toolspec`, `fsmode`, the standard library, SQLite,
-  `google/uuid` and `yaml.v3`. It never imports `spawnllm` or `ctxengine`.
-- `ctxengine` imports only `spawnllm`, `toolspec`, `fsmode`, the standard
-  library and SQLite. It never imports `cogmem`.
+- `cogmem` imports only `toolspec`, `fsmode`, `hook` (the one model-caller
+  interface, and its `hook.Memory` adapter), the standard library, SQLite,
+  `google/uuid` and `yaml.v3`. It never imports `spawnllm`, `models` or
+  `ctxengine`.
+- `ctxengine` imports only `spawnllm`, `toolspec`, `fsmode`, `hook` (the one
+  model-caller interface), the standard library and SQLite. It never imports
+  `cogmem` or `models`.
 - `modelspec` imports only the standard library. It never imports
   `spawnllm`, and does not log.
 - `clock` imports only the standard library; code whose timing is tested
   takes a `clock.Clock` instead of calling the `time` package.
 - `models` imports only `modelspec`, `spawnllm` (with its provider
-  packages), `accounting`, `clock`, `fsmode` and the standard library. It
+  packages), `accounting`, `clock`, `fsmode`, `hook` (whose model-caller
+  types it aliases) and the standard library. It
   knows no host protocol, name or alert; a host supplies those through
   `RegisterClient`, `WithObserver` and `WithDeclinedMessage`.
 - `accounting` imports only the standard library. `spawnllm` may

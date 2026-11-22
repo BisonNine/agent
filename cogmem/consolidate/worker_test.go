@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/hook"
 )
 
 // seedInbox feeds messages through Observe, the way the host does per turn.
@@ -44,7 +45,7 @@ func inboxSeqs(t *testing.T, s *store.Store) []int64 {
 	return out
 }
 
-// fakeModel is a scripted ModelCaller. With only raw set it answers every
+// fakeModel is a scripted hook.Caller. With only raw set it answers every
 // request with that content as "fake-model" (or model); with replies set it
 // answers in order, repeating the last one; with err set it fails every call;
 // with errs set, call i fails with errs[i] when that entry is non-nil. It
@@ -56,14 +57,14 @@ type fakeModel struct {
 	model   string
 	err     error
 	errs    []error
-	replies []ModelReply
+	replies []hook.CompleteReply
 	called  chan struct{}
 
 	mu       sync.Mutex
-	requests []ModelRequest
+	requests []hook.CompleteRequest
 }
 
-func (m *fakeModel) Complete(_ context.Context, req ModelRequest) (ModelReply, error) {
+func (m *fakeModel) Complete(_ context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	m.mu.Lock()
 	m.requests = append(m.requests, req)
 	i := len(m.requests) - 1
@@ -75,10 +76,10 @@ func (m *fakeModel) Complete(_ context.Context, req ModelRequest) (ModelReply, e
 		}
 	}
 	if m.err != nil {
-		return ModelReply{}, m.err
+		return hook.CompleteReply{}, m.err
 	}
 	if i < len(m.errs) && m.errs[i] != nil {
-		return ModelReply{}, m.errs[i]
+		return hook.CompleteReply{}, m.errs[i]
 	}
 	if len(m.replies) > 0 {
 		return m.replies[min(i, len(m.replies)-1)], nil
@@ -87,7 +88,7 @@ func (m *fakeModel) Complete(_ context.Context, req ModelRequest) (ModelReply, e
 	if name == "" {
 		name = "fake-model"
 	}
-	return ModelReply{Content: m.raw, FinishReason: "stop", Model: name}, nil
+	return hook.CompleteReply{Content: m.raw, FinishReason: "stop", Model: name}, nil
 }
 
 // calls reports how many requests the model has received.
@@ -98,7 +99,7 @@ func (m *fakeModel) calls() int {
 }
 
 // snapshot returns a copy of the recorded requests.
-func (m *fakeModel) snapshot() []ModelRequest {
+func (m *fakeModel) snapshot() []hook.CompleteRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return slices.Clone(m.requests)
@@ -168,7 +169,7 @@ func seedDomain(t *testing.T, s *store.Store) (string, string) {
 }
 
 // decodeInput parses a request's user payload as the consolidation Input.
-func decodeInput(t *testing.T, req ModelRequest) Input {
+func decodeInput(t *testing.T, req hook.CompleteRequest) Input {
 	t.Helper()
 	var in Input
 	if err := json.Unmarshal([]byte(req.User), &in); err != nil {
@@ -536,7 +537,7 @@ func TestRunOnceRetriesUnusableReplyOnAnotherModel(t *testing.T) {
 	domainID, memoryID := seedDomain(t, s)
 	seedInbox(t, s, sampleMessages())
 
-	m := &fakeModel{replies: []ModelReply{
+	m := &fakeModel{replies: []hook.CompleteReply{
 		{Content: "Sure! Here are the memory ops:", FinishReason: "stop", Model: "model-a"},
 		{Content: supersedeOutput(domainID, memoryID, "Run gofmt and tests."), FinishReason: "stop", Model: "model-b"},
 	}}
@@ -569,7 +570,7 @@ func TestRunOnceExcludeGrowsWithEachUnusableModel(t *testing.T) {
 
 	// Four distinct unusable replies: prose, an empty body, whitespace, and
 	// truncated JSON. Each model must be excluded from every later attempt.
-	m := &fakeModel{replies: []ModelReply{
+	m := &fakeModel{replies: []hook.CompleteReply{
 		{Content: "I cannot help with that.", FinishReason: "stop", Model: "model-a"},
 		{Content: "", FinishReason: "stop", Model: "model-b"},
 		{Content: "  \n\t", FinishReason: "stop", Model: "model-c"},
@@ -609,7 +610,7 @@ func TestRunOnceExcludeSkipsUnnamedAndDuplicateModels(t *testing.T) {
 	seedDomain(t, s)
 	seedInbox(t, s, sampleMessages())
 
-	m := &fakeModel{replies: []ModelReply{
+	m := &fakeModel{replies: []hook.CompleteReply{
 		{Content: "nope", FinishReason: "stop"},
 		{Content: "nope", FinishReason: "stop", Model: "model-a"},
 		{Content: "nope", FinishReason: "stop", Model: "model-a"},
@@ -647,7 +648,7 @@ func TestRunOnceModelNameFallback(t *testing.T) {
 			s := openStore(t)
 			domainID, memoryID := seedDomain(t, s)
 			seedInbox(t, s, sampleMessages())
-			m := &fakeModel{replies: []ModelReply{{Content: tc.content(domainID, memoryID), FinishReason: "stop"}}}
+			m := &fakeModel{replies: []hook.CompleteReply{{Content: tc.content(domainID, memoryID), FinishReason: "stop"}}}
 			w := NewWorker(s, m, WithModelName("configured-model"))
 			res, err := w.RunOnce(context.Background(), params())
 			if err != nil || res.Status != tc.wantStatus {
@@ -697,7 +698,7 @@ func TestRunOnceHostErrorAfterUnusableReplyNamesLastModel(t *testing.T) {
 	seedInbox(t, s, sampleMessages())
 
 	m := &fakeModel{
-		replies: []ModelReply{{Content: "Sure!", FinishReason: "stop", Model: "model-a"}},
+		replies: []hook.CompleteReply{{Content: "Sure!", FinishReason: "stop", Model: "model-a"}},
 		errs:    []error{nil, errors.New("no model left to try")},
 	}
 	w := NewWorker(s, m, WithModelName("test-model"))
@@ -937,7 +938,7 @@ func TestRunOnceDebugDump(t *testing.T) {
 	if rec.Applied != 1 {
 		t.Errorf("dump applied = %d, want 1", rec.Applied)
 	}
-	in := decodeInput(t, ModelRequest{User: rec.UserJSON})
+	in := decodeInput(t, hook.CompleteRequest{User: rec.UserJSON})
 	if !slices.Equal(in.NewMessages, meaningfulMessages()) {
 		t.Errorf("dump user_json new_messages = %+v, want %+v", in.NewMessages, meaningfulMessages())
 	}
