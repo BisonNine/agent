@@ -117,7 +117,7 @@ func buildClient(s *settings, m *modelspec.Model, prov *modelspec.Provider) (spa
 // newClient is buildClient; its error is the bare cause.
 func newClient(s *settings, m *modelspec.Model, prov *modelspec.Provider) (spawnllm.LLMProvider, error) {
 	if m.Model == "" {
-		return nil, errors.New("model is required")
+		return nil, modelspec.ErrModelRequired
 	}
 	switch prov.Protocol {
 	case "openai-chat":

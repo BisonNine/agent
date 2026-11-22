@@ -110,6 +110,10 @@ func ReservedBodyKeys() []string {
 	return slices.Sorted(maps.Keys(reservedBodyKeys))
 }
 
+// ErrModelRequired reports a model definition with no model id (the name
+// sent to the provider).
+var ErrModelRequired = errors.New("model is required")
+
 // ReservedBodyKeyError reports an extra_body key that collides with a request
 // field the provider client sets itself.
 type ReservedBodyKeyError struct {
@@ -130,7 +134,7 @@ func (m *Model) Validate() error {
 		return errors.New("model_name is required")
 	}
 	if m.Model == "" {
-		return errors.New("model is required")
+		return ErrModelRequired
 	}
 	if m.Provider == "" {
 		return fmt.Errorf("model %q: provider is required", m.ModelName)

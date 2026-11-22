@@ -168,3 +168,10 @@ func TestModel_Validate_ReservedBodyKeyError(t *testing.T) {
 		}
 	}
 }
+
+func TestModelValidateModelRequiredSentinel(t *testing.T) {
+	m := Model{ModelName: "test", Provider: "openai"}
+	if err := m.Validate(); !errors.Is(err, ErrModelRequired) {
+		t.Fatalf("Validate() = %v, want ErrModelRequired", err)
+	}
+}
