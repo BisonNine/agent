@@ -8,10 +8,14 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- `models`: `Catalog.Direct(name, model)`, a chain of one candidate that
-  calls model `name`'s client with a wire model id the catalogue does not
-  define, ignoring health and switches and recording nothing, so a caller
-  with no resolvable model still drives a `Chain`.
+- `models`: `Catalog.Direct(name, model, opts...)`, a chain of one
+  candidate that calls model `name`'s client with a wire model id the
+  catalogue does not define, ignoring health and switches and recording
+  nothing, so a caller with no resolvable model still drives a `Chain`.
+  `WithDirectProvider`, `WithDirectLimits` and
+  `WithDirectRequireReasoningContent` set the provider name, limits and
+  reasoning-content setting its candidate reports, for a caller whose own
+  settings for the wire model apply.
 - `models`: `Chain.Do`, the chain walk for calls that are not chat calls,
   with `Candidate.Spec` and `Candidate.ProviderSpec`; `WithClassify`,
   `Verdict` and `DefaultVerdict` for a caller's own rule on which failures

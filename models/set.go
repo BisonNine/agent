@@ -696,16 +696,17 @@ func (c *Catalog) Client(name string) (client spawnllm.LLMProvider, release func
 // name's client with a wire model id the catalogue does not define (model):
 // for instance an agent whose configured models do not resolve, served by a
 // default model's client. The chain's candidate is named model, with name's
-// provider and protocol, and the catalogue's limit defaults as its limits
-// (a caller with limits of its own for the model applies them itself). Its
-// Name is the wire id model, not a catalogue name, and Client takes that
-// name. A call on it (Chat, Do, Caller) calls the client once: health is
-// neither read nor recorded, the enable switches are ignored, there is no
-// fallback, no observer event and no record of what is serving, and an
-// error is returned as the client gave it, unless ctx ended (then
-// ctx.Err()). It fails with ErrUnknownModel when the catalogue has no model
-// name, and modelspec.ErrModelRequired when model is empty.
-func (c *Catalog) Direct(name, model string) (*Chain, error) {
+// provider and protocol, and the catalogue's limit defaults as its limits;
+// opts replace what it reports (WithDirectProvider, WithDirectLimits,
+// WithDirectRequireReasoningContent), never the client it calls. Its Name
+// is the wire id model, not a catalogue name, and Client takes that name. A
+// call on it (Chat, Do, Caller) calls the client once: health is neither
+// read nor recorded, the enable switches are ignored, there is no fallback,
+// no observer event and no record of what is serving, and an error is
+// returned as the client gave it, unless ctx ended (then ctx.Err()). It
+// fails with ErrUnknownModel when the catalogue has no model name, and
+// modelspec.ErrModelRequired when model is empty.
+func (c *Catalog) Direct(name, model string, opts ...DirectOption) (*Chain, error) {
 	if strings.TrimSpace(model) == "" {
 		return nil, fmt.Errorf("models: direct chain for %q: %w", name, modelspec.ErrModelRequired)
 	}
@@ -714,15 +715,60 @@ func (c *Catalog) Direct(name, model string) (*Chain, error) {
 	if !ok {
 		return nil, fmt.Errorf("models: %w %q", ErrUnknownModel, name)
 	}
+	cfg := directConfig{
+		provider:  e.prov.Name,
+		limits:    modelspec.ResolveLimits(nil, g.cfg.limitDefaults),
+		reasoning: e.prov.RequireReasoningContent,
+	}
+	for _, o := range opts {
+		o(&cfg)
+	}
+	cand := Candidate{
+		Name: model, Provider: cfg.provider, Protocol: e.prov.Protocol, Model: model,
+		Limits:       cfg.limits,
+		ProviderSpec: e.prov,
+	}
+	cand.ProviderSpec.RequireReasoningContent = cfg.reasoning
 	return &Chain{
 		cat: c, gen: g, direct: name,
-		cands: []Candidate{{
-			Name: model, Provider: e.prov.Name, Protocol: e.prov.Protocol, Model: model,
-			Limits:       modelspec.ResolveLimits(nil, g.cfg.limitDefaults),
-			ProviderSpec: e.prov,
-		}},
-		off: []bool{false},
+		cands: []Candidate{cand},
+		off:   []bool{false},
 	}, nil
+}
+
+// DirectOption changes what the candidate of a chain made by Direct
+// reports: to its caller (Candidates, Limits), to WithPrepare, WithFinish
+// and a Do function, and in a call's Result and Attempts. It never changes
+// the client called, its protocol or the wire model id.
+type DirectOption func(*directConfig)
+
+// directConfig is what Direct's options set.
+type directConfig struct {
+	provider  string
+	limits    modelspec.Limits
+	reasoning bool
+}
+
+// WithDirectProvider sets the provider name the candidate reports
+// (Candidate.Provider, and so Attempt.Provider); "" reports none. Its
+// ProviderSpec stays the client's provider's.
+func WithDirectProvider(name string) DirectOption {
+	return func(c *directConfig) { c.provider = name }
+}
+
+// WithDirectLimits replaces the candidate's limits (and so Chain.Limits)
+// with l, for a caller whose own limits apply to the wire model rather than
+// the catalogue's defaults. l is taken as given: zero fields are not filled.
+func WithDirectLimits(l modelspec.Limits) DirectOption {
+	return func(c *directConfig) { c.limits = l }
+}
+
+// WithDirectRequireReasoningContent sets the candidate's
+// ProviderSpec.RequireReasoningContent, for a caller whose own setting for
+// the wire model's provider decides whether a request backfills reasoning
+// content, rather than that of the provider of the client it calls.
+func WithDirectRequireReasoningContent(require bool) DirectOption {
+	return func(c *directConfig) { c.reasoning = require }
 }
 
 // The catalogue's own methods for its default set.

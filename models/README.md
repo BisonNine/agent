@@ -140,7 +140,13 @@ default model's client). Its candidate is named by the wire id and has the
 catalogue's limit defaults. Its calls (`Chat`, `Do`, `Caller`) ignore health
 and switches, record and report nothing, never fall back, and return the
 client's error as given (`ctx.Err()` once the context ended), so a caller
-drives it like any other chain.
+drives it like any other chain. Options change what its candidate reports,
+never the client called: `WithDirectProvider(name)` the provider name (""
+for none), `WithDirectLimits(l)` its `modelspec.Limits` (and so
+`chain.Limits()`), and `WithDirectRequireReasoningContent(b)` its
+`ProviderSpec.RequireReasoningContent`, for a caller whose own settings for
+the wire model apply. The candidate given to `WithPrepare`, `WithFinish`, a
+`Do` function and in a `Result` or `Attempt` carries them.
 
 `WithPrepare` shapes the request for each model (its own `max_tokens`, images
 it cannot take), `WithNotify` is called each time the call moves on (a run of
