@@ -308,12 +308,15 @@ func TestRefresh(t *testing.T) {
 	})
 	// The listening stream opens in the background: wait until a notice
 	// reaches it, then drain.
+	deadline := time.After(5 * time.Second)
 	for ready := false; !ready; {
 		h.arg.srv.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
 		select {
 		case <-changed:
 			ready = true
 		case <-time.After(100 * time.Millisecond):
+		case <-deadline:
+			t.Fatal("the notification stream never opened")
 		}
 	}
 	for drained := false; !drained; {
@@ -451,10 +454,46 @@ func TestBearer_RefusesNamesNotListedToTheCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := h.mustClient("/mcp", h.bobTok)
-	if r := callT(t, c, "srv_write", nil); !r.isError || r.text != toolkit.NotEnabledMessage("mcp_srv_write") {
+	if r := callT(t, c, "srv_write", nil); !r.isError || r.text != toolkit.NotEnabledMessage("srv_write") {
 		t.Errorf("srv_write for Bob = %+v", r)
 	}
 	if r := callT(t, c, "off", nil); !r.isError || r.text != `tool "off" is disabled` {
 		t.Errorf("off for Bob = %+v", r)
+	}
+}
+
+// With PublishedNames over a Union no external name shadows any tool's
+// internal name, so no tool is dropped and none takes another's name.
+func TestUnion_PublishedNamesNeverShadow(t *testing.T) {
+	for _, tc := range []struct {
+		alice, bob []toolkit.Tool
+		want       []string
+	}{
+		{
+			alice: []toolkit.Tool{&wireExternal{wireTool{name: "a", desc: "a", params: map[string]any{}, run: wireText("a")}, "z"}},
+			bob:   []toolkit.Tool{&wireExternal{wireTool{name: "z", desc: "z", params: map[string]any{}, run: wireText("z")}, "a"}},
+			want:  []string{"a", "z"},
+		},
+		{
+			alice: []toolkit.Tool{
+				&wireExternal{wireTool{name: "w", desc: "w", params: map[string]any{}, run: wireText("w")}, "x"},
+				&wireTool{name: "y", desc: "y", params: map[string]any{}, run: wireText("y")},
+			},
+			bob:  []toolkit.Tool{&wireExternal{wireTool{name: "x", desc: "x", params: map[string]any{}, run: wireText("x")}, "y"}},
+			want: []string{"w", "x", "y"},
+		},
+	} {
+		h := newPerAgent(t, map[string]*toolkit.Catalog{"alice": catalogOf(t, tc.alice...), "bob": catalogOf(t, tc.bob...)})
+		c := h.mustClient("/internal", "")
+		if got := names(list(t, c)); !slices.Equal(got, tc.want) {
+			t.Errorf("listed %v, want %v", got, tc.want)
+		}
+		// Each name runs the tool whose own name it is.
+		for _, name := range tc.want {
+			tok := h.aliceTok
+			if r := callT(t, c, name, map[string]any{TokenArgument: tok}); !r.isError && r.text != name {
+				t.Errorf("%s ran %q", name, r.text)
+			}
+		}
 	}
 }

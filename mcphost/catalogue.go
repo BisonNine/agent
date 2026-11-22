@@ -116,30 +116,21 @@ func (e *Endpoint) publish(infos []toolkit.Info) []published {
 		}
 		return out
 	}
-	// PublishedNames: a tool offered under its own name keeps it; a tool
-	// offered under another (its ExternalName) gets that name unless it is
-	// taken, else its own. Infos from several registries (Union) are
-	// computed per registry, so a name may be wanted twice.
+	// PublishedNames: toolkit's no-shadow rule over all of infos (which a
+	// Union draws from several registries, each with its own Published). A
+	// tool is offered under its external name when that is no tool's
+	// internal name and no earlier tool took it, else under its own name,
+	// which is always free: internal names are unique in infos.
 	names := make([]string, len(infos))
 	taken := make(map[string]bool, len(infos))
-	for i, info := range infos {
-		if info.Published == "" || info.Published == info.Name {
-			if !taken[info.Name] {
-				taken[info.Name] = true
-				names[i] = info.Name
-			}
-		}
+	for _, info := range infos {
+		taken[info.Name] = true
 	}
 	for i, info := range infos {
-		if info.Published == "" || info.Published == info.Name {
-			continue
-		}
-		for _, candidate := range []string{info.Published, info.Name} {
-			if !taken[candidate] {
-				taken[candidate] = true
-				names[i] = candidate
-				break
-			}
+		names[i] = info.Name
+		if ext := info.Published; ext != "" && ext != info.Name && !taken[ext] {
+			taken[ext] = true
+			names[i] = ext
 		}
 	}
 	out := make([]published, 0, len(infos))
@@ -224,13 +215,24 @@ func (e *Endpoint) sync() bool {
 	if len(add) > 0 {
 		refused := e.addTools(add)
 		added = len(add) - len(refused)
+		var gone []string
 		for _, name := range refused {
-			// What mcp-go holds under the name stays what is published.
-			if prior, ok := cur.byName[name]; ok {
+			// A refused replacement of the same tool leaves the registration
+			// mcp-go holds, which stays published (its old schema, until the
+			// catalogue changes again); a name now meant for another tool,
+			// or none, is unpublished.
+			if prior, ok := cur.byName[name]; ok && prior.internal == want[name].internal {
 				want[name] = prior
-			} else {
-				delete(want, name)
+				continue
 			}
+			delete(want, name)
+			if _, ok := cur.byName[name]; ok {
+				gone = append(gone, name)
+			}
+		}
+		if len(gone) > 0 {
+			e.srv.DeleteTools(gone...)
+			del = append(del, gone...)
 		}
 	}
 	tools := make([]mcp.Tool, 0, len(want))

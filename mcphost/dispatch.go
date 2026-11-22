@@ -95,7 +95,13 @@ func (e *Endpoint) dispatch(ctx context.Context, caller Caller, name, internal s
 	var tgt target
 	tgt.info, tgt.found = e.resolve(caller, name, internal)
 	if !tgt.found {
+		// Refused by the internal name, as a host that dispatches by it
+		// words it; on Bearer by the called name, so that no other agent's
+		// internal name reaches the caller.
 		tgt.info.Name = internal
+		if e.cfg.Transport == Bearer {
+			tgt.info.Name = name
+		}
 	}
 	if tgt.found && e.cfg.ToolContext != nil {
 		ctx = e.cfg.ToolContext(ctx, caller, tgt.info)
