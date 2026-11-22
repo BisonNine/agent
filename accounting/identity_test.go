@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestIdentityNormalize(t *testing.T) {
@@ -21,8 +22,16 @@ func TestIdentityNormalize(t *testing.T) {
 		{name: "blank agent", in: Identity{Agent: " \t "}, wantErr: ErrAgentRequired},
 		{name: "agent at limit", in: Identity{Agent: strings.Repeat("a", MaxNameLength)}, want: Identity{Agent: strings.Repeat("a", MaxNameLength), Project: DefaultProject}},
 		{name: "agent too long", in: Identity{Agent: strings.Repeat("a", MaxNameLength+1)}, wantErr: ErrNameTooLong},
+		{name: "agent is a UUID", in: Identity{Agent: "3f2b8c1e-9d4a-4e7b-a1c6-5f0e2d9b7a43"}, want: Identity{Agent: "3f2b8c1e-9d4a-4e7b-a1c6-5f0e2d9b7a43", Project: DefaultProject}},
+		{name: "project at limit", in: Identity{Agent: "alice", Project: strings.Repeat("p", MaxNameLength)}, want: Identity{Agent: "alice", Project: strings.Repeat("p", MaxNameLength)}},
 		{name: "project too long", in: Identity{Agent: "alice", Project: strings.Repeat("p", MaxNameLength+1)}, wantErr: ErrNameTooLong},
-		// 16 code points of 2 bytes each: within the limit, though 32 bytes.
+		{name: "name kept", in: Identity{Agent: "alice", Name: " Alice the gardener "}, want: Identity{Agent: "alice", Name: "Alice the gardener", Project: DefaultProject}},
+		{name: "name at limit", in: Identity{Agent: "alice", Name: strings.Repeat("n", MaxNameLength)}, want: Identity{Agent: "alice", Name: strings.Repeat("n", MaxNameLength), Project: DefaultProject}},
+		{name: "name too long is shortened", in: Identity{Agent: "alice", Name: strings.Repeat("n", MaxNameLength+1)}, want: Identity{Agent: "alice", Name: strings.Repeat("n", MaxNameLength-1) + "…", Project: DefaultProject}},
+		{name: "multibyte name shortened by code points", in: Identity{Agent: "alice", Name: strings.Repeat("é", MaxNameLength+5)}, want: Identity{Agent: "alice", Name: strings.Repeat("é", MaxNameLength-1) + "…", Project: DefaultProject}},
+		{name: "space before ellipsis dropped", in: Identity{Agent: "alice", Name: strings.Repeat("n", MaxNameLength-2) + "  bob"}, want: Identity{Agent: "alice", Name: strings.Repeat("n", MaxNameLength-2) + "…", Project: DefaultProject}},
+		{name: "long name with bad agent still refused", in: Identity{Name: strings.Repeat("n", MaxNameLength+1)}, wantErr: ErrAgentRequired},
+		// Code points of 2 bytes each: within the limit, though twice as many bytes.
 		{name: "limit counts code points", in: Identity{Agent: strings.Repeat("é", MaxNameLength)}, want: Identity{Agent: strings.Repeat("é", MaxNameLength), Project: DefaultProject}},
 		{name: "multibyte too long", in: Identity{Agent: strings.Repeat("é", MaxNameLength+1)}, wantErr: ErrNameTooLong},
 		{name: "surrounding space not counted", in: Identity{Agent: "  " + strings.Repeat("a", MaxNameLength) + "  "}, want: Identity{Agent: strings.Repeat("a", MaxNameLength), Project: DefaultProject}},
@@ -41,6 +50,9 @@ func TestIdentityNormalize(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("got %+v, want %+v", got, tt.want)
+			}
+			if n := utf8.RuneCountInString(got.Name); n > MaxNameLength {
+				t.Errorf("name has %d characters, want at most %d", n, MaxNameLength)
 			}
 		})
 	}

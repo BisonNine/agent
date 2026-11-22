@@ -193,13 +193,13 @@ func TestCLIWithoutUsageLeavesTokensUnknown(t *testing.T) {
 func TestIdentityIsNormalisedInRecord(t *testing.T) {
 	rec := launchtest.Capture(t)
 	script, _ := markerCLI(t, cliCases[0].stdout)
-	id := accounting.Identity{Agent: "  bob ", Project: " shed "}
+	id := accounting.Identity{Agent: "  bob ", Name: " Bob the builder ", Project: " shed "}
 	if _, err := NewClaudeCliProvider(script, "", nil, nil).Chat(context.Background(), id,
 		[]Message{{Role: "user", Content: "hi"}}, nil, "", nil); err != nil {
 		t.Fatalf("Chat: %v", err)
 	}
-	if got := rec.One(); got.Agent != "bob" || got.Project != "shed" {
-		t.Errorf("identity = %q/%q, want bob/shed", got.Agent, got.Project)
+	if got := rec.One(); got.Agent != "bob" || got.AgentName != "Bob the builder" || got.Project != "shed" {
+		t.Errorf("identity = %q/%q/%q, want bob/Bob the builder/shed", got.Agent, got.AgentName, got.Project)
 	}
 }
 
@@ -245,7 +245,7 @@ func TestWorkerUsesAccountingIdentity(t *testing.T) {
 	srv, hits := chatServer(t, http.StatusOK, chatOK)
 	w, err := New(
 		WithProvider(ProviderSpec{Kind: "openai-chat", BaseURL: srv.URL, APIKey: "k", Model: "gpt-test"}),
-		WithAccounting(accounting.Identity{Agent: "bob", Project: "shed"}),
+		WithAccounting(accounting.Identity{Agent: "bob", Name: "Bob the builder", Project: "shed"}),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -256,8 +256,8 @@ func TestWorkerUsesAccountingIdentity(t *testing.T) {
 	if hits.Load() != 1 {
 		t.Fatalf("requests = %d, want 1", hits.Load())
 	}
-	if got := rec.One(); got.Agent != "bob" || got.Project != "shed" {
-		t.Errorf("identity = %q/%q, want bob/shed", got.Agent, got.Project)
+	if got := rec.One(); got.Agent != "bob" || got.AgentName != "Bob the builder" || got.Project != "shed" {
+		t.Errorf("identity = %q/%q/%q, want bob/Bob the builder/shed", got.Agent, got.AgentName, got.Project)
 	}
 }
 

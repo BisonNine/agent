@@ -9,13 +9,14 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
 const (
-	// MaxNameLength is the longest agent or project name accepted, in
-	// characters (Unicode code points).
-	MaxNameLength = 16
+	// MaxNameLength is the longest agent id, friendly name or project
+	// accepted, in characters (Unicode code points). It holds a UUID.
+	MaxNameLength = 64
 	// DefaultProject is the project recorded when the caller names none.
 	DefaultProject = "default"
 )
@@ -23,25 +24,33 @@ const (
 var (
 	// ErrAgentRequired reports an identity without an agent name.
 	ErrAgentRequired = errors.New("agent name is required")
-	// ErrNameTooLong reports an agent or project name longer than
-	// MaxNameLength characters.
+	// ErrNameTooLong reports an agent or project longer than MaxNameLength
+	// characters.
 	ErrNameTooLong = errors.New("name is too long")
 )
 
-// Identity names who a launch is for: the agent (required) and the project
-// (optional).
+// ellipsis ends a Name shortened to MaxNameLength characters.
+const ellipsis = "…"
+
+// Identity names who a launch is for: the agent's stable id (required), its
+// friendly name (optional) and the project (optional). Name is only a label
+// for readers; records are grouped and priced by Agent, never by Name.
 type Identity struct {
 	Agent   string
+	Name    string
 	Project string
 }
 
-// Normalize returns the identity with surrounding whitespace trimmed and an
-// empty Project set to DefaultProject. It returns an error wrapping
-// ErrAgentRequired when Agent is empty, or ErrNameTooLong when Agent or
-// Project is longer than MaxNameLength characters; names are never truncated.
+// Normalize returns the identity with surrounding whitespace trimmed, an
+// empty Project set to DefaultProject and a Name longer than MaxNameLength
+// characters shortened to that length, ending in "…". It returns an error
+// wrapping ErrAgentRequired when Agent is empty, or ErrNameTooLong when Agent
+// or Project is longer than MaxNameLength characters; those are never
+// shortened.
 func (id Identity) Normalize() (Identity, error) {
 	out := Identity{
 		Agent:   strings.TrimSpace(id.Agent),
+		Name:    truncateName(strings.TrimSpace(id.Name)),
 		Project: strings.TrimSpace(id.Project),
 	}
 	if out.Agent == "" {
@@ -59,4 +68,14 @@ func (id Identity) Normalize() (Identity, error) {
 		out.Project = DefaultProject
 	}
 	return out, nil
+}
+
+// truncateName shortens name to MaxNameLength characters, the last of them
+// an ellipsis, when it is longer.
+func truncateName(name string) string {
+	if utf8.RuneCountInString(name) <= MaxNameLength {
+		return name
+	}
+	runes := []rune(name)[:MaxNameLength-utf8.RuneCountInString(ellipsis)]
+	return strings.TrimRightFunc(string(runes), unicode.IsSpace) + ellipsis
 }

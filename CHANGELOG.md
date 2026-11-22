@@ -22,8 +22,11 @@ project uses [Semantic Versioning](https://semver.org/).
   or why a cost could not be estimated.
   Records gain `cost_source` (`provided`, `estimated` or `-`) and `images`,
   the number of images the call returned (`DispatchStatus.Images`).
-- `accounting.Identity` (agent, required; project, default `default`; each at
-  most 16 characters) and `spawnllm.WithAccounting` to set it on a `Worker`.
+- `accounting.Identity` (agent, a stable id, required; name, a friendly
+  label, optional; project, default `default`; each at most 64 characters,
+  a longer name shortened to end in `…`) and `spawnllm.WithAccounting` to
+  set it on a `Worker`. Records carry the name as `agent_name` (`"-"` when
+  not set); grouping and pricing use the agent.
 - `DispatchStatus.Reported` and `TaskUsage.Reported`, which say which token
   counts, seconds, characters and tool call counts a response actually
   carried, and `DispatchStatus.ToolCalls`: the tool calls in an API response,
@@ -33,8 +36,8 @@ project uses [Semantic Versioning](https://semver.org/).
 
 - Breaking: `LLMProvider.Chat`, `speech` `Transcribe` and `Synthesize`, and
   `imagegen` `Generate` and `Edit` take an `accounting.Identity` after the
-  context. A call without an agent name, or with a name longer than 16
-  characters, is refused before anything is launched.
+  context. A call without an agent name, or with an agent or project
+  longer than 64 characters, is refused before anything is launched.
 - The `DispatchStatus` of a failed CLI run also carries the usage and cost
   the CLI reported, instead of dropping them.
 - The Antigravity CLI's completion token count no longer adds thinking

@@ -28,9 +28,12 @@ holds the record's JSON. A failed write is also logged as an error.
 
 ## Identity
 
-`Identity{Agent, Project}` names who a call is for. `Normalize` trims spaces,
-requires an agent (`ErrAgentRequired`), refuses a name longer than 16
-characters (`ErrNameTooLong`) and sets an empty project to `default`.
+`Identity{Agent, Name, Project}` names who a call is for: the agent's stable
+id, its friendly name and the project. `Normalize` trims spaces, requires an
+agent (`ErrAgentRequired`), refuses an agent or project longer than 64
+characters (`ErrNameTooLong`), shortens a longer name to 64 characters
+ending in `…`, and sets an empty project to `default`. The name is a label
+only: records are grouped and priced by agent.
 
 ## Record
 
@@ -40,6 +43,7 @@ One JSON object per line, in this order:
 | --- | --- |
 | `time` | Launch start, UTC, RFC 3339 with microseconds. |
 | `agent`, `project` | The identity. |
+| `agent_name` | The agent's friendly name; `"-"` when not set. |
 | `kind` | `text`, `image`, `speech` or `transcription`. |
 | `provider` | The provider, e.g. `claude-cli`, `openai-chat`, `anthropic`, `azure`, `elevenlabs`. |
 | `transport` | `cli` or `api`; empty when nothing could be launched (spawnllm's `UnconfiguredProvider`). |
@@ -64,7 +68,7 @@ reported 0 is written as 0. `http_status` is `"-"` for a CLI call and for a
 call that got no HTTP response.
 
 ```json
-{"time":"2026-11-19T15:04:05.123456Z","agent":"alice","project":"default","kind":"text","provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":3,"cache_read_tokens":2,"cache_creation_tokens":"-","cost_usd":"-","cost_source":"-","tool_calls":0,"http_status":200,"duration_ms":412,"success":true,"audio_seconds":"-","characters":"-","images":0}
+{"time":"2026-11-19T15:04:05.123456Z","agent":"alice","agent_name":"Alice","project":"default","kind":"text","provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":3,"cache_read_tokens":2,"cache_creation_tokens":"-","cost_usd":"-","cost_source":"-","tool_calls":0,"http_status":200,"duration_ms":412,"success":true,"audio_seconds":"-","characters":"-","images":0}
 ```
 
 ## Pricing

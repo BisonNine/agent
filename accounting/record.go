@@ -60,6 +60,7 @@ type Record struct {
 	// Time is when the launch started. MarshalJSON writes it first, in UTC.
 	Time      time.Time `json:"-"`
 	Agent     string    `json:"agent"`
+	AgentName string    `json:"agent_name"` // Identity.Name, a label only; "-" when empty
 	Project   string    `json:"project"`
 	Kind      Kind      `json:"kind"`
 	Provider  string    `json:"provider"`
@@ -105,8 +106,11 @@ type Record struct {
 type recordJSON Record
 
 // MarshalJSON writes the record with Time first, in UTC, as RFC 3339 with
-// microseconds.
+// microseconds, and an empty AgentName as "-".
 func (r Record) MarshalJSON() ([]byte, error) {
+	if r.AgentName == "" {
+		r.AgentName = Unknown
+	}
 	fields, err := json.Marshal(recordJSON(r))
 	if err != nil {
 		return nil, err
@@ -133,6 +137,9 @@ func (r *Record) UnmarshalJSON(b []byte) error {
 		return fmt.Errorf("accounting: record time: %w", err)
 	}
 	r.Time = t
+	if r.AgentName == Unknown {
+		r.AgentName = ""
+	}
 	return nil
 }
 

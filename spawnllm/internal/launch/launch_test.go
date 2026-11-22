@@ -110,7 +110,7 @@ func TestBeginRejectedIdentity(t *testing.T) {
 	rec := launchtest.Capture(t)
 	long := strings.Repeat("p", accounting.MaxNameLength+1)
 	ctx := context.Background()
-	gotCtx, l, err := Begin(ctx, accounting.Identity{Agent: " bob ", Project: long}, spec)
+	gotCtx, l, err := Begin(ctx, accounting.Identity{Agent: " bob ", Name: " Bob ", Project: long}, spec)
 	if !errors.Is(err, accounting.ErrNameTooLong) {
 		t.Fatalf("err = %v, want ErrNameTooLong", err)
 	}
@@ -118,8 +118,8 @@ func TestBeginRejectedIdentity(t *testing.T) {
 		t.Error("a refused Begin returned a launch or a new context")
 	}
 	got := rec.One()
-	if got.Agent != " bob " || got.Project != long {
-		t.Errorf("identity = %q/%q, want the names as given", got.Agent, got.Project)
+	if got.Agent != " bob " || got.AgentName != " Bob " || got.Project != long {
+		t.Errorf("identity = %q/%q/%q, want the names as given", got.Agent, got.AgentName, got.Project)
 	}
 	if got.Kind != spec.Kind || got.Provider != spec.Provider || got.Transport != spec.Transport || got.Model != spec.Model {
 		t.Errorf("record = %+v", got)

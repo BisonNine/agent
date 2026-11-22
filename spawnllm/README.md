@@ -27,7 +27,7 @@ after the context: `LLMProvider.Chat`, `speech` `Transcribe` and
 `WithAccounting`.
 
 - The agent name is required. A missing agent, or an agent or project name
-  longer than 16 characters, is refused before anything is launched; the
+  longer than 64 characters, is refused before anything is launched; the
   error wraps `accounting.ErrAgentRequired` or `accounting.ErrNameTooLong`.
 - An empty project is recorded as `default`.
 - Every call, refused or not, reports exactly one `accounting.Record`: kind,

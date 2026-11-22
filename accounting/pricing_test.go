@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"testing"
@@ -343,6 +344,22 @@ func TestRecordJSONCostSourceAndImages(t *testing.T) {
 	}
 	if back.CostSource != CostEstimated || back.Images != KnownInt(2) || back.CostUSD != KnownFloat(0.25) {
 		t.Errorf("round trip = %+v from %s", back, b)
+	}
+}
+
+func TestSettleCostIgnoresAgentName(t *testing.T) {
+	usePricing(t, []Price{{Model: "m", Input: new(2.0)}, {Model: "Alice", Input: new(100.0)}})
+	plain := chatRecord(1e6, 0, 0, 0)
+	named := plain
+	named.AgentName = "Alice"
+	settleCost(&plain)
+	settleCost(&named)
+	named.AgentName = ""
+	if !reflect.DeepEqual(plain, named) {
+		t.Errorf("with a name = %+v, without = %+v", named, plain)
+	}
+	if v, ok := plain.CostUSD.Value(); !ok || v != 2 {
+		t.Errorf("cost = %v, %v, want 2", v, ok)
 	}
 }
 

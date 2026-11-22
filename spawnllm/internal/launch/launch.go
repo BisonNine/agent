@@ -57,11 +57,11 @@ func Begin(ctx context.Context, id accounting.Identity, s Spec) (context.Context
 	norm, err := id.Normalize()
 	if err != nil {
 		// Record the names as given, so the rejected caller can be found.
-		l.rec.Agent, l.rec.Project = id.Agent, id.Project
+		l.rec.Agent, l.rec.AgentName, l.rec.Project = id.Agent, id.Name, id.Project
 		l.finish(err)
 		return ctx, nil, err
 	}
-	l.rec.Agent, l.rec.Project = norm.Agent, norm.Project
+	l.rec.Agent, l.rec.AgentName, l.rec.Project = norm.Agent, norm.Name, norm.Project
 	return context.WithValue(ctx, ctxKey{}, l), l, nil
 }
 
