@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.bison9.com/agent/accounting"
+	"go.bison9.com/agent/modelspec"
 	"go.bison9.com/agent/spawnllm"
 )
 
@@ -689,6 +690,36 @@ func (c *Catalog) Client(name string) (client spawnllm.LLMProvider, release func
 	}
 	client, release, err = e.slot.acquire()
 	return client, c.counted(release, err), err
+}
+
+// Direct returns a chain of one model for a caller that must call model
+// name's client with a wire model id the catalogue does not define (model):
+// for instance an agent whose configured models do not resolve, served by a
+// default model's client. The chain's candidate is named model, with name's
+// provider and protocol, and the catalogue's limit defaults as its limits.
+// A call on it calls the client once: health is neither read nor recorded,
+// the enable switches are ignored, there is no fallback, no observer event
+// and no record of what is serving, and an error is returned as the client
+// gave it. It fails with ErrUnknownModel when the catalogue has no model
+// name, and modelspec.ErrModelRequired when model is empty.
+func (c *Catalog) Direct(name, model string) (*Chain, error) {
+	if strings.TrimSpace(model) == "" {
+		return nil, fmt.Errorf("models: direct chain for %q: %w", name, modelspec.ErrModelRequired)
+	}
+	g := c.gen.Load()
+	e, ok := g.models[name]
+	if !ok {
+		return nil, fmt.Errorf("models: %w %q", ErrUnknownModel, name)
+	}
+	return &Chain{
+		cat: c, gen: g, direct: name,
+		cands: []Candidate{{
+			Name: model, Provider: e.prov.Name, Protocol: e.prov.Protocol, Model: model,
+			Limits:       modelspec.ResolveLimits(nil, g.cfg.limitDefaults),
+			ProviderSpec: e.prov,
+		}},
+		off: []bool{false},
+	}, nil
 }
 
 // The catalogue's own methods for its default set.

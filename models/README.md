@@ -133,6 +133,13 @@ one) and a `release` function: for a call that records no health and ignores
 the switches. The client stays usable until `release` is called, once; a
 client replaced by `Adopt` or `RegisterClient` is closed only after that.
 
+`catalog.Direct(name, model)` is a chain of one candidate for a call the
+catalogue does not define: model `name`'s client, called with the wire model
+id `model` (an agent whose configured models do not resolve, served by a
+default model's client). Its calls ignore health and switches, record and
+report nothing, never fall back, and return the client's error as given, so a
+caller drives it like any other chain.
+
 `WithPrepare` shapes the request for each model (its own `max_tokens`, images
 it cannot take), `WithNotify` is called each time the call moves on (a run of
 skipped models is one notice; none for the model that ends the call), and

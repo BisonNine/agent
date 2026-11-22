@@ -135,6 +135,9 @@ type Chain struct {
 	off       []bool // assignment switched off
 	isolated  bool
 	workspace string
+	// direct, set on a chain made by Direct, is the catalogue model whose
+	// client serves the chain's one candidate.
+	direct string
 }
 
 // Candidates returns the chain's models in the order they are tried.
@@ -348,6 +351,9 @@ func (ch *Chain) Client(name string) (client spawnllm.LLMProvider, release func(
 }
 
 func (ch *Chain) clientOf(name string) (spawnllm.LLMProvider, func(), error) {
+	if ch.direct != "" {
+		name = ch.direct
+	}
 	e, ok := ch.gen.models[name]
 	if !ok {
 		return nil, nil, fmt.Errorf("models: %w %q", ErrUnknownModel, name)
@@ -424,12 +430,30 @@ func (ch *Chain) run(ctx context.Context, cfg *callConfig, fn func(context.Conte
 		return Candidate{}, nil, err
 	}
 	defer ch.cat.life.leave()
+	if ch.direct != "" {
+		return ch.walkDirect(ctx, fn)
+	}
 	c, attempts, err := ch.walk(ctx, cfg, fn)
 	ch.report(ctx, c, attempts, err)
 	if err != nil {
 		return Candidate{}, attempts, err
 	}
 	return c.copied(), attempts, nil
+}
+
+// walkDirect is the walk of a chain made by Direct: its one model is called
+// once, whatever its health and switches; nothing is recorded or reported,
+// and its error is returned as the client gave it.
+func (ch *Chain) walkDirect(ctx context.Context, fn func(context.Context, Candidate) error) (Candidate, []Attempt, error) {
+	c := ch.cands[0]
+	if err := ctx.Err(); err != nil {
+		return Candidate{}, nil, err
+	}
+	start := ch.clock().Now()
+	if err := fn(ctx, c); err != nil {
+		return Candidate{}, []Attempt{{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: err, Duration: ch.clock().Since(start)}}, err
+	}
+	return c.copied(), nil, nil
 }
 
 func (ch *Chain) walk(ctx context.Context, cfg *callConfig, fn func(context.Context, Candidate) error) (Candidate, []Attempt, error) {
