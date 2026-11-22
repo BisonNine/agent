@@ -28,6 +28,16 @@ project uses [Semantic Versioning](https://semver.org/).
   sends one `Change{Added, Removed, Changed}` per change and none for a
   change that alters nothing. A call to a tool removed since its snapshot
   returns the tool error `tool "x" is no longer available`.
+- `toolkit` two levels, like `models`: a process-wide `Catalog` and a
+  per-agent `Set`, the tools one agent is granted. `Catalog.Set(id)` (a
+  named set, granting nothing until `Grant`), `View(allow)` (an unnamed
+  filtered view) and `Default`; `Set.Grant(allow AllowChecker)`. Both
+  satisfy `Registry`, what an agent is given. A call to a tool the set is
+  not granted returns `NotEnabledMessage` as an expected refusal.
+  `Catalog.Adopt(next)` swaps in a catalogue built from a new
+  configuration: agents keep their handles, named sets take next's grants,
+  a running call finishes on its old tool, and each subscriber gets one
+  notice.
 - `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
   that came from outside the process as data for the model.
 - `modelspec` package: the shared definition of providers and models.

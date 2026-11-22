@@ -28,9 +28,10 @@ type Catalog struct {
 
 	mu      sync.Mutex // serialises writers; readers never lock
 	state   atomic.Pointer[catState]
-	regSeq  uint64       // toolset and provider registration ids, under mu
-	def     *Set         // the default set
-	watched map[*Set]int // sets with subscribers → their count, under mu
+	regSeq  uint64          // toolset and provider registration ids, under mu
+	def     *Set            // the default set, also sets[""]
+	sets    map[string]*Set // named sets, under mu
+	watched map[*Set]int    // sets with subscribers → their count, under mu
 
 	notes notifier
 }
@@ -60,6 +61,7 @@ func New(opts ...Option) *Catalog {
 	}
 	c.state.Store(emptyState())
 	c.def = newSet(c, nil)
+	c.sets = map[string]*Set{"": c.def}
 	return c
 }
 

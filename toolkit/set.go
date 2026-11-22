@@ -54,6 +54,11 @@ type setConfig struct {
 	allow   AllowChecker // nil grants every tool
 }
 
+// denyAll is the grant of a named set nobody has granted anything.
+type denyAll struct{}
+
+func (denyAll) IsToolAllowed(string) bool { return false }
+
 // Set is the tools one agent is granted from a catalogue, each listed or
 // hidden. It holds no tools of its own: it is a view onto its catalogue, so
 // every change to the catalogue reaches it at the next snapshot. It is safe

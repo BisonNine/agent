@@ -8,6 +8,13 @@
 // Snapshot, so a change takes effect at the next call, and Subscribe
 // reports every change.
 //
+// Two levels, the same shape as the models package: the Catalog is
+// process-wide, and a Set is the tools one agent is granted, each listed
+// or hidden. The catalogue's read methods are its default set's, so a host
+// with one agent never sees the two levels. Both satisfy Registry, what an
+// agent is given. A configuration reload builds a new catalogue and hands
+// it over with Adopt. See README.md.
+//
 // License: MIT
 // Copyright (c) 2026 Tenebris Technologies Inc.
 package toolkit
