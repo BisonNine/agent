@@ -119,17 +119,20 @@ func (e *Endpoint) publish(infos []toolkit.Info) []published {
 	// PublishedNames: toolkit's no-shadow rule over all of infos (which a
 	// Union draws from several registries, each with its own Published). A
 	// tool is offered under its external name when that is no tool's
-	// internal name and no earlier tool took it, else under its own name,
+	// internal name and no other tool wants it, else under its own name,
 	// which is always free: internal names are unique in infos.
 	names := make([]string, len(infos))
 	taken := make(map[string]bool, len(infos))
+	wanted := make(map[string]int, len(infos))
 	for _, info := range infos {
 		taken[info.Name] = true
+		if ext := info.Published; ext != "" && ext != info.Name {
+			wanted[ext]++
+		}
 	}
 	for i, info := range infos {
 		names[i] = info.Name
-		if ext := info.Published; ext != "" && ext != info.Name && !taken[ext] {
-			taken[ext] = true
+		if ext := info.Published; ext != "" && ext != info.Name && !taken[ext] && wanted[ext] == 1 {
 			names[i] = ext
 		}
 	}

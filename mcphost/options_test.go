@@ -482,7 +482,20 @@ func TestUnion_PublishedNamesNeverShadow(t *testing.T) {
 			bob:  []toolkit.Tool{&wireExternal{wireTool{name: "x", desc: "x", params: map[string]any{}, run: wireText("x")}, "y"}},
 			want: []string{"w", "x", "y"},
 		},
+		{
+			// Two tools wanting one external name both keep their own.
+			alice: []toolkit.Tool{&wireExternal{wireTool{name: "a", desc: "a", params: map[string]any{}, run: wireText("a")}, "q"}},
+			bob:   []toolkit.Tool{&wireExternal{wireTool{name: "b", desc: "b", params: map[string]any{}, run: wireText("b")}, "q"}},
+			want:  []string{"a", "b"},
+		},
 	} {
+		owner := map[string]string{}
+		for _, tl := range tc.alice {
+			owner[tl.Name()] = "alice"
+		}
+		for _, tl := range tc.bob {
+			owner[tl.Name()] = "bob"
+		}
 		h := newPerAgent(t, map[string]*toolkit.Catalog{"alice": catalogOf(t, tc.alice...), "bob": catalogOf(t, tc.bob...)})
 		c := h.mustClient("/internal", "")
 		if got := names(list(t, c)); !slices.Equal(got, tc.want) {
@@ -491,8 +504,11 @@ func TestUnion_PublishedNamesNeverShadow(t *testing.T) {
 		// Each name runs the tool whose own name it is.
 		for _, name := range tc.want {
 			tok := h.aliceTok
-			if r := callT(t, c, name, map[string]any{TokenArgument: tok}); !r.isError && r.text != name {
-				t.Errorf("%s ran %q", name, r.text)
+			if owner[name] == "bob" {
+				tok = h.bobTok
+			}
+			if r := callT(t, c, name, map[string]any{TokenArgument: tok}); r.isError || r.text != name {
+				t.Errorf("%s = %+v", name, r)
 			}
 		}
 	}
