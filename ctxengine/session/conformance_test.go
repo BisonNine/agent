@@ -27,3 +27,10 @@ func TestSQLiteStoreConformance(t *testing.T) {
 		return s
 	})
 }
+
+func TestMemoryStoreConformance(t *testing.T) {
+	sessiontest.Run(t, func(t *testing.T) sessiontest.Store {
+		t.Helper()
+		return session.NewMemory()
+	})
+}

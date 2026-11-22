@@ -11,8 +11,8 @@ import (
 )
 
 // SessionStore defines the persistence operations the engine uses.
-// SQLiteStore is the implementation; the interface lets tests substitute an
-// in-memory store without touching the engine.
+// SQLiteStore keeps sessions on disk and MemoryStore in process memory; both
+// pass the sessiontest conformance suite.
 //
 // Write methods return the store's error so a failed write is never taken for
 // a successful one: the engine hands it back to the caller (Add*) or fails the

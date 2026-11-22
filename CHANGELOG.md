@@ -27,6 +27,12 @@ project uses [Semantic Versioning](https://semver.org/).
   its prompt text and MCP server entry. Logging is `Config.Logger` /
   `WithLogger`, never with token values. Adds the dependency
   `github.com/mark3labs/mcp-go` (v1.6.0), imported by `mcphost` alone.
+- `ctxengine/session`: `MemoryStore` (`NewMemory`), an in-memory session
+  store for tests and small or ephemeral hosts. It implements
+  `SessionStore` and the optional interfaces the manager uses, behaves as
+  `SQLiteStore` does, and writes nothing to disk; `DeleteSession` frees a
+  session. `session/sessiontest.Run` is the conformance suite both stores
+  run.
 - `models`: `Catalog.Direct(name, model, opts...)`, a chain of one
   candidate that calls model `name`'s client with a wire model id the
   catalogue does not define, ignoring health and switches and recording

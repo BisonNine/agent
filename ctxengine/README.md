@@ -79,6 +79,36 @@ never guesses a key from a file name — a `.jsonl` without its `.meta.json` is
 reported as an error. A legacy `<key>.summaries.jsonl` needs no step of its
 own: the archive imports it into `summaries` the first time it is opened.
 
+## Stores
+
+The manager takes any `session.SessionStore`. Two ship with the engine:
+
+- `session.NewSQLiteStore(dir)` — the durable store described above.
+- `session.NewMemory()` — everything in process memory, nothing on disk,
+  nothing kept after the process ends. For tests and small or ephemeral
+  hosts. Its size is bounded only by what is stored; `DeleteSession` frees a
+  session. It has no archive, so `GetArchiveBounds` is always `(0, 0)` and
+  compaction keeps the current summary but no checkpoint log.
+
+Both pass the same conformance suite, `sessiontest.Run`; a new store should
+run it too.
+
+A host with no disk at all uses `session.NewMemory()` and leaves out the
+options that name a directory. Without them:
+
+- no `WithArchiveDir`: there is no all-time archive or summary log, so
+  nothing beyond the live window can be recalled, and summary references are
+  not checked against archive bounds;
+- the archive-backed session tools (`messages`, `search`, `summary_list`,
+  `summary_get`) need `Host.SessionsDir` and refuse without it; `compact`,
+  `info` and `clear` work through their closures;
+- no `WithCompressionProfileDir`: no compression profile and no
+  `compact.jsonl` debug log.
+
+Eviction placeholders still name `session_messages` as a way back to an
+evicted result; without an archive the model's only way back is to re-read
+the resource.
+
 ## What it does not own
 
 - **Models.** It never calls a provider. Compaction goes through a
