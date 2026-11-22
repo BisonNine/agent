@@ -59,6 +59,8 @@ var (
 
 	_ hook.Run            = (*fakeRun)(nil)
 	_ hook.TaskController = fakeTasks{}
+	_ hook.TaskRegistrar  = (*fakeRegistrar)(nil)
+	_ hook.TaskHandle     = (*fakeHandle)(nil)
 	_ hook.Memory         = fakeMemory{}
 	_ hook.MemorySession  = fakeMemory{}
 )
@@ -294,8 +296,8 @@ func (r *fakeRun) Wait() hook.TurnResult {
 
 type fakeTasks struct{}
 
-func (fakeTasks) Tasks() []hook.TaskInfo         { return nil }
-func (fakeTasks) CancelTask(string, error) error { return nil }
+func (fakeTasks) Tasks() []hook.TaskInfo                            { return nil }
+func (fakeTasks) CancelTask(string, error) ([]hook.TaskInfo, error) { return nil, nil }
 
 type fakeMemory struct{}
 

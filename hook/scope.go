@@ -30,6 +30,11 @@ type Scope struct {
 	Depth int
 	// Project groups accounting records; empty is the default project.
 	Project string
+	// Task is the id of the task the context runs in (TaskScope); empty in
+	// a turn no task runs. A turn started on a task's context (a sub-agent's
+	// turn) keeps it: the engine copies Task into the turn's scope, so the
+	// tasks that turn starts are that task's children.
+	Task string
 }
 
 // Identity is the accounting identity of calls made in the scope.
@@ -41,7 +46,7 @@ func (s Scope) Identity() accounting.Identity {
 // agent_name, session, turn, depth (when not 0) and project. The engine
 // derives each turn's logger with it once, so call sites do not repeat them.
 func (s Scope) LogValue() slog.Value {
-	attrs := make([]slog.Attr, 0, 6)
+	attrs := make([]slog.Attr, 0, 7)
 	add := func(key, v string) {
 		if v != "" {
 			attrs = append(attrs, slog.String(key, v))
@@ -55,6 +60,7 @@ func (s Scope) LogValue() slog.Value {
 		attrs = append(attrs, slog.Int("depth", s.Depth))
 	}
 	add("project", s.Project)
+	add("task", s.Task)
 	return slog.GroupValue(attrs...)
 }
 

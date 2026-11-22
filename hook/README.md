@@ -79,7 +79,11 @@ cause to the turn's outcome. A write the session store refused is a
 an interrupt gets `InterruptedResult()`. Tasks (sub-agents and other
 background jobs) run on their own contexts: `TaskInfo`, `TaskState`
 (`running`, `done`, `error`, `cancelled`), `TaskMode` (`wait`, `callback`)
-and the `TaskController` capability (`Tasks`, `CancelTask`).
+and the `TaskController` capability (`Tasks`, `CancelTask`). A tool starts
+a task through the `TaskRegistrar` on its context (`TaskRegistrarFrom`):
+`StartTask` returns the task's own context, whose `Scope` (`TaskScope`) names
+the task (`Scope.Task`, `TaskID`), and a `TaskHandle` (`Finish`, `Detach`,
+`Cancel`). DESIGN.md section 9 has the rules.
 
 ## What the loop is given
 

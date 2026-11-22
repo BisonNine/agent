@@ -257,7 +257,10 @@ project uses [Semantic Versioning](https://semver.org/).
   `DescribeImagesFunc`; `Outcome`; the `Run` handle; `Message`, `UserText`
   and run options; `Scope` with `WithScope` and `ScopeOf`; the cancel causes,
   `CauseOutcome` and `InterruptedResult`; `ErrSessionStore` and
-  `SessionStoreError`; `TaskInfo` and `TaskController`; `Limits`; `Memory`;
+  `SessionStoreError`; `TaskInfo`, `TaskController`, `ErrUnknownTask`, and
+  the task seam `TaskRegistrar`, `TaskStart`, `TaskHandle`,
+  `WithTaskRegistrar`, `TaskRegistrarFrom`, `TaskID`, `TaskScope` and
+  `Scope.Task`; `Limits`; `Memory`;
   `Redactor`; `Truncator` and its default `Truncate`, which shorten the
   request content the engine logs. `hook/DESIGN.md` maps a
   host's existing turn loop onto it.

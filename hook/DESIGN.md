@@ -319,9 +319,10 @@ of `agent/` imports 37 module packages and three third-party modules.
 - 6.3 **The `file_edit` repeat hint.** The 5a engine takes it as
   `engineSpec.repeatHint`. *Resolution:* an agent option in `loop.Spec`
   (a function of the repeated tool names); not a hook.
-- 6.4 **Async tools and late results.** *Resolution:* register the call as a
-  task; its completion is `TaskFinished` with the result; the host routes
-  it into a new `Run`. Needs the task seam of 5b (8.4).
+- 6.4 **Async tools and late results.** *Resolution:* the tool starts its
+  late part as a `TaskCallback` task through the `TaskRegistrar` (section
+  9); its `Finish` emits `TaskFinished` with the result, which the host
+  routes into a new `Run`.
 
 ## 7. Where the 5a engine departs from `hook`, and what changes
 
@@ -495,11 +496,105 @@ not listed.
   as the host's fallback in `NormalizeAgentID`, compare with `ident.SameID`.
 - 8.2 **Who owns the session queue.** *Recommended:* the host through 5b;
   decide in 5c whether the engine merges by a key given with each run.
-- 8.3 **How a tool registers a task.** *Recommended:* design it in 5b with
-  the host's task store, as a value on the tool's context; add it here
-  then.
+- 8.3 **How a tool registers a task.** *Resolved:* `TaskRegistrar` on the
+  tool call's context (section 9).
 - 8.4 **Redacting tool output before it is stored.** *Recommended:* not in
   5a; if adopted, an `AfterTool` callback.
 - 8.5 **`ToolResultStored` after storage.** A result the store refused is no
   longer shown to the chat (today it is, just before the turn fails).
   *Recommended:* accept; the turn is abandoned anyway.
+
+## 9. Tasks: how a tool starts work that outlives its turn
+
+A task (a sub-agent, a task-model job, an async tool's late part) runs on a
+context of its own, registered with the agent under an id and an owner, so
+an interrupt never reaches it, it is cancelled by id with its own tasks, a
+`TaskWait` task can be detached into a `TaskCallback` one, and the agent's
+`TaskController` sees it. The host's 5b registry
+(`tools/agents/registry.go`, `taskrun.go`, `cancel.go`) is the reference;
+the SDK's will live in `agent/loop`.
+
+### 9.1 The seam
+
+- `TaskRegistrar` (a `TaskController` plus `StartTask`) on the tool call's
+  context: `WithTaskRegistrar`, `TaskRegistrarFrom`.
+- `StartTask(ctx, TaskStart{Info, Depth, OnCancel})` returns the task's
+  context and a `TaskHandle` (`ID`, `Info`, `Finish`, `Detach`, `Cancel`).
+- `Scope.Task` and `TaskID(ctx)`: the task a context runs in;
+  `TaskScope(from, info, depth)`: the scope of a task's context.
+- `TaskController.CancelTask` returns the tasks it cancelled;
+  `ErrUnknownTask` for an id that is not the agent's.
+
+### 9.2 Decisions
+
+- 9.2.1 **The registrar rides on the context**, as the scope does: a tool
+  reaches the turn's services through its call's context, and a worker's
+  own turn, running on the task's context, reaches the same registrar to
+  start grandchildren. *Rejected:* a toolkit per-call value (toolkit must
+  not know tasks, and `hook` already imports toolkit, so the type could not
+  live there) and a field on `ToolCall` (a call's data, not a service, and
+  not reachable from a task's own turns).
+- 9.2.2 **A task's context carries a `Scope` and nothing else.** From the
+  starter's scope it keeps the agent id and name and the project (the
+  owner; a clone's scope already names its source), and the turn id of the
+  turn that started it (its logs correlate); it takes the task's session
+  (`Info.Session`, default the starter's), its depth (`TaskStart.Depth`)
+  and `Task`, its id. The task id is a field of `Scope` rather than a key
+  of its own, so one `WithScope`/`ScopeOf` pair stays the only identity on
+  a context; a turn started on a task's context keeps `Task`, so its tasks
+  are that task's children. Host values (the ask chain) are the host's: the
+  tool gets the task's context back from `StartTask` and puts its own keys
+  on it before running the work. *Rejected:* "every value except …", which
+  names host values in the SDK and lets a turn's values leak into work
+  that outlives it.
+- 9.2.3 **`OnCancel func(cause error) bool` is the host's settle step**,
+  run exactly once by a cancel, before the task's context is cancelled and
+  before `TaskFinished`; `false` means the task had already ended (its
+  result is on its way) and the cancel leaves it alone and does not count
+  it. The registrar owns the in-memory `TaskState`; the host owns its
+  record (status, run marker, live set). *Rejected:* a `TaskStore`
+  interface the registrar writes through: the host's settle step is one
+  locked transaction over its record, marker and supervisor set, which a
+  generic store interface would split or have to re-implement.
+- 9.2.4 **A detached task's result is `TaskFinished`** with `Task.Mode`
+  `TaskCallback` and the result: the host's consumer starts a new turn of
+  the owner's session with it (D6). A `TaskWait` task's `TaskFinished`
+  carries the result too, but its waiter has it; consumers skip it.
+- 9.2.5 **Shutdown is told, not inferred.** `Detach(cause)` cancels
+  instead of detaching when the registrar knows the agent is shutting down
+  (its agent's `Close`, or `Cancel` with a cause wrapping `ErrShutdown`) or
+  the cause wraps `ErrShutdown`; the turn is replayed after the restart
+  and starts the task again. A context's cause is not enough: a CLI model's
+  tool call over MCP ends with a plain `context.Canceled`. On interrupt,
+  deadline and superseded the task is detached. *Rejected:* the waiting
+  tool deciding between `Detach` and `Cancel` itself, which would need
+  every such tool to know about shutdown.
+- 9.2.6 **The registrar is what `TaskController` is.** The agent's
+  `Tasks`/`CancelTask` and the registrar on its tools' contexts are one
+  registry seen per owner. `CancelTask` cascades to children first and
+  runs each `OnCancel`; `agent_cancel {"all": true}` cancels each of
+  `Tasks()`.
+
+### 9.3 The host's checklist for adopting these types
+
+- [ ] Put the process registry behind `hook.TaskRegistrar` per owner
+  (`TaskRegistry.start` → `StartTask`, `Task.stop` → `TaskHandle.Cancel`,
+  `finished` → `Finish`, `SubagentManager.detach`/`await` →
+  `TaskHandle.Detach`), and put it on each tool call's context with
+  `hook.WithTaskRegistrar`.
+- [ ] Replace `agents.WithTaskID`/`agents.TaskID` with `Scope.Task`
+  (`hook.TaskScope` when starting a task; `hook.TaskID`); copy `Task` into
+  the scope of a sub-agent's turn.
+- [ ] Replace `isolatedContext` + `WithSpawnDepth` with a context of
+  `hook.WithScope(TaskScope(...))`, then add the ask chain on the returned
+  context in `launchTask`.
+- [ ] `beforeCancel`/`cancelRun` becomes `TaskStart.OnCancel`, unchanged in
+  meaning.
+- [ ] `TaskRegistry.Observe` becomes `TaskStarted`/`TaskFinished` events;
+  `Cancel` returns `[]hook.TaskInfo` as `CancelTask` does.
+- [ ] `sm.shuttingDown()` becomes the registrar being told of shutdown.
+- Stays host-side: the task records and results files, the run markers and
+  the live set with their settle lock, the supervisor that relaunches
+  tasks after a restart (and `cancelRecord` for a task a restart left
+  unrelaunched), clones and their release, and the wording of results
+  (`detachedText`, the cancelled result).
