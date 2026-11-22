@@ -57,6 +57,11 @@ added disabled. It is a convenience over `New`, `AddProvider`, `Add` and
   it: the catalogue never closes it. Registering the same client again changes
   nothing.
 - `Set(id)`: the agent's set, created on first use; the handle stays valid.
+- `RemoveSet(id) bool`: drops an agent's set and everything held for it
+  (lists, switches, selections and serving records in memory) for an agent
+  that is gone. The store is not written and no event is sent; chains already
+  begun finish on what they pinned. The old handle's writes fail; a later
+  `Set(id)` is new and empty. The default set cannot be removed.
 
 On a Set:
 
@@ -184,9 +189,23 @@ handed over: `c.Adopt(next) Diff`.
   listed as changed and rebuilt. Any other client the catalogue built is
   closed (`spawnllm.StatefulProvider`) once its last call in flight ends; a
   registered client is never closed.
+- A set `next` does not have is emptied: its lists and switches go, its
+  selections revert (stored and listed in `Diff.Reverted`); its handle and
+  serving records stay. Use `RemoveSet` to drop a set.
 - `next`'s options replace `c`'s; `next` is spent (`ErrAdopted`).
 
 `Diff` lists the models added, removed and changed.
+
+## Shutting down
+
+`c.Close(ctx)` shuts a catalogue down, for a host that exits or a catalogue
+built for a short task. Calls and writes that start after it return
+`ErrClosed`. It waits for the calls in flight and the unreleased `Client`
+handles, then closes every client the catalogue built (never a registered
+one), including clients an earlier `Adopt` replaced. If `ctx` ends first it
+returns `ctx.Err()`: idle clients are closed at once, the rest when their last
+call ends. A second `Close`, or closing a catalogue spent by `Adopt`, returns
+nil. `Adopt` into or from a closed catalogue changes nothing.
 
 ## Enable and disable
 

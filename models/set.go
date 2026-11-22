@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.bison9.com/agent/accounting"
@@ -175,15 +176,25 @@ func (g *generation) usable(id, name string) (bool, bool) {
 // catalogue. The handle stays valid across Catalog.Adopt. It has no exported
 // fields; what it returns is a copy.
 type Set struct {
-	cat *Catalog
-	id  string
+	cat     *Catalog
+	id      string
+	removed atomic.Bool // set by Catalog.RemoveSet, under cat.mu and the run state's lock
 }
 
 // ID returns the set's agent id ("" for the default set).
 func (s *Set) ID() string { return s.id }
 
 func (s *Set) update(fn func(g *generation) error) error {
-	return s.cat.update(func(g *generation) ([]*clientSlot, error) { return nil, fn(g) })
+	return s.cat.update(func(g *generation) ([]*clientSlot, error) {
+		if s.removed.Load() {
+			return nil, s.errRemoved()
+		}
+		return nil, fn(g)
+	})
+}
+
+func (s *Set) errRemoved() error {
+	return fmt.Errorf("models: set %q was removed; take it again with Catalog.Set", s.id)
 }
 
 // Assign adds model name to purpose p at priority (lower first; equal
@@ -460,6 +471,14 @@ func (s *Set) Select(p Purpose, name string, scope ...Scope) error {
 		s.cat.mu.Unlock()
 		return ErrAdopted
 	}
+	if s.cat.life.isClosed() {
+		s.cat.mu.Unlock()
+		return ErrClosed
+	}
+	if s.removed.Load() {
+		s.cat.mu.Unlock()
+		return s.errRemoved()
+	}
 	g := s.cat.gen.Load()
 	list, _ := g.effective(s.id, p)
 	if !slices.ContainsFunc(list, func(a assignment) bool { return a.name == name }) {
@@ -483,6 +502,9 @@ func (s *Set) Forget(scope Scope) {
 // Reset removes the selection for purpose p in the given scope (or the set's
 // default), so the top-priority model is tried first again.
 func (s *Set) Reset(p Purpose, scope ...Scope) {
+	if s.removed.Load() {
+		return
+	}
 	k := selKey{set: s.id, purpose: p, scope: scopeOf(scope)}
 	s.cat.state.set(k, "")
 	s.save(s.cat.gen.Load(), k, "")
@@ -560,7 +582,7 @@ func (s *Set) selectedName(g *generation, p Purpose, scope Scope, list []assignm
 		keys = append(keys, selKey{set: s.id, purpose: p})
 	}
 	for _, k := range keys {
-		name := s.cat.state.get(k, g.cfg)
+		name := s.cat.state.get(k, g.cfg, s)
 		if name != "" && slices.ContainsFunc(list, func(a assignment) bool { return a.name == name }) {
 			return name
 		}
@@ -612,7 +634,7 @@ func (s *Set) Begin(p Purpose, scope ...Scope) *Chain {
 	g := s.cat.gen.Load()
 	sc := scopeOf(scope)
 	list, used := g.effective(s.id, p)
-	ch := &Chain{cat: s.cat, gen: g, set: s.id, purpose: p, used: used, scope: sc}
+	ch := &Chain{cat: s.cat, from: s, gen: g, set: s.id, purpose: p, used: used, scope: sc}
 	if len(list) == 0 {
 		return ch
 	}
@@ -657,11 +679,16 @@ func (s *Set) Client(name string) (client spawnllm.LLMProvider, release func(), 
 
 // Client is Set.Client.
 func (c *Catalog) Client(name string) (client spawnllm.LLMProvider, release func(), err error) {
+	if err = c.life.enter(); err != nil {
+		return nil, nil, err
+	}
 	e, ok := c.gen.Load().models[name]
 	if !ok {
+		c.life.leave()
 		return nil, nil, fmt.Errorf("models: unknown model %q", name)
 	}
-	return e.slot.acquire()
+	client, release, err = e.slot.acquire()
+	return client, c.counted(release, err), err
 }
 
 // The catalogue's own methods for its default set.
@@ -727,7 +754,7 @@ func (r *runState) set(k selKey, name string) {
 }
 
 // get returns the selection for k, reading it from the store the first time.
-func (r *runState) get(k selKey, cfg *settings) string {
+func (r *runState) get(k selKey, cfg *settings, from *Set) string {
 	r.mu.Lock()
 	name, loaded := r.selected[k], r.loaded[k]
 	r.mu.Unlock()
@@ -743,6 +770,9 @@ func (r *runState) get(k selKey, cfg *settings) string {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if from.removed.Load() {
+		return ""
+	}
 	if !r.loaded[k] {
 		r.loaded[k] = true
 		if stored != "" {
@@ -772,6 +802,33 @@ func (r *runState) forget(set string, scope Scope) {
 	}
 }
 
+// drop removes everything held for set id and marks its handle removed, so
+// a chain still running from it records nothing. Store writes not yet made
+// for it are dropped.
+func (r *runState) drop(id string, handle *Set) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if handle != nil {
+		handle.removed.Store(true)
+	}
+	for k := range r.selected {
+		if k.set == id {
+			delete(r.selected, k)
+		}
+	}
+	for k := range r.loaded {
+		if k.set == id {
+			delete(r.loaded, k)
+		}
+	}
+	for k := range r.serve {
+		if k.set == id {
+			delete(r.serve, k)
+		}
+	}
+	r.writes = slices.DeleteFunc(r.writes, func(w pendingWrite) bool { return w.key.set == id })
+}
+
 func (r *runState) serving(k selKey) Serving {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -782,9 +839,12 @@ func (r *runState) serving(k selKey) Serving {
 
 // served records a call's outcome: answered is the model that answered, ""
 // when none did.
-func (r *runState) served(k selKey, answered string, reason string, attempts []Attempt, now time.Time) {
+func (r *runState) served(k selKey, from *Set, answered string, reason string, attempts []Attempt, now time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if from != nil && from.removed.Load() {
+		return // the set was removed while the chain ran
+	}
 	s := r.serve[k]
 	if answered != "" && answered != s.Serving {
 		s.Serving, s.Since = answered, now

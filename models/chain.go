@@ -125,6 +125,7 @@ func (e *ExhaustedError) Error() string {
 // may be used from several goroutines.
 type Chain struct {
 	cat       *Catalog
+	from      *Set // the set it was begun from
 	gen       *generation
 	set       string
 	purpose   Purpose // as asked
@@ -339,7 +340,11 @@ func (ch *Chain) chatOnce(ctx context.Context, id accounting.Identity, c Candida
 // release is called, which must be done exactly once when the caller is
 // done with it; a client Adopt replaced is closed only after that.
 func (ch *Chain) Client(name string) (client spawnllm.LLMProvider, release func(), err error) {
-	return ch.clientOf(name)
+	if err = ch.cat.life.enter(); err != nil {
+		return nil, nil, err
+	}
+	client, release, err = ch.clientOf(name)
+	return client, ch.cat.counted(release, err), err
 }
 
 func (ch *Chain) clientOf(name string) (spawnllm.LLMProvider, func(), error) {
@@ -415,6 +420,10 @@ func (ch *Chain) Do(ctx context.Context, fn func(ctx context.Context, c Candidat
 
 // run is Do's walk, reported as what is serving now and to the observer.
 func (ch *Chain) run(ctx context.Context, cfg *callConfig, fn func(context.Context, Candidate) error) (Candidate, []Attempt, error) {
+	if err := ch.cat.life.enter(); err != nil {
+		return Candidate{}, nil, err
+	}
+	defer ch.cat.life.leave()
 	c, attempts, err := ch.walk(ctx, cfg, fn)
 	ch.report(ctx, c, attempts, err)
 	if err != nil {
@@ -515,13 +524,13 @@ func (ch *Chain) report(ctx context.Context, answered Candidate, attempts []Atte
 	k := selKey{set: ch.set, purpose: ch.purpose, scope: ch.scope}
 	now := ch.clock().Now()
 	if err == nil {
-		ch.cat.state.served(k, answered.Name, firstReason(ch, attempts, answered.Name), attempts, now)
+		ch.cat.state.served(k, ch.from, answered.Name, firstReason(ch, attempts, answered.Name), attempts, now)
 		return
 	}
 	if ctx.Err() != nil {
 		return // the caller gave up; nothing about the models to report
 	}
-	ch.cat.state.served(k, "", firstReason(ch, attempts, ""), attempts, now)
+	ch.cat.state.served(k, ch.from, "", firstReason(ch, attempts, ""), attempts, now)
 	ch.gen.cfg.observer.Exhausted(Exhausted{Set: ch.set, Purpose: ch.purpose, Scope: ch.scope, Attempts: slices.Clone(attempts), Err: err})
 }
 

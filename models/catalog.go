@@ -36,6 +36,7 @@ type Catalog struct {
 	spent   atomic.Bool
 	book    *parkedBook
 	state   *runState
+	life    lifecycle
 }
 
 // generation is one immutable snapshot of a catalogue's contents. Writers
@@ -103,6 +104,10 @@ func (c *Catalog) change(fn func(g *generation) ([]*clientSlot, error)) ([]Rever
 	if c.spent.Load() {
 		c.mu.Unlock()
 		return nil, ErrAdopted
+	}
+	if c.life.isClosed() {
+		c.mu.Unlock()
+		return nil, ErrClosed
 	}
 	prev := c.gen.Load()
 	next := prev.clone()
@@ -346,6 +351,38 @@ func (c *Catalog) Set(id string) *Set {
 	return s
 }
 
+// RemoveSet drops agent id's set and everything it holds: its assignments
+// for every purpose, its enable switches, and its selections and serving
+// records for every scope, in memory. The selection store is not written and
+// no event is sent. Chains already begun from it finish on what they pinned,
+// recording nothing. A handle taken before is spent: its writes fail; a later
+// Set(id) is a new, empty set. The default set cannot be removed. It reports
+// whether the set existed; it is false on a closed or adopted catalogue.
+func (c *Catalog) RemoveSet(id string) bool {
+	if id == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.spent.Load() || c.life.isClosed() {
+		return false
+	}
+	g := c.gen.Load()
+	_, inGen := g.sets[id]
+	handle, inHandles := c.handles[id]
+	if !inGen && !inHandles {
+		return false
+	}
+	if inGen {
+		next := g.clone()
+		delete(next.sets, id)
+		c.gen.Store(next)
+	}
+	delete(c.handles, id)
+	c.state.drop(id, handle)
+	return true
+}
+
 // Default returns the default set, Set("").
 func (c *Catalog) Default() *Set { return c.Set("") }
 
@@ -377,6 +414,9 @@ type Reverted struct {
 //   - Selections and what is serving now are carried over by model name; a
 //     selection whose model is no longer assigned reverts to the default and
 //     is listed in the Diff.
+//   - A set next does not have is emptied: its lists and switches go, its
+//     selections revert (written to the store and listed in the Diff), and
+//     its handle and serving records stay. RemoveSet drops a set entirely.
 //   - Health is not carried over: every model starts available.
 //   - A model whose definition, provider and client options are unchanged
 //     keeps the client it has already built (a model whose client options
@@ -384,12 +424,15 @@ type Reverted struct {
 //     closed once its last call in flight ends; a client the host registered
 //     is never closed.
 //   - next's options replace c's.
+//
+// When c or next is closed, Adopt changes nothing and returns an empty Diff;
+// a next it has spent that way has its clients closed.
 func (c *Catalog) Adopt(next *Catalog) Diff {
 	if next == nil || next == c {
 		return Diff{}
 	}
 	next.mu.Lock()
-	if next.spent.Swap(true) {
+	if next.life.isClosed() || next.spent.Swap(true) {
 		next.mu.Unlock()
 		return Diff{}
 	}
@@ -399,8 +442,12 @@ func (c *Catalog) Adopt(next *Catalog) Diff {
 	var diff Diff
 	var retire []*clientSlot
 	c.mu.Lock()
-	if c.spent.Load() {
+	if c.spent.Load() || c.life.isClosed() {
 		c.mu.Unlock()
+		// next is spent: close what it built.
+		for _, e := range ng.models {
+			e.slot.retire()
+		}
 		return Diff{}
 	}
 	old := c.gen.Load()

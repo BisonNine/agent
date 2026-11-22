@@ -77,6 +77,10 @@ func completeVerdict(err error, c Candidate) Verdict {
 // Without a WithNotify hook the models passed are logged; with one they are
 // reported to it instead.
 func (ch *Chain) complete(ctx context.Context, id accounting.Identity, req CompleteRequest, cfg *callConfig) (CompleteReply, error) {
+	if err := ch.cat.life.enter(); err != nil {
+		return CompleteReply{}, err
+	}
+	defer ch.cat.life.leave()
 	messages := []spawnllm.Message{
 		{Role: "system", Content: req.System},
 		{Role: "user", Content: req.User},
@@ -147,7 +151,7 @@ func (ch *Chain) complete(ctx context.Context, id accounting.Identity, req Compl
 			continue
 		}
 		ch.gen.health.success(c.Name, c.Provider, c.Model)
-		ch.cat.state.served(selKey{set: ch.set, purpose: ch.purpose, scope: ch.scope}, c.Name, "", nil, ch.clock().Now())
+		ch.cat.state.served(selKey{set: ch.set, purpose: ch.purpose, scope: ch.scope}, ch.from, c.Name, "", nil, ch.clock().Now())
 		return CompleteReply{Content: resp.Content, FinishReason: resp.FinishReason, Model: c.Model}, nil
 	}
 	if lastErr != nil {

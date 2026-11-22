@@ -19,6 +19,11 @@ project uses [Semantic Versioning](https://semver.org/).
   now also called when a list change reverts or moves a selection, and a
   failed `LoadSelection` is retried. A call cancelled during a Retry-After
   wait no longer counts against the model.
+- `models`: `Catalog.Close(ctx)` shuts a catalogue down: later calls and
+  writes return `ErrClosed`; it waits for calls in flight, then closes the
+  clients it built (never registered ones).
+- `models`: `Catalog.RemoveSet(id)` drops an agent's set and what is held for
+  it in memory, without writing the selection store.
 - `models` package, the install-wide `Catalog` (`New`): providers and
   models (`AddProvider`, `Add`, `Remove`, `Get`, `Names`), their chat
   clients built on first use and shared (`RegisterClient` for a protocol the
