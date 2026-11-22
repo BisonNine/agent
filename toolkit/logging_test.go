@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -46,7 +48,8 @@ func (h *capture) reset() {
 	h.msgs = nil
 }
 
-// A gate's result is the caller's to log: the SDK logs nothing for it. A
+// A gate's result is the caller's to log: the SDK logs nothing for it, and
+// the only record of the call is the started line logged on entry. A
 // refusal returned by a tool that ran is logged once, as before.
 func TestExecuteGated_GateRefusalNotLogged(t *testing.T) {
 	ctx := context.Background()
@@ -74,8 +77,8 @@ func TestExecuteGated_GateRefusalNotLogged(t *testing.T) {
 			mustAdd(t, c, Entry{Tool: tool})
 
 			tt.run(c)
-			if got := h.all(); len(got) != 0 {
-				t.Errorf("gate refusal logged %q, want nothing", got)
+			if got := h.all(); !slices.Equal(got, []string{"Tool execution started"}) {
+				t.Errorf("gate refusal logged %q, want only the started line", got)
 			}
 
 			h.reset()
@@ -141,5 +144,55 @@ func TestReplace_LogsChange(t *testing.T) {
 	c.ReplaceEntries("mcp_alice_", nil)
 	if n := h.count("Replaced tools by prefix"); n != 1 {
 		t.Errorf("logged %d times, want 1 (%q)", n, h.all())
+	}
+}
+
+// "Tool execution started" is the first record of every call, logged on
+// entry with the name as called, before a call is refused as not found,
+// not granted or disabled.
+func TestExecute_StartedLoggedBeforeRefusals(t *testing.T) {
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call string
+		set  func(t *testing.T, c *Catalog) Registry
+		want []string
+	}{
+		{"not found", "zzz", func(_ *testing.T, c *Catalog) Registry { return c }, []string{"Tool execution started", "Tool not found"}},
+		{
+			"not granted", "refund", func(_ *testing.T, c *Catalog) Registry { return c.View(grant("lookup_order")) },
+			[]string{"Tool execution started", "Tool execution denied by agent allowlist"},
+		},
+		{"disabled", "refund", func(t *testing.T, c *Catalog) Registry {
+			t.Helper()
+			if err := c.Disable("refund"); err != nil {
+				t.Fatal(err)
+			}
+			return c
+		}, []string{"Tool execution started", "Tool is disabled"}},
+		{"ran", "refund", func(_ *testing.T, c *Catalog) Registry { return c }, []string{"Tool execution started", "Tool execution completed"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			c := New(WithLogger(slog.New(slog.NewTextHandler(&buf, nil))))
+			mustAdd(t, c, Entry{Tool: newMockTool("refund", "")})
+			ex := tt.set(t, c)
+			buf.Reset()
+			ex.Execute(ctx, tt.call, nil, nil)
+
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			if len(lines) != len(tt.want) {
+				t.Fatalf("records = %q, want %q", lines, tt.want)
+			}
+			for i, w := range tt.want {
+				if !strings.Contains(lines[i], "msg=\""+w+"\"") {
+					t.Errorf("record %d = %q, want %q", i, lines[i], w)
+				}
+			}
+			if want := "level=INFO msg=\"Tool execution started\" component=toolkit tool=" + tt.call; !strings.Contains(lines[0], want) {
+				t.Errorf("started record = %q, want %q", lines[0], want)
+			}
+		})
 	}
 }

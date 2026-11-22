@@ -144,7 +144,11 @@ func (t *searchTool) Execute(ctx context.Context, args map[string]any) *toolkit.
 	if len(hits) == 0 {
 		return toolkit.SilentResult("No tools found matching the query.")
 	}
-	ix.logger.InfoContext(ctx, "Tool search completed", "regex", useRegex, "results", len(hits))
+	if ix.logQueries {
+		ix.logger.InfoContext(ctx, "Tool search completed", "query", query, "regex", useRegex, "results", len(hits))
+	} else {
+		ix.logger.InfoContext(ctx, "Tool search completed", "regex", useRegex, "results", len(hits))
+	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Found %d tool(s):\n", len(hits))

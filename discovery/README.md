@@ -25,7 +25,8 @@ reg.ReplaceEntries("mcp_bob_", discovery.HideEntries(bobTools))  // entries, not
   name prefix, compared without regard to case or runs of underscores,
   against the internal name and the `ExternalName`; `*` matches everything
   and a trailing `*` is ignored. `AlwaysShownFunc(fn)` is for a host with
-  its own rule.
+  its own rule: unlike `AlwaysShown`, `fn` is asked exactly once per tool,
+  with the internal name only, never the `ExternalName`.
 
 Hiding is fixed when the tools are mounted, in the catalogue, so it holds
 for every agent that is granted the tool.
@@ -100,5 +101,7 @@ drops messages).
 ## Logging
 
 `WithLogger(*slog.Logger)` on the index; records carry
-`component=discovery`. The default discards. Search queries and tool
-arguments are not logged.
+`component=discovery`. The default discards. Tool arguments are not
+logged, nor are search queries unless `LogQueries(true)` is set: the info
+record "Tool search completed" (fields `regex`, `results`) then also
+carries `query`, for BM25 and regex search alike.

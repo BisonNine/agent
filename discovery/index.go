@@ -43,6 +43,12 @@ func WithLogger(l *slog.Logger) Option {
 	}
 }
 
+// LogQueries sets whether the "Tool search completed" record carries the
+// search query (field query). The default, false, leaves it out.
+func LogQueries(on bool) Option {
+	return func(ix *Index) { ix.logQueries = on }
+}
+
 // Hit is one search result: a hidden tool by the name it is offered and
 // called under, with its description.
 type Hit struct {
@@ -73,6 +79,7 @@ type Index struct {
 	reg        toolkit.Registry
 	maxResults int
 	logger     *slog.Logger
+	logQueries bool
 
 	mu  sync.Mutex
 	cur *corpus // the latest snapshot's corpus, built on demand

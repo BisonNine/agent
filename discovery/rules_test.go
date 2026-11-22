@@ -241,7 +241,7 @@ func TestHideEntries_Pins(t *testing.T) {
 		{"internal name", []HideOption{AlwaysShown("mcp_")}, []string{"mcp_bob_fetch"}},
 		{"everything", []HideOption{AlwaysShown("*")}, []string{"crm_start_here", "crm_lookup", "CRM__Refund", "mcp_bob_fetch", "svc_alice_read", "svc_alice_write"}},
 		{"empty pattern", []HideOption{AlwaysShown("", "  ")}, nil},
-		{"func and patterns combine", []HideOption{AlwaysShown("svc_"), AlwaysShownFunc(func(n string) bool { return n == "bob_fetch" })}, []string{"mcp_bob_fetch", "svc_alice_read", "svc_alice_write"}},
+		{"func and patterns combine", []HideOption{AlwaysShown("svc_"), AlwaysShownFunc(func(n string) bool { return n == "mcp_bob_fetch" })}, []string{"mcp_bob_fetch", "svc_alice_read", "svc_alice_write"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -269,13 +269,24 @@ func TestHideEntries_Pins(t *testing.T) {
 	}
 }
 
-// AlwaysShownFunc is asked with both names of a tool.
-func TestAlwaysShownFunc_BothNames(t *testing.T) {
+// AlwaysShownFunc is asked exactly once per tool, with its internal name
+// only: a tool whose ExternalName would match but whose internal name does
+// not stays hidden.
+func TestAlwaysShownFunc_InternalNameOnly(t *testing.T) {
 	var asked []string
-	HideEntries([]toolkit.Entry{listed(&extTool{mockTool: *newMockTool("mcp_bob_fetch", ""), external: "bob_fetch"})},
-		AlwaysShownFunc(func(n string) bool { asked = append(asked, n); return false }))
-	if want := []string{"mcp_bob_fetch", "bob_fetch"}; !slices.Equal(asked, want) {
+	pin := func(n string) bool { asked = append(asked, n); return strings.HasPrefix(n, "alpha") }
+	out := HideEntries([]toolkit.Entry{
+		listed(&extTool{mockTool: *newMockTool("mcp_alpha_fetch", ""), external: "alpha_fetch"}),
+		listed(newMockTool("alpha_local", "")),
+	}, AlwaysShownFunc(pin))
+	if want := []string{"mcp_alpha_fetch", "alpha_local"}; !slices.Equal(asked, want) {
 		t.Errorf("asked = %v, want %v", asked, want)
+	}
+	if !out[0].Hidden {
+		t.Error("mcp_alpha_fetch listed by its external name, want hidden")
+	}
+	if out[1].Hidden {
+		t.Error("alpha_local hidden, want listed")
 	}
 }
 

@@ -347,9 +347,11 @@ type Gate func(ctx context.Context, info Info) *Result
 // a tool not found, removed, not granted or disabled is refused as Execute
 // refuses it and gate is not called. Otherwise gate is called with that
 // tool's Info; a non-nil result is returned without running the tool (it
-// is neither counted in Stats nor logged: the gate's caller logs its own
-// decisions), and nil runs exactly the tool gate saw, never a
-// tool resolved again. A nil gate makes it Execute.
+// is not counted in Stats, and nothing is logged about it: the gate's
+// caller logs its own decisions; the "Tool execution started" record,
+// logged on entry to every call, is the only record), and nil runs exactly
+// the tool gate saw, never a tool resolved again. A nil gate makes it
+// Execute.
 func (s *Set) ExecuteGated(ctx context.Context, name string, args map[string]any, cb AsyncCallback, gate Gate) *Result {
 	st, cfg := s.load()
 	res, _ := s.execute(ctx, st, cfg, name, args, cb, nil, gate)
@@ -362,6 +364,8 @@ func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name st
 	cb AsyncCallback, snap *Snapshot, gate Gate,
 ) (res *Result, noResult bool) {
 	log := s.cat.logger
+	// Logged on entry, before any refusal, as the call's first record.
+	log.InfoContext(ctx, "Tool execution started", "tool", name)
 	e, canonical := st.lookup(name)
 	if e == nil {
 		if snap != nil && snap.has(name) {
@@ -381,13 +385,12 @@ func (s *Set) execute(ctx context.Context, st *catState, cfg *setConfig, name st
 	}
 	if gate != nil {
 		// The gate's result is the caller's decision, and the caller's to
-		// log: nothing is logged for it here.
+		// log: nothing is logged for it here (only the started line above).
 		if refused := gate(ctx, s.info(st, cfg, e)); refused != nil {
 			return refused, false
 		}
 	}
 
-	log.InfoContext(ctx, "Tool execution started", "tool", name)
 	var result *Result
 	start := time.Now()
 	if async, ok := e.tool.(AsyncExecutor); ok && cb != nil {

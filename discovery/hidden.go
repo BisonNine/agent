@@ -2,7 +2,6 @@ package discovery
 
 import (
 	"context"
-	"slices"
 	"strings"
 
 	"go.bison9.com/agent/toolkit"
@@ -12,7 +11,7 @@ import (
 type HideOption func(*hideConfig)
 
 type hideConfig struct {
-	pins []func(name string) bool
+	pins []func(t toolkit.Tool) bool
 }
 
 // AlwaysShown keeps the tools matching any of patterns listed. A pattern is
@@ -25,7 +24,7 @@ func AlwaysShown(patterns ...string) HideOption {
 	for _, p := range patterns {
 		norm = append(norm, normalisePin(p))
 	}
-	return AlwaysShownFunc(func(name string) bool {
+	match := func(name string) bool {
 		n := collapseUnderscores(strings.ToLower(name))
 		for _, p := range norm {
 			if p == "*" {
@@ -36,28 +35,34 @@ func AlwaysShown(patterns ...string) HideOption {
 			}
 		}
 		return false
-	})
+	}
+	return func(c *hideConfig) {
+		c.pins = append(c.pins, func(t toolkit.Tool) bool {
+			if match(t.Name()) {
+				return true
+			}
+			ext := externalName(t)
+			return ext != "" && match(ext)
+		})
+	}
 }
 
 // AlwaysShownFunc keeps listed every tool for which pinned reports true. It
-// is asked with the tool's internal name and, when the tool has one, its
-// ExternalName. It is for a host whose pinning rule is its own.
+// is for a host whose pinning rule is its own. Unlike AlwaysShown, which
+// also matches the ExternalName, pinned is asked exactly once per tool,
+// with the tool's internal name only.
 func AlwaysShownFunc(pinned func(name string) bool) HideOption {
 	return func(c *hideConfig) {
 		if pinned != nil {
-			c.pins = append(c.pins, pinned)
+			c.pins = append(c.pins, func(t toolkit.Tool) bool { return pinned(t.Name()) })
 		}
 	}
 }
 
 // pinned reports whether t is kept listed.
 func (c *hideConfig) pinned(t toolkit.Tool) bool {
-	names := []string{t.Name()}
-	if ext := externalName(t); ext != "" {
-		names = append(names, ext)
-	}
 	for _, pin := range c.pins {
-		if slices.ContainsFunc(names, pin) {
+		if pin(t) {
 			return true
 		}
 	}

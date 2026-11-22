@@ -88,7 +88,9 @@ project uses [Semantic Versioning](https://semver.org/).
   registered but is offered to no model, discovery index or MCP client,
   and a call to it returns `tool "x" is disabled`.
 - `toolkit` quieter, bounded bookkeeping: a gate's result is not logged
-  (its caller logs its own decisions), a write that changes nothing logs
+  (its caller logs its own decisions; "Tool execution started" is logged on
+  entry to every call, before any refusal, as the host's registry logged
+  it), a write that changes nothing logs
   nothing, and `Stats` drops a tool's counts when the tool is removed (a
   tool replaced under the same name keeps them).
 - `toolkit/untrusted`: `Wrap`, `Unwrap` and `Neutralise` mark tool output
@@ -104,6 +106,10 @@ project uses [Semantic Versioning](https://semver.org/).
   `ToolDefs` returns one model call's tool definitions for a provider that
   loads deferred tools natively (`Native`) or not, with a `Session`
   recording the tool references a conversation's results carried.
+- `discovery` host parity: `AlwaysShownFunc` asks its predicate once per
+  tool, with the internal name only (`AlwaysShown` patterns still match
+  the `ExternalName` too); `LogQueries(true)` puts the query on the "Tool
+  search completed" record, as the host logged it.
 - `modelspec` package: the shared definition of providers and models.
   `Provider` and `Model` with the JSON form of the host configuration they
   came from; `Model.Validate`, `Provider.ValidateProtocol`,

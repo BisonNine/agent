@@ -84,9 +84,10 @@ Rules:
   a tool not found, removed, not granted or disabled is refused as
   `Execute` refuses it and the gate is not called. Otherwise the gate gets
   that tool's `Info` (with `Meta`); a non-nil `Result` is returned without
-  running the tool, counting it in `Stats` or logging anything (the
-  gate's caller logs its own decisions), and nil runs exactly the tool the
-  gate saw. A nil gate is `Execute`.
+  running the tool, counting it in `Stats` or logging anything about it
+  (the gate's caller logs its own decisions; the call's only record is
+  "Tool execution started"), and nil runs exactly the tool the gate saw.
+  A nil gate is `Execute`.
 - **`Stats`** counts, per set, the calls and errors of each tool that ran.
   A tool's counts go when it is removed from the catalogue; a tool
   replaced under the same name keeps them.
@@ -154,7 +155,9 @@ the `discovery` package's.
 ## Logging
 
 `WithLogger(*slog.Logger)`; records carry `component=toolkit`. The default
-discards. Tool arguments are never logged.
+discards. Tool arguments are never logged. Every call first logs "Tool
+execution started" (info, `tool` = the name as called), before it can be
+refused as not found, removed, not granted or disabled, or by a gate.
 A write that changes nothing (a `Remove` or `Replace` that matches no
 tool) logs nothing, sends no notice and does not move `Version`.
 

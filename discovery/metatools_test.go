@@ -3,8 +3,10 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"go.bison9.com/agent/toolkit"
@@ -363,5 +365,67 @@ func TestMetaTools_ResolvePerAgent(t *testing.T) {
 		if d.Name == SearchToolName && !strings.HasSuffix(d.Description, " Discoverable tool groups: crm.") {
 			t.Errorf("listed description = %q, want alice's groups", d.Description)
 		}
+	}
+}
+
+// recHandler keeps every record, with the attributes logged on it.
+type recHandler struct {
+	mu   sync.Mutex
+	recs []slog.Record
+}
+
+func (h *recHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *recHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.recs = append(h.recs, r.Clone())
+	return nil
+}
+func (h *recHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recHandler) WithGroup(string) slog.Handler      { return h }
+
+// LogQueries puts the query on the "Tool search completed" record, as the
+// host logged it (info; query, regex, results); without it the query is
+// left out. It holds for both search modes.
+func TestSearchTool_LogQueries(t *testing.T) {
+	tests := []struct {
+		name  string
+		on    bool
+		regex bool
+		query string
+		max   int
+		want  []slog.Attr
+	}{
+		{"bm25 off", false, false, "read files", 1, []slog.Attr{slog.Bool("regex", false), slog.Int("results", 1)}},
+		{"bm25 on", true, false, "read files", 1, []slog.Attr{slog.String("query", "read files"), slog.Bool("regex", false), slog.Int("results", 1)}},
+		{"regex off", false, true, "system", 10, []slog.Attr{slog.Bool("regex", true), slog.Int("results", 2)}},
+		{"regex on", true, true, "system", 10, []slog.Attr{slog.String("query", "system"), slog.Bool("regex", true), slog.Int("results", 2)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := &recHandler{}
+			c, _ := populatedRegistry(t, MaxResults(tt.max), WithLogger(slog.New(h)), LogQueries(tt.on))
+			if res := call(t, c, SearchToolName, map[string]any{"query": tt.query, "regex": tt.regex}); res.IsError {
+				t.Fatalf("search: %s", res.ForLLM)
+			}
+			var found []slog.Record
+			for _, r := range h.recs {
+				if r.Message == "Tool search completed" {
+					found = append(found, r)
+				}
+			}
+			if len(found) != 1 {
+				t.Fatalf("%d search records, want 1", len(found))
+			}
+			r := found[0]
+			if r.Level != slog.LevelInfo {
+				t.Errorf("level = %v, want INFO", r.Level)
+			}
+			var got []slog.Attr
+			r.Attrs(func(a slog.Attr) bool { got = append(got, a); return true })
+			if !slices.EqualFunc(got, tt.want, func(a, b slog.Attr) bool { return a.Equal(b) }) {
+				t.Errorf("attrs = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
