@@ -110,10 +110,21 @@ func ReservedBodyKeys() []string {
 	return slices.Sorted(maps.Keys(reservedBodyKeys))
 }
 
+// ReservedBodyKeyError reports an extra_body key that collides with a request
+// field the provider client sets itself.
+type ReservedBodyKeyError struct {
+	Model string // the model's name (model_name)
+	Key   string // the colliding extra_body key
+}
+
+func (e *ReservedBodyKeyError) Error() string {
+	return fmt.Sprintf("model %q: extra_body key %q collides with a managed request field", e.Model, e.Key)
+}
+
 // Validate checks that the model has its required fields, a valid
 // reasoning_effort, and no extra_body key that collides with a managed
-// request field. It does not check that the provider exists; Document.Validate
-// does.
+// request field (a *ReservedBodyKeyError). It does not check that the
+// provider exists; Document.Validate does.
 func (m *Model) Validate() error {
 	if m.ModelName == "" {
 		return errors.New("model_name is required")
@@ -135,10 +146,7 @@ func (m *Model) Validate() error {
 	}
 	for _, k := range slices.Sorted(maps.Keys(m.ExtraBody)) {
 		if _, reserved := reservedBodyKeys[k]; reserved {
-			return fmt.Errorf(
-				"model %q: extra_body key %q collides with a managed request field",
-				m.ModelName, k,
-			)
+			return &ReservedBodyKeyError{Model: m.ModelName, Key: k}
 		}
 	}
 	return nil

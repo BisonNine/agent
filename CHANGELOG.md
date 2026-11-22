@@ -20,6 +20,8 @@ project uses [Semantic Versioning](https://semver.org/).
   references (`env:NAME`, `file:/path`) resolved into a copy by
   `ResolveSecrets` with a `Resolver` such as `DefaultResolver`; and
   `ResolveLimits`, a model's per-request limits over caller defaults.
+  An `extra_body` key that collides with a managed request field is reported
+  as a `*ReservedBodyKeyError` (model name and key) for `errors.As`.
 - `fsmode` package: `Modes{Dir, File}`, the modes of the directories and
   files a package creates, with the owner-only defaults `DefaultDir` (0700)
   and `DefaultFile` (0600).

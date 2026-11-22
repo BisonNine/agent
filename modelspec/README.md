@@ -25,7 +25,8 @@ if err := p.ValidateProtocol(); err != nil { ... }
 - `Model.Validate` requires `model_name`, `model` and `provider`, accepts
   `reasoning_effort` of `none`, `low`, `medium`, `high` or empty, and refuses
   an `extra_body` key that the request builder sets itself
-  (`ReservedBodyKeys`).
+  (`ReservedBodyKeys`); that error is a `*ReservedBodyKeyError` carrying the
+  model name and key, found with `errors.As` also through `Document.Validate`.
 - `Provider.ValidateProtocol` refuses an unknown protocol, a missing
   `base_url` on an HTTP chat protocol, and a missing `api_key` on a
   task-only protocol. `Provider.HasCredentials` is true for a keyless

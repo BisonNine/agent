@@ -2,6 +2,7 @@ package modelspec
 
 import (
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -123,5 +124,47 @@ func TestModel_JSON(t *testing.T) {
 	}
 	if got.RequestTimeout != 300 {
 		t.Errorf("RequestTimeout = %d, want 300", got.RequestTimeout)
+	}
+}
+
+func TestModel_Validate_ReservedBodyKeyError(t *testing.T) {
+	const wantText = `model "the-model": extra_body key "model" collides with a managed request field`
+	m := Model{
+		ModelName: "the-model", Model: "m", Provider: "openai",
+		ExtraBody: map[string]any{"top_p": 1, "model": "x", "custom": true},
+	}
+
+	err := m.Validate()
+	var rke *ReservedBodyKeyError
+	if !errors.As(err, &rke) {
+		t.Fatalf("Validate() = %v, want a *ReservedBodyKeyError", err)
+	}
+	if rke.Model != "the-model" || rke.Key != "model" {
+		t.Errorf("error = %+v, want Model %q and Key %q (first in sorted order)", rke, "the-model", "model")
+	}
+	if err.Error() != wantText {
+		t.Errorf("Error() = %q, want %q", err.Error(), wantText)
+	}
+
+	d := validDocument()
+	d.Models[1].ExtraBody = map[string]any{"session_id": "x"}
+	err = d.Validate()
+	rke = nil
+	if !errors.As(err, &rke) {
+		t.Fatalf("Document.Validate() = %v, want a wrapped *ReservedBodyKeyError", err)
+	}
+	if rke.Model != d.Models[1].ModelName || rke.Key != "session_id" {
+		t.Errorf("error = %+v, want Model %q and Key %q", rke, d.Models[1].ModelName, "session_id")
+	}
+
+	others := []Model{
+		{Model: "m", Provider: "openai"},
+		{ModelName: "a", Model: "m"},
+		{ModelName: "a", Model: "m", Provider: "openai", ReasoningEffort: "extreme"},
+	}
+	for _, o := range others {
+		if err := o.Validate(); err == nil || errors.As(err, &rke) {
+			t.Errorf("Validate(%+v) = %v, want an error that is not a *ReservedBodyKeyError", o, err)
+		}
 	}
 }
