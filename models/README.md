@@ -257,7 +257,9 @@ the live object.
   `""` for a selection reverted because its model left the list (`Remove`,
   `Unassign`, `Replace`, `Adopt`); and with the same name for a selection kept
   in a list whose members or order changed, so a store that keeps a position
-  rather than a name can re-save it against the new list (`Set.List`). Only
+  rather than a name can re-save it against the new list (`Set.List`). Writes
+  are made one at a time, each with what memory holds then, so the store ends
+  matching memory. Only
   selections loaded in this process are written. A write error is logged and
   the selection is kept in memory.
 

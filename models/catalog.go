@@ -120,7 +120,7 @@ func (c *Catalog) change(fn func(g *generation) ([]*clientSlot, error)) ([]Rever
 	for _, s := range retire {
 		s.retire()
 	}
-	writeSelections(next.cfg, saves)
+	c.state.persist(next.cfg, saves)
 	return reverted, err
 }
 
@@ -452,7 +452,7 @@ func (c *Catalog) Adopt(next *Catalog) Diff {
 	for _, s := range retire {
 		s.retire()
 	}
-	writeSelections(ng.cfg, saves)
+	c.state.persist(ng.cfg, saves)
 	return diff
 }
 

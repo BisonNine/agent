@@ -210,3 +210,51 @@ func TestReplaceIsAtomic(t *testing.T) {
 	close(stop)
 	wg.Wait()
 }
+
+// blockingStore holds its first write of "" until released.
+type blockingStore struct {
+	memStore
+
+	held, release chan struct{}
+	once          sync.Once
+}
+
+func (s *blockingStore) SaveSelection(set string, p models.Purpose, scope models.Scope, name string) error {
+	if name == "" {
+		hold := false
+		s.once.Do(func() { hold = true })
+		if hold {
+			close(s.held)
+			<-s.release
+		}
+	}
+	return s.memStore.SaveSelection(set, p, scope, name)
+}
+
+// A store write delayed behind a newer selection never overwrites it: the
+// store ends with what memory holds.
+func TestStoreWritesFollowMemory(t *testing.T) {
+	st := &blockingStore{held: make(chan struct{}), release: make(chan struct{})}
+	st.data = map[string]string{}
+	f := newFixture(t, three, models.WithSelectionStore(st))
+	if err := f.cat.Select(models.Chat, "gpt", "s"); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		f.cat.Default().Unassign(models.Chat, "gpt") // reverts s: writes "", held
+	}()
+	<-st.held
+	if err := f.cat.Select(models.Chat, "haiku", "s"); err != nil {
+		t.Fatal(err)
+	}
+	close(st.release)
+	<-done
+	st.mu.Lock()
+	got := st.data["|chat|s"]
+	st.mu.Unlock()
+	if got != "haiku" {
+		t.Fatalf("store = %q, memory = %q", got, f.cat.Selected(models.Chat, "s").Name)
+	}
+}

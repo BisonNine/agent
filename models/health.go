@@ -186,13 +186,15 @@ func (h *health) success(name, provider, model string) (Recovered, bool) {
 		e.lastReason = ""
 	}
 	now := h.clock.Now()
-	h.mu.Unlock()
 	var ev Recovered
 	obs := h.obs
+	// Queued under h.mu, like a failure's Parked, so the two are queued in
+	// the order the health changed.
 	_, ok := h.parked.recover(key, func(since time.Time) func() {
 		ev = Recovered{Name: name, Provider: provider, Model: model, Key: key, Since: since, At: now}
 		return func() { obs.Recovered(ev) }
 	})
+	h.mu.Unlock()
 	h.parked.deliver(key)
 	return ev, ok
 }
@@ -351,16 +353,21 @@ func (b *parkedBook) deliver(key string) {
 	b.mu.Unlock()
 }
 
-// send calls ev; if it panics, the queue is released before the panic goes on.
+// send calls ev; if it panics, the queue is released, and any events left
+// are handed to another goroutine, before the panic goes on.
 func (b *parkedBook) send(key string, q *eventQueue, ev func()) {
 	defer func() {
 		if r := recover(); r != nil {
 			b.mu.Lock()
 			q.draining = false
-			if len(q.events) == 0 {
+			left := len(q.events) > 0
+			if !left {
 				delete(b.queues, key)
 			}
 			b.mu.Unlock()
+			if left {
+				go b.deliver(key)
+			}
 			panic(r)
 		}
 	}()

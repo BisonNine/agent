@@ -65,4 +65,39 @@ func TestObserverOrderPerKey(t *testing.T) {
 	if len(h.parked.queues) != 0 {
 		t.Fatal("queues were left behind")
 	}
+	// The last event says what the health is: parked after a Parked,
+	// available after a Recovered.
+	if n := len(obs.evs); n > 0 {
+		parked, _ := h.parkedFor("p", "m")
+		if last := obs.evs[n-1]; (last == "P") != (parked > 0) {
+			t.Fatalf("last event %s, but parked for %v", last, parked)
+		}
+	}
+}
+
+func TestObserverOrderStress(t *testing.T) {
+	for range 200 {
+		TestObserverOrderPerKey(t)
+		if t.Failed() {
+			return
+		}
+	}
+}
+
+// An observer that panics does not hold back the events queued after the one
+// it panicked on.
+func TestObserverPanicHandsOff(t *testing.T) {
+	b := newParkedBook()
+	done := make(chan struct{})
+	b.park("k", epoch, func() { panic("observer") })
+	b.park("k", epoch, func() { close(done) })
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the panic was swallowed")
+			}
+		}()
+		b.deliver("k")
+	}()
+	<-done
 }

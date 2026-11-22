@@ -438,8 +438,11 @@ func (s *Set) Enabled(name string) bool {
 //     the list rather than the name can re-save it (the new list is already
 //     what Set.List returns).
 //
-// A selection never loaded in this process is not written. A write error is
-// logged and the selection is kept in memory.
+// Writes are made one at a time, in order, each with the selection memory
+// holds at that moment, so the store ends with what memory holds; a write may
+// be made by another call's goroutine. A selection never loaded in this
+// process is not written. A write error is logged and the selection is kept
+// in memory.
 type SelectionStore interface {
 	LoadSelection(set string, p Purpose, scope Scope) (string, error)
 	SaveSelection(set string, p Purpose, scope Scope, name string) error
@@ -486,22 +489,59 @@ func (s *Set) Reset(p Purpose, scope ...Scope) {
 }
 
 func (s *Set) save(g *generation, k selKey, name string) {
-	writeSelections(g.cfg, []selSave{{key: k, name: name}})
+	s.cat.state.persist(g.cfg, []selSave{{key: k, name: name}})
 }
 
-// writeSelections writes selections to the store, if there is one. It is
-// called with no lock held.
-func writeSelections(cfg *settings, saves []selSave) {
-	if cfg.store == nil {
+// persist writes selections to the store, if there is one. Writes are made
+// one at a time, in the order they were asked for, by whichever goroutine is
+// writing, with no lock held during a write; each writes the selection as
+// memory holds it at that moment, so the last write of a key matches memory
+// even when changes race.
+func (r *runState) persist(cfg *settings, saves []selSave) {
+	if cfg.store == nil || len(saves) == 0 {
 		return
 	}
+	r.mu.Lock()
 	for _, sv := range saves {
-		k := sv.key
-		if err := cfg.store.SaveSelection(k.set, k.purpose, k.scope, sv.name); err != nil {
-			cfg.logger.Warn("model selection not stored; it is kept until restart",
-				"component", component, "set", k.set, "purpose", string(k.purpose), "scope", string(k.scope), "error", err.Error())
-		}
+		r.writes = append(r.writes, pendingWrite{key: sv.key, cfg: cfg})
 	}
+	if r.writing {
+		r.mu.Unlock()
+		return
+	}
+	r.writing = true
+	for len(r.writes) > 0 {
+		w := r.writes[0]
+		r.writes = r.writes[1:]
+		name := r.selected[w.key]
+		r.mu.Unlock()
+		r.write(w, name)
+		r.mu.Lock()
+	}
+	r.writing = false
+	r.mu.Unlock()
+}
+
+// write makes one store write; a panic in the store releases the writer.
+func (r *runState) write(w pendingWrite, name string) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.mu.Lock()
+			r.writing = false
+			r.mu.Unlock()
+			panic(p)
+		}
+	}()
+	k := w.key
+	if err := w.cfg.store.SaveSelection(k.set, k.purpose, k.scope, name); err != nil {
+		w.cfg.logger.Warn("model selection not stored; it is kept until restart",
+			"component", component, "set", k.set, "purpose", string(k.purpose), "scope", string(k.scope), "error", err.Error())
+	}
+}
+
+type pendingWrite struct {
+	key selKey
+	cfg *settings
 }
 
 func scopeOf(scope []Scope) Scope {
@@ -667,6 +707,8 @@ type runState struct {
 	selected map[selKey]string
 	loaded   map[selKey]bool
 	serve    map[selKey]Serving
+	writes   []pendingWrite // store writes not yet made (persist)
+	writing  bool           // a goroutine is making them
 }
 
 func newRunState() *runState {
