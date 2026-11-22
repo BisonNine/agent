@@ -12,14 +12,23 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 
 	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/toolkit"
 )
 
-// call is the mcp-go handler of every published tool: it takes the
-// credential out of the arguments, finds the caller and runs the call.
-func (e *Endpoint) call(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// callFor returns the mcp-go handler of the tool published under the
+// internal name internal.
+func (e *Endpoint) callFor(internal string) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return e.call(ctx, req, internal)
+	}
+}
+
+// call handles one tools/call: it takes the credential out of the
+// arguments, finds the caller and runs the call.
+func (e *Endpoint) call(ctx context.Context, req mcp.CallToolRequest, internal string) (*mcp.CallToolResult, error) {
 	e.inflight.Add(1)
 	defer e.inflight.Add(-1)
 
@@ -49,7 +58,7 @@ func (e *Endpoint) call(ctx context.Context, req mcp.CallToolRequest) (*mcp.Call
 		caller = c
 	}
 
-	res, panicked := e.dispatch(ctx, caller, req.Params.Name, args)
+	res, panicked := e.dispatch(ctx, caller, req.Params.Name, internal, args)
 	if panicked != nil && e.cfg.PanicAsProtocolError {
 		// Raised again for mcp-go's recovery to answer, as a server without
 		// mcphost's own recovery does.
@@ -72,7 +81,7 @@ type target struct {
 // ToolContext; ToolCallStarted; BeforeTool; the tool through the caller's
 // set and the Gate; OnToolError; AfterTool; ToolCallFinished. panicked is
 // the value a panicking tool raised, nil otherwise.
-func (e *Endpoint) dispatch(ctx context.Context, caller Caller, name string, args map[string]any) (res *toolkit.Result, panicked any) {
+func (e *Endpoint) dispatch(ctx context.Context, caller Caller, name, internal string, args map[string]any) (res *toolkit.Result, panicked any) {
 	ctx = hook.WithScope(ctx, caller.Scope)
 	ctx = withCaller(ctx, caller)
 	if e.cfg.CallContext != nil {
@@ -84,9 +93,9 @@ func (e *Endpoint) dispatch(ctx context.Context, caller Caller, name string, arg
 		return revokedResult(), nil
 	}
 	var tgt target
-	tgt.info, tgt.found = e.resolve(caller, name)
+	tgt.info, tgt.found = e.resolve(caller, name, internal)
 	if !tgt.found {
-		tgt.info.Name = e.internalName(name)
+		tgt.info.Name = internal
 	}
 	if tgt.found && e.cfg.ToolContext != nil {
 		ctx = e.cfg.ToolContext(ctx, caller, tgt.info)

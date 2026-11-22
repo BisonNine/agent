@@ -88,8 +88,9 @@ type Config struct {
 	// PanicAsProtocolError answers a call whose tool panicked with MCP's
 	// protocol error (-32603 "panic recovered in <name> tool handler: <value>")
 	// instead of the error result "Tool <name> failed with an internal
-	// error.". The callbacks and events run as for any panic first. A panic
-	// in a callback is always an error result.
+	// error.". The callbacks and events run as for any panic first; a
+	// result OnToolError gave in its place is not sent. A panic in a
+	// callback is always an error result.
 	PanicAsProtocolError bool
 
 	// Logger is the endpoint's logger; records carry component=mcphost.

@@ -99,26 +99,54 @@ type published struct {
 }
 
 // publish names infos (sorted by internal name) by the endpoint's rule.
+// Tools whose name is taken are left out.
 func (e *Endpoint) publish(infos []toolkit.Info) []published {
-	out := make([]published, 0, len(infos))
-	taken := make(map[string]bool, len(infos))
-	for _, info := range infos {
-		name := info.Published
-		if e.cfg.Names == ExternalFirst {
-			name = info.Name
-			if en, ok := info.Tool.(toolkit.ExternalNamer); ok {
+	if e.cfg.Names == ExternalFirst {
+		out := make([]published, 0, len(infos))
+		taken := make(map[string]bool, len(infos))
+		for _, info := range infos {
+			name := info.Name
+			if en, ok := info.Tool.(toolkit.ExternalNamer); ok && en.ExternalName() != "" {
 				name = en.ExternalName()
 			}
+			if !taken[name] {
+				taken[name] = true
+				out = append(out, published{name: name, info: info})
+			}
 		}
-		if name == "" {
-			name = info.Name
+		return out
+	}
+	// PublishedNames: a tool offered under its own name keeps it; a tool
+	// offered under another (its ExternalName) gets that name unless it is
+	// taken, else its own. Infos from several registries (Union) are
+	// computed per registry, so a name may be wanted twice.
+	names := make([]string, len(infos))
+	taken := make(map[string]bool, len(infos))
+	for i, info := range infos {
+		if info.Published == "" || info.Published == info.Name {
+			if !taken[info.Name] {
+				taken[info.Name] = true
+				names[i] = info.Name
+			}
 		}
-		if taken[name] {
-			e.logger.Debug("Skipping tool: published name already taken", "tool", info.Name, "published", name)
+	}
+	for i, info := range infos {
+		if info.Published == "" || info.Published == info.Name {
 			continue
 		}
-		taken[name] = true
-		out = append(out, published{name: name, info: info})
+		for _, candidate := range []string{info.Published, info.Name} {
+			if !taken[candidate] {
+				taken[candidate] = true
+				names[i] = candidate
+				break
+			}
+		}
+	}
+	out := make([]published, 0, len(infos))
+	for i, info := range infos {
+		if names[i] != "" {
+			out = append(out, published{name: names[i], info: info})
+		}
 	}
 	return out
 }
@@ -180,7 +208,7 @@ func (e *Endpoint) sync() bool {
 		if prior, ok := cur.byName[p.name]; ok && prior.equal(reg) {
 			continue
 		}
-		add = append(add, server.ServerTool{Tool: reg.tool, Handler: e.call})
+		add = append(add, server.ServerTool{Tool: reg.tool, Handler: e.callFor(reg.internal)})
 	}
 	var del []string
 	for name := range cur.byName {
@@ -192,8 +220,18 @@ func (e *Endpoint) sync() bool {
 	if len(del) > 0 {
 		e.srv.DeleteTools(del...)
 	}
+	added := 0
 	if len(add) > 0 {
-		e.addTools(add)
+		refused := e.addTools(add)
+		added = len(add) - len(refused)
+		for _, name := range refused {
+			// What mcp-go holds under the name stays what is published.
+			if prior, ok := cur.byName[name]; ok {
+				want[name] = prior
+			} else {
+				delete(want, name)
+			}
+		}
 	}
 	tools := make([]mcp.Tool, 0, len(want))
 	for _, r := range want {
@@ -204,25 +242,27 @@ func (e *Endpoint) sync() bool {
 	e.version = version
 	e.seen.Store(version)
 	e.synced.Store(true)
-	changed := len(add) > 0 || len(del) > 0
+	changed := added > 0 || len(del) > 0
 	if changed {
-		e.logger.Info("MCP catalogue updated", "added", len(add), "deleted", len(del), "tools", len(want))
+		e.logger.Info("MCP catalogue updated", "added", added, "deleted", len(del), "tools", len(want))
 	}
 	return changed
 }
 
 // addTools registers tools in one batch (one tools/list_changed). mcp-go
 // panics on a schema it cannot register; then the tools are added one at a
-// time and the ones it refuses are left out and logged.
-func (e *Endpoint) addTools(tools []server.ServerTool) {
+// time and the names of the ones it refuses are returned, and logged.
+func (e *Endpoint) addTools(tools []server.ServerTool) (refused []string) {
 	if e.tryAdd(tools...) {
-		return
+		return nil
 	}
 	for _, t := range tools {
 		if !e.tryAdd(t) {
 			e.logger.Error("Skipping tool: MCP refused its schema", "published", t.Tool.Name)
+			refused = append(refused, t.Tool.Name)
 		}
 	}
+	return refused
 }
 
 func (e *Endpoint) tryAdd(tools ...server.ServerTool) (ok bool) {
@@ -292,21 +332,30 @@ func (e *Endpoint) afterList(ctx context.Context, _ any, _ *mcp.ListToolsRequest
 	slices.SortFunc(result.Tools, func(a, b mcp.Tool) int { return cmp.Compare(a.Name, b.Name) })
 }
 
-// resolve finds the tool a call of the published name runs for caller. On
-// a Bearer endpoint it is the tool the caller is listed under that name.
-// Otherwise, and for a name the caller's own listing lacks, it is the tool
-// the catalogue publishes under the name, found in the caller's set by
-// internal name, enabled or not, so that toolkit refuses a disabled one as
-// it does. ok is false when the caller's set does not hold it at all.
-func (e *Endpoint) resolve(caller Caller, name string) (toolkit.Info, bool) {
+// resolve finds the tool a call of a published name runs for caller;
+// internal is the internal name the catalogue publishes under that name
+// (bound to the name's handler, so it always matches mcp-go's routing).
+//
+// On a Bearer endpoint it is the tool the caller is listed under the name.
+// Otherwise, and for a disabled tool a Bearer caller is not listed, it is
+// the tool of that internal name in the caller's set, enabled or not, so
+// that toolkit refuses a disabled one as it does. ok is false when the
+// caller has no such tool to run: it is refused as one not granted.
+func (e *Endpoint) resolve(caller Caller, name, internal string) (toolkit.Info, bool) {
 	if e.cfg.Transport == Bearer {
 		for _, p := range e.publish(caller.Set.Snapshot().List()) {
 			if p.name == name {
 				return p.info, true
 			}
 		}
+		// Not listed to the caller: only a disabled tool is resolved, to be
+		// refused as disabled; never one listed under another name.
+		if info, ok := caller.Set.Get(internal); ok && !info.Enabled {
+			return info, true
+		}
+		return toolkit.Info{}, false
 	}
-	return caller.Set.Get(e.internalName(name))
+	return caller.Set.Get(internal)
 }
 
 // injectTokenArgument returns a copy of params with the TokenArgument added
@@ -351,13 +400,4 @@ func requiredNames(v any) []string {
 		return out
 	}
 	return nil
-}
-
-// internalName is the internal name the catalogue publishes under name, or
-// name itself.
-func (e *Endpoint) internalName(name string) string {
-	if reg, ok := e.state.Load().byName[name]; ok {
-		return reg.internal
-	}
-	return name
 }

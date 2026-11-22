@@ -306,7 +306,23 @@ func TestRefresh(t *testing.T) {
 			changed <- struct{}{}
 		}
 	})
-	time.Sleep(200 * time.Millisecond) // the listening stream opens in the background
+	// The listening stream opens in the background: wait until a notice
+	// reaches it, then drain.
+	for ready := false; !ready; {
+		h.arg.srv.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)
+		select {
+		case <-changed:
+			ready = true
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+	for drained := false; !drained; {
+		select {
+		case <-changed:
+		case <-time.After(100 * time.Millisecond):
+			drained = true
+		}
+	}
 
 	if h.arg.Refresh(context.Background()) {
 		t.Error("Refresh with nothing changed reported a notice")
@@ -371,5 +387,74 @@ func TestBackgroundContext(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatal("no late result")
 		}
+	}
+}
+
+// A tool mcp-go refuses to register is not published, and adding only such
+// a tool sends no notice.
+func TestRefusedToolIsNotPublished(t *testing.T) {
+	bad := map[string]any{"type": "object", "properties": map[string]any{
+		"blob": map[string]any{"type": "object", "x-mcp-header": "X-Blob"},
+	}}
+	alice := catalogOf(t, &wireTool{name: "good", desc: "good", params: map[string]any{}, run: wireText("ok")})
+	h := newPerAgent(t, map[string]*toolkit.Catalog{"alice": alice})
+	if err := alice.AddEntries(toolkit.Entry{Tool: &wireTool{name: "bad", desc: "bad", params: bad, run: wireText("bad")}}); err != nil {
+		t.Fatal(err)
+	}
+	if h.arg.Refresh(context.Background()) {
+		t.Error("Refresh reported a notice for a refused tool only")
+	}
+	if got := names(list(t, h.mustClient("/internal", ""))); !slices.Equal(got, []string{"good"}) {
+		t.Errorf("listed %v", got)
+	}
+	if got := names(list(t, h.mustClient("/mcp", h.aliceTok))); !slices.Equal(got, []string{"good"}) {
+		t.Errorf("bearer listed %v", got)
+	}
+}
+
+// With PublishedNames over a Union, a tool whose external name another
+// agent's tool has as its own name is published under its own name, not
+// dropped.
+func TestUnion_PublishedNamesNeverDropATool(t *testing.T) {
+	h := newPerAgent(t, map[string]*toolkit.Catalog{
+		"alice": catalogOf(t, &wireExternal{wireTool{name: "read", desc: "Alice's read", params: map[string]any{}, run: wireText("alice read")}, "file_read"}),
+		"bob":   catalogOf(t, &wireTool{name: "file_read", desc: "Bob's file_read", params: map[string]any{}, run: wireText("bob file_read")}),
+	})
+	c := h.mustClient("/internal", "")
+	if got := names(list(t, c)); !slices.Equal(got, []string{"file_read", "read"}) {
+		t.Fatalf("listed %v", got)
+	}
+	if r := callT(t, c, "read", map[string]any{TokenArgument: h.aliceTok}); r.text != "alice read" {
+		t.Errorf("read = %+v", r)
+	}
+	if r := callT(t, c, "file_read", map[string]any{TokenArgument: h.bobTok}); r.text != "bob file_read" {
+		t.Errorf("file_read = %+v", r)
+	}
+}
+
+// A Bearer caller is refused a name it was not listed under, even when its
+// set holds a tool of the catalogue's internal name for it; a disabled tool
+// is refused as disabled.
+func TestBearer_RefusesNamesNotListedToTheCaller(t *testing.T) {
+	alice := catalogOf(t,
+		&wireTool{name: "srv_write", desc: "Native write", params: map[string]any{}, run: wireText("native write")},
+		&wireExternal{wireTool{name: "mcp_srv_write", desc: "Upstream write", params: map[string]any{}, run: wireText("upstream write")}, "srv_write"},
+		&wireTool{name: "off", desc: "off", params: map[string]any{}, run: wireText("off ran")})
+	// Bob's own naming publishes his native srv_write; the catalogue maps
+	// the name to Alice's upstream tool, which Bob also has under another
+	// published name.
+	bob := catalogOf(t,
+		&wireExternal{wireTool{name: "mcp_srv_write", desc: "Bob's upstream", params: map[string]any{}, run: wireText("bob upstream")}, "srv_write2"},
+		&wireTool{name: "off", desc: "off", params: map[string]any{}, run: wireText("off ran")})
+	h := newPerAgent(t, map[string]*toolkit.Catalog{"alice": alice, "bob": bob}, func(c *Config) { c.Names = ExternalFirst })
+	if err := h.sets["bob"].Disable("off"); err != nil {
+		t.Fatal(err)
+	}
+	c := h.mustClient("/mcp", h.bobTok)
+	if r := callT(t, c, "srv_write", nil); !r.isError || r.text != toolkit.NotEnabledMessage("mcp_srv_write") {
+		t.Errorf("srv_write for Bob = %+v", r)
+	}
+	if r := callT(t, c, "off", nil); !r.isError || r.text != `tool "off" is disabled` {
+		t.Errorf("off for Bob = %+v", r)
 	}
 }
