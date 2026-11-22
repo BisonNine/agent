@@ -14,7 +14,6 @@ import (
 	"testing"
 	"time"
 
-	cronmsg "go.bison9.com/agent/ctxengine/internal/testcron"
 	"go.bison9.com/agent/ctxengine/memory"
 	"go.bison9.com/agent/spawnllm"
 )
@@ -59,345 +58,24 @@ func TestNewSQLiteStore_CreatesDirectory(t *testing.T) {
 	}
 }
 
-func TestAddAndGetHistory(t *testing.T) {
+// TestSessionFiles checks the on-disk layout: each session is its own
+// <sanitized key>.archive.db, and a summary-only session is listed by its key.
+func TestSessionFiles(t *testing.T) {
 	s := newStore(t)
 	noErr(t, s.AddMessage("s1", "user", "hello"))
-	noErr(t, s.AddMessage("s1", "assistant", "hi"))
-
-	history := s.GetHistory("s1")
-	if len(history) != 2 {
-		t.Fatalf("got %d messages, want 2", len(history))
-	}
-	if history[0].Role != "user" || history[0].Content != "hello" {
-		t.Errorf("msg[0] = %+v", history[0])
-	}
-	if history[1].Role != "assistant" || history[1].Content != "hi" {
-		t.Errorf("msg[1] = %+v", history[1])
-	}
-
-	// The database is the session's archive file.
-	if _, err := os.Stat(memory.ArchivePath(s.dir, "s1")); err != nil {
-		t.Errorf("expected s1.archive.db: %v", err)
-	}
-}
-
-func TestAddFullMessage_ToolCallsRoundTrip(t *testing.T) {
-	s := newStore(t)
-	msg := spawnllm.Message{
-		Role:    "assistant",
-		Content: "done",
-		ToolCalls: []spawnllm.ToolCall{
-			{ID: "tc1", Function: &spawnllm.FunctionCall{Name: "read_file", Arguments: `{"path":"x"}`}},
-		},
-	}
-	if seq, err := s.AddFullMessage("s1", msg); seq != 1 || err != nil {
-		t.Errorf("seq = %d, err = %v, want 1", seq, err)
-	}
-	mustAdd(t, s, "s1", spawnllm.Message{Role: "tool", Content: "ok", ToolCallID: "tc1"})
-
-	history := s.GetHistory("s1")
-	if len(history) != 2 {
-		t.Fatalf("got %d, want 2", len(history))
-	}
-	if len(history[0].ToolCalls) != 1 || history[0].ToolCalls[0].ID != "tc1" {
-		t.Errorf("tool calls = %+v", history[0].ToolCalls)
-	}
-	if history[1].ToolCallID != "tc1" {
-		t.Errorf("tool call id = %q", history[1].ToolCallID)
-	}
-}
-
-func TestSeqMinting(t *testing.T) {
-	s := newStore(t)
-	for i := 1; i <= 5; i++ {
-		if seq := mustAdd(t, s, "seq", spawnllm.Message{Role: "user", Content: "msg"}); seq != int64(i) {
-			t.Errorf("AddFullMessage(%d) seq = %d", i, seq)
-		}
-	}
-	stored := s.GetHistoryWithSeqs("seq")
-	if len(stored) != 5 {
-		t.Fatalf("expected 5 stored messages, got %d", len(stored))
-	}
-	for i, sm := range stored {
-		if sm.Seq != int64(i+1) {
-			t.Errorf("stored[%d].Seq = %d, want %d", i, sm.Seq, i+1)
-		}
-		if sm.CreatedAt.IsZero() {
-			t.Errorf("stored[%d].CreatedAt is zero", i)
-		}
-	}
-
-	// Truncation preserves the seqs of the survivors and the counter.
-	noErr(t, s.TruncateHistory("seq", 3))
-	stored = s.GetHistoryWithSeqs("seq")
-	if len(stored) != 3 || stored[0].Seq != 3 || stored[2].Seq != 5 {
-		t.Fatalf("after truncate: %+v", stored)
-	}
-	if seq := mustAdd(t, s, "seq", spawnllm.Message{Role: "user", Content: "after"}); seq != 6 {
-		t.Errorf("seq after truncate = %d, want 6", seq)
-	}
-}
-
-func TestAddMessage_StampsCreatedAt(t *testing.T) {
-	s := newStore(t)
-	before := time.Now().UTC()
-	noErr(t, s.AddMessage("stamp", "user", "hello"))
-	mustAdd(t, s, "stamp", spawnllm.Message{Role: "assistant", Content: "hi"})
-	after := time.Now().UTC()
-
-	stored := s.GetHistoryWithSeqs("stamp")
-	if len(stored) != 2 {
-		t.Fatalf("expected 2 stored messages, got %d", len(stored))
-	}
-	for i, m := range stored {
-		if m.CreatedAt.Before(before) || m.CreatedAt.After(after) {
-			t.Errorf("stored[%d].CreatedAt = %v, want in [%v, %v]", i, m.CreatedAt, before, after)
-		}
-	}
-}
-
-func TestGetHistory_EmptySession(t *testing.T) {
-	s := newStore(t)
-	history := s.GetHistory("nonexistent")
-	if history == nil || len(history) != 0 {
-		t.Errorf("got %#v, want empty slice", history)
-	}
-	if got := s.GetHistoryWithSeqs("nonexistent"); got == nil || len(got) != 0 {
-		t.Errorf("got %#v, want empty slice", got)
-	}
-}
-
-func TestSessionIsolation(t *testing.T) {
-	s := newStore(t)
-	noErr(t, s.AddMessage("s1", "user", "session1"))
 	noErr(t, s.AddMessage("telegram:1/2", "user", "session2"))
+	noErr(t, s.SetSummary("summary-only", "test summary"))
 
-	if h := s.GetHistory("s1"); len(h) != 1 || h[0].Content != "session1" {
-		t.Errorf("s1: %+v", h)
-	}
-	if h := s.GetHistory("telegram:1/2"); len(h) != 1 || h[0].Content != "session2" {
-		t.Errorf("telegram:1/2: %+v", h)
-	}
-	if _, err := os.Stat(filepath.Join(s.dir, "telegram_1_2.archive.db")); err != nil {
-		t.Errorf("sanitized file name: %v", err)
-	}
-}
-
-func TestSummary(t *testing.T) {
-	s := newStore(t)
-	if got := s.GetSummary("s1"); got != "" {
-		t.Errorf("got %q, want empty", got)
-	}
-	noErr(t, s.SetSummary("s1", "test summary"))
-	if got := s.GetSummary("s1"); got != "test summary" {
-		t.Errorf("got %q, want %q", got, "test summary")
-	}
-	// SetSummary on a fresh session creates its state row with the key.
-	st, err := s.GetCompactionState("s1")
-	if err != nil {
-		t.Fatalf("GetCompactionState: %v", err)
-	}
-	if st != (memory.CompactionState{}) {
-		t.Errorf("fresh compaction state = %+v", st)
+	for _, name := range []string{"s1.archive.db", "telegram_1_2.archive.db", "summary-only.archive.db"} {
+		if _, err := os.Stat(filepath.Join(s.dir, name)); err != nil {
+			t.Errorf("expected %s: %v", name, err)
+		}
 	}
 	keys, err := memory.ListSessions(s.dir, nil)
-	if err != nil || len(keys) != 1 || keys[0] != "s1" {
-		t.Errorf("ListSessions = %v, %v", keys, err)
-	}
-}
-
-func TestTruncateHistory(t *testing.T) {
-	s := newStore(t)
-	for i := range 10 {
-		noErr(t, s.AddMessage("trunc", "user", string(rune('a'+i))))
-	}
-
-	noErr(t, s.TruncateHistory("trunc", 4))
-	history := s.GetHistory("trunc")
-	if len(history) != 4 {
-		t.Fatalf("expected 4, got %d", len(history))
-	}
-	if history[0].Content != "g" || history[3].Content != "j" {
-		t.Errorf("kept = %+v", history)
-	}
-
-	// Keep more than exists keeps all.
-	noErr(t, s.TruncateHistory("trunc", 100))
-	if got := len(s.GetHistory("trunc")); got != 4 {
-		t.Errorf("keep 100: got %d, want 4", got)
-	}
-
-	// Save is a no-op and the window survives it.
-	if err := s.Save("trunc"); err != nil {
-		t.Fatal(err)
-	}
-	if got := len(s.GetHistory("trunc")); got != 4 {
-		t.Errorf("after save: got %d, want 4", got)
-	}
-
-	// keepLast <= 0 empties the window and resets the compression counters.
-	st, err := s.GetCompactionState("trunc")
 	noErr(t, err)
-	st.CompressedAtMeaningfulCount = 3
-	st.Cooling = true
-	st.ActiveModelIndex = 2
-	if err = s.SetCompactionState("trunc", st); err != nil {
-		t.Fatal(err)
-	}
-	noErr(t, s.TruncateHistory("trunc", 0))
-	if got := len(s.GetHistory("trunc")); got != 0 {
-		t.Errorf("keep 0: got %d, want 0", got)
-	}
-	st, err = s.GetCompactionState("trunc")
-	noErr(t, err)
-	if st.MeaningfulCount != 0 || st.CompressedAtMeaningfulCount != 0 || st.Cooling {
-		t.Errorf("counters not reset: %+v", st)
-	}
-	if st.ActiveModelIndex != 2 {
-		t.Errorf("ActiveModelIndex should survive a reset, got %d", st.ActiveModelIndex)
-	}
-	// Seqs keep counting after a full reset.
-	if seq := mustAdd(t, s, "trunc", spawnllm.Message{Role: "user", Content: "next"}); seq != 11 {
-		t.Errorf("seq after reset = %d, want 11", seq)
-	}
-}
-
-func TestSetHistory_ReplacesWithFreshSeqs(t *testing.T) {
-	s := newStore(t)
-	for range 5 {
-		noErr(t, s.AddMessage("replace", "user", "old"))
-	}
-	noErr(t, s.TruncateHistory("replace", 2))
-
-	before := time.Now().UTC()
-	noErr(t, s.SetHistory("replace", []spawnllm.Message{
-		{Role: "user", Content: "new1"},
-		{Role: "assistant", Content: "new2"},
-	}))
-	after := time.Now().UTC()
-
-	stored := s.GetHistoryWithSeqs("replace")
-	if len(stored) != 2 || stored[0].Content != "new1" || stored[1].Content != "new2" {
-		t.Fatalf("history = %+v", stored)
-	}
-	// Fresh seqs continue after the old counter (5), never reuse.
-	if stored[0].Seq != 6 || stored[1].Seq != 7 {
-		t.Errorf("seqs = %d,%d want 6,7", stored[0].Seq, stored[1].Seq)
-	}
-	for i, m := range stored {
-		if m.CreatedAt.Before(before) || m.CreatedAt.After(after) {
-			t.Errorf("stored[%d].CreatedAt = %v not stamped now", i, m.CreatedAt)
-		}
-	}
-	if seq := mustAdd(t, s, "replace", spawnllm.Message{Role: "user", Content: "x"}); seq != 8 {
-		t.Errorf("next seq = %d, want 8", seq)
-	}
-}
-
-func TestSetHistoryWithSeqs_PreservesStableSeqs(t *testing.T) {
-	s := newStore(t)
-	for i := range 5 {
-		noErr(t, s.AddMessage("preserve", "user", string(rune('a'+i))))
-	}
-	active := s.GetHistoryWithSeqs("preserve")
-	tail := active[3:]
-	noErr(t, s.SetHistoryWithSeqs("preserve", tail))
-
-	stored := s.GetHistoryWithSeqs("preserve")
-	if len(stored) != 2 || stored[0].Seq != 4 || stored[1].Seq != 5 {
-		t.Fatalf("seqs not preserved: %+v", stored)
-	}
-	if !stored[0].CreatedAt.Equal(tail[0].CreatedAt) {
-		t.Errorf("CreatedAt not carried over: %v vs %v", stored[0].CreatedAt, tail[0].CreatedAt)
-	}
-	if seq := mustAdd(t, s, "preserve", spawnllm.Message{Role: "assistant", Content: "next"}); seq != 6 {
-		t.Errorf("next seq = %d, want 6", seq)
-	}
-}
-
-// TestSetHistoryWithSeqs_NextSeqMonotonic covers the two ways NextSeq could
-// go backwards: a rewrite with lower seqs than the counter, and messages with
-// no seq that must be minted above everything seen.
-func TestSetHistoryWithSeqs_NextSeqMonotonic(t *testing.T) {
-	s := newStore(t)
-	for range 5 {
-		noErr(t, s.AddMessage("mono", "user", "m"))
-	}
-	// Only low seqs retained: the counter must stay at 5.
-	noErr(t, s.SetHistoryWithSeqs("mono", []memory.StoredMessage{
-		memory.NewStoredMessage(1, spawnllm.Message{Role: "user", Content: "one"}),
-	}))
-	if seq := mustAdd(t, s, "mono", spawnllm.Message{Role: "user", Content: "six"}); seq != 6 {
-		t.Errorf("seq after low rewrite = %d, want 6", seq)
-	}
-
-	// Unnumbered messages are minted after the highest seen (here 9 > counter 6).
-	noErr(t, s.SetHistoryWithSeqs("mono", []memory.StoredMessage{
-		memory.NewStoredMessage(9, spawnllm.Message{Role: "user", Content: "nine"}),
-		{Role: "assistant", Content: "unnumbered"},
-	}))
-	stored := s.GetHistoryWithSeqs("mono")
-	if len(stored) != 2 || stored[0].Seq != 9 || stored[1].Seq != 10 {
-		t.Fatalf("stored = %+v", stored)
-	}
-	if stored[1].CreatedAt.IsZero() {
-		t.Error("minted message should be stamped")
-	}
-	if seq := mustAdd(t, s, "mono", spawnllm.Message{Role: "user", Content: "x"}); seq != 11 {
-		t.Errorf("seq after mint = %d, want 11", seq)
-	}
-}
-
-func TestMeaningfulCount_ConsecutiveDuplicates(t *testing.T) {
-	s := newStore(t)
-	for i := range 3 {
-		noErr(t, s.AddMessage("mc", "user", string(rune('a'+i))))
-	}
-	// Two duplicates of the last message (same role and content) are noise.
-	noErr(t, s.AddMessage("mc", "user", "c"))
-	noErr(t, s.AddMessage("mc", "user", "c"))
-	// Same content from another role is not.
-	noErr(t, s.AddMessage("mc", "assistant", "c"))
-
-	if got := len(s.GetHistory("mc")); got != 6 {
-		t.Errorf("window = %d, want 6", got)
-	}
-	st, err := s.GetCompactionState("mc")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if st.MeaningfulCount != 4 {
-		t.Errorf("MeaningfulCount = %d, want 4", st.MeaningfulCount)
-	}
-}
-
-// TestSetNoiseKey covers the store-level switch: with no noise key two fires
-// of one job (different timestamps) are both meaningful; with the host's key
-// installed the second is noise.
-func TestSetNoiseKey(t *testing.T) {
-	const prefix = "The following message is from a cron job that fired at "
-	fire := func(ts string) string { return prefix + ts + ":\n\ncheck disk" }
-	fires := []string{"2026-01-01 00:00 UTC", "2026-01-01 01:00 UTC"}
-
-	off := newStore(t)
-	for _, ts := range fires {
-		noErr(t, off.AddMessage("k", "user", fire(ts)))
-	}
-	st, err := off.GetCompactionState("k")
-	noErr(t, err)
-	if st.MeaningfulCount != 2 {
-		t.Errorf("without a noise key MeaningfulCount = %d, want 2", st.MeaningfulCount)
-	}
-
-	on := newStore(t)
-	on.SetNoiseKey(cronmsg.CollapseKey)
-	for _, ts := range fires {
-		noErr(t, on.AddMessage("k", "user", fire(ts)))
-	}
-	st, err = on.GetCompactionState("k")
-	noErr(t, err)
-	if st.MeaningfulCount != 1 {
-		t.Errorf("with the noise key MeaningfulCount = %d, want 1", st.MeaningfulCount)
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"s1", "summary-only", "telegram:1/2"}) {
+		t.Errorf("ListSessions = %v", keys)
 	}
 }
 
@@ -459,48 +137,21 @@ func TestPersistence_AcrossInstances(t *testing.T) {
 	}
 }
 
-func TestPendingTurn(t *testing.T) {
+// TestPendingTurn_Durable checks that the pending-turn flag survives a new
+// store on the same directory, including for a session with no messages.
+func TestPendingTurn_Durable(t *testing.T) {
 	s := newStore(t)
-
-	keys, err := s.ListPendingSessions()
-	if err != nil || len(keys) != 0 {
-		t.Fatalf("empty store: keys=%v err=%v", keys, err)
-	}
-
-	// Session A: set and left set.
 	noErr(t, s.AddMessage("session-a", "user", "hello"))
-	if err = s.SetPendingTurn("session-a"); err != nil {
-		t.Fatalf("SetPendingTurn: %v", err)
-	}
-	// Session B: set then cleared.
+	noErr(t, s.SetPendingTurn("session-a"))
 	noErr(t, s.AddMessage("session-b", "user", "hi"))
-	if err = s.SetPendingTurn("session-b"); err != nil {
-		t.Fatal(err)
-	}
-	if err = s.ClearPendingTurn("session-b"); err != nil {
-		t.Fatal(err)
-	}
-	// Session C: never marked.
-	noErr(t, s.AddMessage("session-c", "user", "hey"))
-	// Session D: marked pending before any message exists.
-	if err = s.SetPendingTurn("agent:bob:main"); err != nil {
-		t.Fatal(err)
-	}
-
-	keys, err = s.ListPendingSessions()
-	if err != nil {
-		t.Fatalf("ListPendingSessions: %v", err)
-	}
-	if len(keys) != 2 || !contains(keys, "session-a") || !contains(keys, "agent:bob:main") {
-		t.Errorf("pending = %v, want session-a and agent:bob:main", keys)
-	}
-
-	// The flag is durable: a fresh store sees it.
+	noErr(t, s.SetPendingTurn("agent:bob:main"))
 	noErr(t, s.Close())
+
 	s2 := openStore(t, s.dir)
-	keys, err = s2.ListPendingSessions()
+	keys, err := s2.ListPendingSessions()
 	noErr(t, err)
-	if len(keys) != 2 {
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"agent:bob:main", "session-a"}) {
 		t.Errorf("pending after reopen = %v", keys)
 	}
 }
@@ -621,8 +272,4 @@ func TestConcurrent_AddAndRead(t *testing.T) {
 	if s.GetSummary("concurrent") != "summary" {
 		t.Error("summary lost")
 	}
-}
-
-func contains(s []string, v string) bool {
-	return slices.Contains(s, v)
 }

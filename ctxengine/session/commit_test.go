@@ -13,71 +13,35 @@ import (
 	"go.bison9.com/agent/spawnllm"
 )
 
-// TestCommitCompaction writes a compaction result through the store and reads
-// back every part of it: the window with its seqs preserved, the summary, the
-// checkpoint, the compaction counters, and a seq counter that carries on.
-func TestCommitCompaction(t *testing.T) {
+// TestCommitCompaction_Checkpoint checks the part of a commit the
+// conformance suite cannot see: the checkpoint lands in the archive's summary
+// log, and a drop-only commit adds none.
+func TestCommitCompaction_Checkpoint(t *testing.T) {
 	s := newStore(t)
 	for i := range 5 {
 		mustAdd(t, s, "c", spawnllm.Message{Role: "user", Content: string(rune('a' + i))})
 	}
-	tail := s.GetHistoryWithSeqs("c")[3:] // seqs 4, 5
 	summary := "the summary"
 	err := s.CommitCompaction("c", CompactionCommit{
-		History: tail,
+		History: s.GetHistoryWithSeqs("c")[3:],
 		Summary: &summary,
 		Checkpoint: &memory.SummaryRecord{
 			Model: "m", SourceSeqStart: 1, SourceSeqEnd: 3, CoveredSeqStart: 1, CoveredSeqEnd: 3, Summary: summary,
 		},
-		Compaction: func(st *memory.CompactionState) {
-			st.CompressedAtMeaningfulCount = 5
-			st.Cooling = true
-		},
 	})
-	if err != nil {
-		t.Fatalf("CommitCompaction: %v", err)
-	}
-
-	window := s.GetHistoryWithSeqs("c")
-	if len(window) != 2 || window[0].Seq != 4 || window[1].Seq != 5 {
-		t.Fatalf("window = %+v, want seqs 4, 5", window)
-	}
-	if got := s.GetSummary("c"); got != summary {
-		t.Errorf("summary = %q, want %q", got, summary)
-	}
-	st, err := s.GetCompactionState("c")
-	if err != nil {
-		t.Fatalf("GetCompactionState: %v", err)
-	}
-	if st.MeaningfulCount != 5 || st.CompressedAtMeaningfulCount != 5 || !st.Cooling {
-		t.Errorf("compaction state = %+v, want meaningful 5, compressed_at 5, cooling", st)
-	}
+	noErr(t, err)
 	a, err := memory.OpenReadOnly(memory.ArchivePath(s.dir, "c"), nil)
-	if err != nil {
-		t.Fatalf("OpenReadOnly: %v", err)
-	}
+	noErr(t, err)
 	metas, err := a.ListSummaries()
 	if err != nil || len(metas) != 1 || metas[0].Model != "m" || metas[0].SourceSeqEnd != 3 {
 		t.Fatalf("checkpoints = %+v, %v; want one from model m covering #1-#3", metas, err)
 	}
-	if seq := mustAdd(t, s, "c", spawnllm.Message{Role: "user", Content: "f"}); seq != 6 {
-		t.Errorf("seq after commit = %d, want 6", seq)
-	}
 
-	// A drop-only commit leaves the summary and the checkpoint log alone.
-	if err = s.CommitCompaction("c", CompactionCommit{History: s.GetHistoryWithSeqs("c")[1:]}); err != nil {
-		t.Fatalf("drop-only CommitCompaction: %v", err)
-	}
-	if got := s.GetSummary("c"); got != summary {
-		t.Errorf("summary after drop-only commit = %q, want unchanged", got)
-	}
+	noErr(t, s.CommitCompaction("c", CompactionCommit{History: s.GetHistoryWithSeqs("c")[1:]}))
 	metas, err = a.ListSummaries()
 	noErr(t, err)
 	if len(metas) != 1 {
 		t.Errorf("checkpoints after drop-only commit = %d, want still 1", len(metas))
-	}
-	if window := s.GetHistoryWithSeqs("c"); len(window) != 2 || window[0].Seq != 5 || window[1].Seq != 6 {
-		t.Errorf("window after drop-only commit = %+v, want seqs 5, 6", window)
 	}
 }
 
