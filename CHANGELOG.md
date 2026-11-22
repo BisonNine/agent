@@ -8,6 +8,25 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- `models` package, the install-wide `Catalog` (`New`): providers and
+  models (`AddProvider`, `Add`, `Remove`, `Get`, `Names`), their chat
+  clients built on first use and shared (`RegisterClient` for a protocol the
+  SDK does not build), per-model health with the cooldown policy
+  (`WithCooldown`, `Health`, `ResetHealth`), a run-time switch per model
+  (`Enable`, `Disable`, `Enabled`), events for a host's alerts (`Observer`:
+  `Parked`, `Recovered`, `FellBack`, `Exhausted`), and `Adopt`, which swaps
+  in a newly built catalogue at the turn boundary and returns a `Diff`. A CLI
+  client starts from an allowlisted environment (`DefaultBaseEnv`,
+  `WithBaseEnv`) and, without its permission bypass, returns a
+  `CLIDeclinedError` when the CLI declined to use tools
+  (`WithDeclinedMessage`). Models are assigned to a `Purpose` by priority
+  as they are added (`For`), and `Begin` pins a `Chain` for one turn whose
+  `Chat` skips parked and disabled models, falls back on failure and reports
+  each hop (`WithPrepare`, `WithNotify`, `WithFinish`, `ExhaustedError`,
+  `ErrNoModelAvailable`), with the first model's `Limits` and an `Isolated`
+  variant. Options: `WithLogger`, `WithLogContent`, `WithClock`,
+  `WithFileModes`, `WithFileModesFor`, `WithLimitDefaults`.
+  `models/modelstest` is a scripted client for tests.
 - `clock` package: `Clock` (the system clock through `Or(nil)`) and
   `Fake`, a clock moved by hand (`Advance`, `Set`, `Waiters`,
   `BlockUntil`) whose `WithTimeout`/`WithDeadline` contexts end on fake
