@@ -135,7 +135,10 @@ tools, err := shell.New(shell.Config{
 - **Do not expect notices from `Close`.** Jobs it stops are announced by
   the next `New` instead.
 - **Apply a configuration reload with `Update`.** Tools built before the
-  reload then follow it; there is no need to rebuild them.
+  reload then follow it; there is no need to rebuild them. `Settings` is
+  the whole set, not a patch: pass every value (zero means the default).
+  The definitions state the timeouts in force when they are built, so a
+  host that keeps them re-reads `Definitions()` after `Update`.
 
 A guard-refused or not-allowed call returns a result whose `Err` wraps
 `shell.ErrRefused`, so the host can log it as a refusal rather than a

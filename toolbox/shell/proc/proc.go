@@ -126,7 +126,8 @@ type Options struct {
 	Logger *slog.Logger
 	// OnEnd is called once for each job that ends (exited or stopped), from
 	// the job's own goroutine, and must not block for long. It is not called
-	// for a job that ends once Close has begun: the caller is shutting down.
+	// for a job whose end is recorded after Close has begun: the caller is
+	// shutting down.
 	// New calls it, before it returns, for each job found lost and for each
 	// job with Notify on that ended while the previous manager was closing
 	// (stopped with StopShutdown, or exited by itself), once.
@@ -412,11 +413,16 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (Info, error) {
 	closed := m.closed
 	m.mu.Unlock()
 	if closed {
-		// The caller is told it did not start: never announce it.
+		// The caller is told it did not start: never announce it, not even
+		// after a restart if it ended before notify was cleared.
 		j.mu.Lock()
 		j.notify = false
 		j.mu.Unlock()
 		j.stop(m.grace, StopShutdown)
+		j.mu.Lock()
+		j.notify, j.unannounced = false, false
+		j.mu.Unlock()
+		m.saveRecord(j)
 		return Info{}, ErrClosed
 	}
 	return j.info(), nil
@@ -715,8 +721,8 @@ func (m *Manager) removeJob(j *job) {
 
 // Close stops every job (terminate, grace, kill) and refuses new starts. It
 // returns when they have all ended, or with ctx's error if ctx ends first.
-// OnEnd is not called for the jobs that end from here on; those with Notify
-// on are recorded as not yet announced, and the next New over the same
+// OnEnd is not called for jobs whose end is recorded from here on; those
+// with Notify on are recorded as not yet announced, and the next New over the same
 // directory announces them.
 func (m *Manager) Close(ctx context.Context) error {
 	m.mu.Lock()

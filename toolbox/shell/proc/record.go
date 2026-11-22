@@ -105,7 +105,9 @@ func (m *Manager) writeRecord(rec record) error {
 // jobs New must announce. A job recorded as running was lost with the
 // process that ran it: it is marked lost. A job whose end Close kept quiet
 // is marked announced. Either is saved before it is returned, so it is
-// announced at most once. Leftover temporary files are removed.
+// announced at most once (if the save fails it is logged, and the job may
+// be announced again by a later New). Without OnEnd nobody is told, but the
+// mark is saved all the same. Leftover temporary files are removed.
 func (m *Manager) load() ([]Info, error) {
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
@@ -175,7 +177,7 @@ func (m *Manager) restore(rec record) *job {
 		changed:    make(chan struct{}),
 	}
 	close(j.done)
-	out := newLogFile(m.logPath(rec.ID), nil, m.limits.MaxOutputBytes)
+	out := newLogFile(m.logPath(rec.ID), nil, m.Limits().MaxOutputBytes)
 	if st, err := os.Stat(out.path); err == nil {
 		out.size = st.Size()
 	} else if !errors.Is(err, fs.ErrNotExist) {

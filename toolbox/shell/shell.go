@@ -173,7 +173,8 @@ type Tools struct {
 	jobs  bool // this platform runs jobs
 
 	// tmu guards the timeouts, which Update changes; cfg's copies are not
-	// read after New.
+	// read after New. Update holds it across Manager.SetLimits so that
+	// concurrent updates apply as a whole.
 	tmu        sync.Mutex
 	timeout    time.Duration
 	maxTimeout time.Duration
@@ -183,7 +184,8 @@ type Tools struct {
 }
 
 // New creates the tools and their process manager. Jobs found lost in
-// cfg.Jobs.Dir are announced through cfg.Notice before New returns.
+// cfg.Jobs.Dir, and jobs the last Close stopped with notify on, are
+// announced through cfg.Notice before New returns.
 func New(cfg Config) (*Tools, error) {
 	timeout, maxTimeout, err := timeouts(cfg.Timeout, cfg.MaxTimeout)
 	if err != nil {

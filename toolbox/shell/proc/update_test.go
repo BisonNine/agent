@@ -222,6 +222,25 @@ func (r *endRecorder) onEnd(i proc.Info) {
 	r.mu.Unlock()
 }
 
+// waitFor waits until n calls have been recorded: a job's end is visible to
+// Wait before OnEnd runs.
+func (r *endRecorder) waitFor(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		r.mu.Lock()
+		have := len(r.infos)
+		r.mu.Unlock()
+		if have >= n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d OnEnd calls, want %d", have, n)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func (r *endRecorder) take() []proc.Info {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -242,6 +261,7 @@ func TestShutdownAnnouncedAfterRestart(t *testing.T) {
 	done := start(t, first, proc.Spec{Command: "echo done", Notify: true})
 	waitEnd(t, first, done.ID)
 	waitMatch(t, first, told.ID, "up")
+	ends.waitFor(t, 1)
 	if got := ends.take(); len(got) != 1 || got[0].ID != done.ID {
 		t.Fatalf("OnEnd before Close = %+v, want %s", got, done.ID)
 	}
@@ -276,6 +296,7 @@ func TestRouteKeptWithJob(t *testing.T) {
 		t.Fatalf("Start Info.Route = %v", info.Route)
 	}
 	waitEnd(t, m, info.ID)
+	ends.waitFor(t, 1)
 	closeManager(t, m, clk)
 	if got := ends.take(); len(got) != 1 || got[0].Route != "conversation-1" {
 		t.Fatalf("OnEnd = %+v", got)
