@@ -206,6 +206,10 @@ project uses [Semantic Versioning](https://semver.org/).
   a letter or digit; identity is the lower-case id). An input of which
   nothing survives the repair normalizes to `""`, and two such inputs are
   never the same agent.
+- `hook.ModelInfo.Rebuilt`: true when a step's request was built from the
+  session store for that dispatch (the first request, or one after a
+  compaction, eviction or overflow retry), so a `BeforeModel` callback knows
+  its earlier edits are gone.
 - `hook` package, the contract the agent loop will be built on, without the
   loop: the callback types (`BeforeTurnFunc`, `AfterTurnFunc`,
   `BeforeModelFunc`, `AfterModelFunc`, `OnModelErrorFunc`, `OnFallbackFunc`,

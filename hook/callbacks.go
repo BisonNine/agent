@@ -48,6 +48,12 @@ type ModelInfo struct {
 	// events that hold an earlier request do not change. Read only in
 	// AfterModel and OnModelError.
 	Request ModelRequest
+	// Rebuilt reports that Request was built from the session store for this
+	// dispatch (the first request of a turn, and any later one after a
+	// compaction, an eviction or an overflow retry replaced the working
+	// request), so earlier BeforeModel edits are gone and must be made again.
+	// False when the request is the one the step before left.
+	Rebuilt bool
 }
 
 // ModelResponse is a model's answer to one dispatch, as AfterModel sees it.
