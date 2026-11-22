@@ -10,13 +10,13 @@ import (
 // every call to the model, and kept across Adopt while the model's
 // definition does not change. Calls in flight are counted, so a client that
 // is no longer wanted (retired) is closed only once its last call has ended.
+// A client the host registered is the host's: the slot never closes it.
 type clientSlot struct {
 	build func() (spawnllm.LLMProvider, error)
 
 	mu       sync.Mutex
 	client   spawnllm.LLMProvider
-	fixed    bool // registered by the host: never rebuilt
-	closed   bool // a registered client has been closed
+	fixed    bool // registered by the host: never rebuilt, never closed
 	inflight int
 	retired  bool
 }
@@ -63,10 +63,10 @@ func (s *clientSlot) peek() spawnllm.LLMProvider {
 	return s.client
 }
 
-// retire marks the client as no longer wanted: it is closed now if no call is
-// in flight, else when the last one ends. A call made after this (a turn
-// still finishing on what it pinned) gets the client rebuilt, and closed
-// again when it ends.
+// retire marks the client as no longer wanted: a client the slot built is
+// closed now if no call is in flight, else when the last one ends. A call
+// made after this (a turn still finishing on what it pinned) gets a new
+// client built, closed again when that call ends.
 func (s *clientSlot) retire() {
 	s.mu.Lock()
 	s.retired = true
@@ -75,18 +75,14 @@ func (s *clientSlot) retire() {
 	closeClient(closing)
 }
 
-// takeIdleLocked returns the client to close, if the slot is retired and
-// idle, and forgets it (a registered client is kept: it cannot be rebuilt).
+// takeIdleLocked returns the client to close, if the slot built it and is
+// retired and idle, and forgets it.
 func (s *clientSlot) takeIdleLocked() spawnllm.LLMProvider {
-	if !s.retired || s.inflight > 0 || s.client == nil || s.closed {
+	if s.fixed || !s.retired || s.inflight > 0 || s.client == nil {
 		return nil
 	}
 	c := s.client
-	if s.fixed {
-		s.closed = true
-	} else {
-		s.client = nil
-	}
+	s.client = nil
 	return c
 }
 

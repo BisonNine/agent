@@ -271,7 +271,11 @@ func (ch *Chain) client(c Candidate) (spawnllm.LLMProvider, func(), error) {
 // Chat runs one chat call for id on the chain: each model in turn, skipping
 // disabled and parked ones, until one answers.
 //
-//   - A cancelled context ends the call at once with context.Canceled.
+//   - When ctx ends (cancelled or past its deadline) the call stops with
+//     ctx.Err(): no further model is called, the failure of a call cut short
+//     is not recorded against the model, and no FellBack or Exhausted event
+//     is sent. A model's own request timeout, with ctx still live, is an
+//     ordinary failure.
 //   - An error spawnllm cannot classify ends the call; a classified one moves
 //     on to the next model, once the failure is recorded against the model's
 //     health. A Retry-After of up to 3 seconds is waited out and the same
@@ -289,7 +293,7 @@ func (ch *Chain) Chat(ctx context.Context, id accounting.Identity, req Request, 
 		o(cfg)
 	}
 	res, err := ch.chat(ctx, id, req, cfg)
-	ch.report(res, err)
+	ch.report(ctx, res, err)
 	if err != nil {
 		return nil, err
 	}
@@ -311,8 +315,8 @@ func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, 
 		obs.FellBack(FellBack{Set: ch.set, Purpose: ch.purpose, Scope: ch.scope, Passed: slices.Clone(passed), Next: next})
 	}
 	for i, c := range ch.cands {
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return result, context.Canceled
+		if err := ctx.Err(); err != nil {
+			return result, err
 		}
 		if a, skipped := ch.skip(i); skipped {
 			called = called || !a.Disabled
@@ -343,9 +347,10 @@ func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, 
 				result.Response, result.Candidate = resp, c
 				return result, nil
 			}
-			if errors.Is(ctx.Err(), context.Canceled) {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				// The caller gave up: this is not the model's failure.
 				result.Attempts = append(result.Attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: err, Duration: elapsed})
-				return result, context.Canceled
+				return result, ctxErr
 			}
 			fe = spawnllm.ClassifyError(err, c.Provider, c.Model)
 			if fe == nil {
@@ -360,6 +365,10 @@ func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, 
 				select {
 				case <-ch.clock().After(fe.RetryAfter):
 				case <-ctx.Done():
+					if ev, ok := ch.gen.health.failure(c.Name, c.Provider, c.Model, fe.Reason, fe.Status, fe.RetryAfter); ok {
+						obs.Parked(ev)
+					}
+					result.Attempts = append(result.Attempts, Attempt{Name: c.Name, Provider: c.Provider, Model: c.Model, Err: fe, Reason: fe.Reason, Duration: elapsed})
 					return result, ctx.Err()
 				}
 				continue
@@ -383,15 +392,15 @@ func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, 
 
 // report records the outcome of a Chat call as what is serving now, and tells
 // the observer when the call found no answer.
-func (ch *Chain) report(res *Result, err error) {
+func (ch *Chain) report(ctx context.Context, res *Result, err error) {
 	k := selKey{set: ch.set, purpose: ch.purpose, scope: ch.scope}
 	now := ch.clock().Now()
 	if err == nil {
 		ch.cat.state.served(k, res.Candidate.Name, firstReason(ch, res.Attempts, res.Candidate.Name), res.Attempts, now)
 		return
 	}
-	if errors.Is(err, context.Canceled) {
-		return
+	if ctx.Err() != nil {
+		return // the caller gave up; nothing about the models to report
 	}
 	attempts := res.Attempts
 	ch.cat.state.served(k, "", firstReason(ch, attempts, ""), attempts, now)

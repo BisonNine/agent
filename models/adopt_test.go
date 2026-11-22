@@ -139,35 +139,34 @@ func TestAdoptDropsOldFailures(t *testing.T) {
 	}
 }
 
-// An old client is closed only once its last call in flight has ended.
-func TestAdoptClosesOldClientAfterItsCall(t *testing.T) {
-	old := modelstest.New()
-	c := build(t, old, []spec{m("sonnet", "anthropic", "claude-sonnet")})
+// A client the host registered is the host's: Adopt never closes it, whether
+// next registers the same one or another, and a call in flight on it
+// finishes.
+func TestAdoptNeverClosesRegisteredClients(t *testing.T) {
+	shared := modelstest.New()
+	c := build(t, shared, []spec{m("sonnet", "anthropic", "claude-sonnet")})
 	release, started := make(chan struct{}), make(chan struct{})
-	old.Script("claude-sonnet", modelstest.Step{Hold: release, Started: started, Response: modelstest.Reply("late").Response})
+	shared.Script("claude-sonnet", modelstest.Step{Hold: release, Started: started, Response: modelstest.Reply("late").Response}, modelstest.Reply("ok"))
 	done := make(chan error, 1)
 	go func() {
 		_, err := c.Begin(models.Chat).Chat(t.Context(), alice, models.Request{})
 		done <- err
 	}()
 	<-started
-	c.Adopt(build(t, modelstest.New(), []spec{m("sonnet", "anthropic", "claude-sonnet")}))
-	if old.Closed() != 0 {
-		t.Fatal("the old client was closed during its call")
-	}
+	c.Adopt(build(t, shared, []spec{m("sonnet", "anthropic", "claude-sonnet")}))
 	close(release)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if old.Closed() != 1 {
-		t.Fatalf("closed %d times after its call ended, want 1", old.Closed())
+	if got := answeredBy(t, c.Begin(models.Chat)); got != "sonnet" {
+		t.Fatalf("after adopt: %q", got)
 	}
-
-	idle := modelstest.New()
-	c = build(t, idle, []spec{m("sonnet", "anthropic", "claude-sonnet")})
+	if err := c.RegisterClient("sonnet", shared); err != nil {
+		t.Fatal(err)
+	}
 	c.Adopt(build(t, modelstest.New(), []spec{m("sonnet", "anthropic", "claude-sonnet")}))
-	if idle.Closed() != 1 {
-		t.Fatal("an idle old client was not closed at once")
+	if shared.Closed() != 0 {
+		t.Fatalf("a registered client was closed %d times", shared.Closed())
 	}
 }
 

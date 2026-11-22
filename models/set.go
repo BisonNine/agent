@@ -342,18 +342,32 @@ type SelectionStore interface {
 // scope or, without one, as the set's default. name must be in the list that
 // serves p. It takes effect at the next Begin.
 func (s *Set) Select(p Purpose, name string, scope ...Scope) error {
-	g := s.cat.gen.Load()
+	k := selKey{set: s.id, purpose: p, scope: scopeOf(scope)}
+	// Checked and recorded under the writer lock, so an Unassign or Remove
+	// cannot slip in between; the store is written after it is released.
+	s.cat.mu.Lock()
 	if s.cat.spent.Load() {
+		s.cat.mu.Unlock()
 		return ErrAdopted
 	}
+	g := s.cat.gen.Load()
 	list, _ := g.effective(s.id, p)
 	if !slices.ContainsFunc(list, func(a assignment) bool { return a.name == name }) {
+		s.cat.mu.Unlock()
 		return fmt.Errorf("models: %q is not assigned to %s", name, p)
 	}
-	k := selKey{set: s.id, purpose: p, scope: scopeOf(scope)}
 	s.cat.state.set(k, name)
+	s.cat.mu.Unlock()
 	s.save(g, k, name)
 	return nil
+}
+
+// Forget drops what the set holds in memory for a scope: its selections and
+// what is serving it, for every purpose. The store is not written; a later
+// use of the scope reads it again. For a scope that has ended, such as a
+// deleted session.
+func (s *Set) Forget(scope Scope) {
+	s.cat.state.forget(s.id, scope)
 }
 
 // Reset removes the selection for purpose p in the given scope (or the set's
@@ -558,6 +572,26 @@ func (r *runState) get(k selKey, cfg *settings) string {
 		}
 	}
 	return r.selected[k]
+}
+
+func (r *runState) forget(set string, scope Scope) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for k := range r.selected {
+		if k.set == set && k.scope == scope {
+			delete(r.selected, k)
+		}
+	}
+	for k := range r.loaded {
+		if k.set == set && k.scope == scope {
+			delete(r.loaded, k)
+		}
+	}
+	for k := range r.serve {
+		if k.set == set && k.scope == scope {
+			delete(r.serve, k)
+		}
+	}
 }
 
 func (r *runState) serving(k selKey) Serving {

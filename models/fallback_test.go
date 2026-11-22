@@ -419,3 +419,77 @@ func TestChainCooldownTiming(t *testing.T) {
 		}
 	}
 }
+
+// When the caller's context ends, the call stops: no further model, no
+// health record for the call cut short, no FellBack or Exhausted event.
+func TestChainStopsWhenCallerGivesUp(t *testing.T) {
+	never := make(chan struct{})
+	for _, tc := range []struct {
+		name string
+		ctx  func() (context.Context, context.CancelFunc)
+		want error
+	}{
+		{"deadline during a call", func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 20*time.Millisecond)
+		}, context.DeadlineExceeded},
+		{"already cancelled", func() (context.Context, context.CancelFunc) {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx, cancel
+		}, context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t, three)
+			f.fake.Script("claude-sonnet", modelstest.Step{Hold: never})
+			ctx, cancel := tc.ctx()
+			defer cancel()
+			_, err := f.cat.Begin(models.Chat).Chat(ctx, alice, models.Request{})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if n := len(f.fake.Calls()); n > 1 {
+				t.Fatalf("%d models called after the caller gave up", n)
+			}
+			if p, _, fb, ex := f.obs.counts(); p+fb+ex != 0 {
+				t.Fatalf("events: parked %d, fell back %d, exhausted %d", p, fb, ex)
+			}
+			if h, _ := f.cat.Get("sonnet"); h.Health.Failures != 0 {
+				t.Fatalf("health = %+v", h.Health)
+			}
+			_, err = f.cat.Default().Caller(models.Chat, alice).Complete(ctx, models.CompleteRequest{})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("complete: err = %v, want %v", err, tc.want)
+			}
+		})
+	}
+}
+
+// A model's own timeout, with the caller's context still live, is an
+// ordinary failure: the next model is tried.
+func TestChainModelTimeoutFallsBack(t *testing.T) {
+	f := newFixture(t, three)
+	f.fake.Script("claude-sonnet", modelstest.Fail(context.DeadlineExceeded))
+	if got := answeredBy(t, f.cat.Begin(models.Chat)); got != "gpt" {
+		t.Fatalf("answered by %q", got)
+	}
+}
+
+// A Retry-After wait cut short by the caller still records the failure that
+// caused it.
+func TestChainRetryWaitCutShort(t *testing.T) {
+	f := newFixture(t, three)
+	f.fake.Script("claude-sonnet", modelstest.Status(429, 2*time.Second))
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		if f.clock.BlockUntil(t.Context(), 1) == nil {
+			cancel()
+		}
+	}()
+	_, err := f.cat.Begin(models.Chat).Chat(ctx, alice, models.Request{})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v", err)
+	}
+	if h, _ := f.cat.Get("sonnet"); h.Health.Available || h.Health.Failures != 1 {
+		t.Fatalf("the 429 was not recorded: %+v", h.Health)
+	}
+}

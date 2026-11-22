@@ -57,6 +57,8 @@ func (f callerFunc) Complete(ctx context.Context, req CompleteRequest) (Complete
 // request, disabled or parked are skipped; any error moves on to the next
 // model (a classified one is recorded against its health); the first answer
 // is returned. When every model called failed, the last error is returned.
+// When ctx ends the walk stops with ctx.Err(), and the call cut short is not
+// held against its model.
 func (ch *Chain) complete(ctx context.Context, id accounting.Identity, req CompleteRequest) (CompleteReply, error) {
 	messages := []spawnllm.Message{
 		{Role: "system", Content: req.System},
@@ -72,6 +74,9 @@ func (ch *Chain) complete(ctx context.Context, id accounting.Identity, req Compl
 	lastModel := ""
 	excluded, cooling, disabled := 0, 0, 0
 	for i, c := range ch.cands {
+		if err := ctx.Err(); err != nil {
+			return CompleteReply{Model: lastModel}, err
+		}
 		if slices.Contains(req.Exclude, c.Model) {
 			excluded++
 			continue
@@ -88,6 +93,9 @@ func (ch *Chain) complete(ctx context.Context, id accounting.Identity, req Compl
 		resp, err := ch.call(ctx, id, c, Request{Messages: messages, Options: opts}, nil)
 		if err != nil {
 			lastErr, lastModel = err, c.Model
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return CompleteReply{Model: lastModel}, ctxErr
+			}
 			if fe := spawnllm.ClassifyError(err, "", c.Model); fe != nil {
 				if ev, ok := ch.gen.health.failure(c.Name, c.Provider, c.Model, fe.Reason, fe.Status, fe.RetryAfter); ok {
 					obs.Parked(ev)

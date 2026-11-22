@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"go.bison9.com/agent/models"
+	"go.bison9.com/agent/models/modelstest"
 	"go.bison9.com/agent/modelspec"
 	"go.bison9.com/agent/spawnllm"
 )
@@ -276,5 +277,33 @@ func TestRemoveRevertsSelection(t *testing.T) {
 	}
 	if strings.Join(names(f.cat.List(models.Chat)), ",") != "sonnet,gpt,haiku" {
 		t.Fatalf("list = %q", names(f.cat.List(models.Chat)))
+	}
+}
+
+// Forget drops a scope's selections and serving record from memory, without
+// writing the store; the next use reads the store again.
+func TestForget(t *testing.T) {
+	st := &memStore{data: map[string]string{}}
+	c := build(t, modelstest.New(), three, models.WithSelectionStore(st))
+	if err := c.Select(models.Chat, "haiku", "s"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Select(models.Chat, "gpt", "other"); err != nil {
+		t.Fatal(err)
+	}
+	if got := answeredBy(t, c.Begin(models.Chat, "s")); got != "haiku" {
+		t.Fatalf("answered by %q", got)
+	}
+	saves := len(st.saves)
+	st.data = map[string]string{}
+	c.Default().Forget("s")
+	if len(st.saves) != saves {
+		t.Fatal("Forget wrote the store")
+	}
+	if cur := c.Current(models.Chat, "s"); cur.Serving != "" || cur.Selected != "sonnet" {
+		t.Fatalf("after forget: %+v", cur)
+	}
+	if got := c.Selected(models.Chat, "other").Name; got != "gpt" {
+		t.Fatalf("another scope was forgotten: %q", got)
 	}
 }

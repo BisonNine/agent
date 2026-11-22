@@ -20,12 +20,14 @@ project uses [Semantic Versioning](https://semver.org/).
   `WithBaseEnv`) and, without its permission bypass, returns a
   `CLIDeclinedError` when the CLI declined to use tools
   (`WithDeclinedMessage`). Options: `WithLogger`, `WithLogContent`,
-  `WithClock`, `WithFileModes`, `WithFileModesFor`, `WithLimitDefaults`.
+  `WithClock`, `WithFileModes`, `WithFileModesFor`, `WithLimitDefaults`,
+  `WithIgnoredBypassNotice`.
 - `models` sets: one `Set` per agent (`Catalog.Set`, the default set
   `Default`) with models by `Purpose` and priority (`Assign`, `WithSettings`,
   `WithEnabled`, `Unassign`, `Reorder`, `List`, `Purposes`), a per-set
   switch, selections with an optional `Scope` (`Select`, `Selected`, `Reset`,
-  persisted through a `SelectionStore`), what is serving now (`Current`),
+  persisted through a `SelectionStore`; `Forget` drops a scope from memory),
+  what is serving now (`Current`),
   purpose fallback rules (`Worker` → `Chat`, `WithFallback`), and `Begin`: a
   `Chain` pinned for one turn whose `Chat` skips parked and disabled models,
   falls back on failure and reports each hop (`WithPrepare`, `WithNotify`,

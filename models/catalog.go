@@ -3,6 +3,7 @@ package models
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"reflect"
 	"slices"
@@ -13,6 +14,10 @@ import (
 	"go.bison9.com/agent/modelspec"
 	"go.bison9.com/agent/spawnllm"
 )
+
+// errUnchanged, returned by an update function, leaves the catalogue as it
+// was without an error.
+var errUnchanged = errors.New("unchanged")
 
 // ErrAdopted reports a call on a catalogue that has been handed to Adopt.
 var ErrAdopted = errors.New("models: this catalogue was adopted by another; use that one")
@@ -97,6 +102,9 @@ func (c *Catalog) update(fn func(g *generation) ([]*clientSlot, error)) error {
 		c.gen.Store(next)
 	}
 	c.mu.Unlock()
+	if errors.Is(err, errUnchanged) {
+		err = nil
+	}
 	for _, s := range retire {
 		s.retire()
 	}
@@ -259,7 +267,9 @@ func (c *Catalog) ResetHealth(names ...string) int {
 
 // RegisterClient sets a ready-made client for an added model, in place of the
 // one the catalogue would build: for a protocol the SDK does not know. The
-// client replaced is closed once its calls in flight have ended.
+// host owns the client: the catalogue never closes it. A client the
+// catalogue had built in its place is closed once its calls in flight have
+// ended. Registering the client the model already has changes nothing.
 func (c *Catalog) RegisterClient(name string, cl spawnllm.LLMProvider) error {
 	if cl == nil {
 		return errors.New("models: nil client")
@@ -268,6 +278,9 @@ func (c *Catalog) RegisterClient(name string, cl spawnllm.LLMProvider) error {
 		e, ok := g.models[name]
 		if !ok {
 			return nil, fmt.Errorf("models: unknown model %q", name)
+		}
+		if e.registered && sameClient(e.slot.peek(), cl) {
+			return nil, errUnchanged
 		}
 		n := *e
 		n.registered = true
@@ -353,8 +366,11 @@ type Reverted struct {
 //     selection whose model is no longer assigned reverts to the default and
 //     is listed in the Diff.
 //   - Health is not carried over: every model starts available.
-//   - A model whose definition and provider are unchanged keeps its client.
-//     Any other old client is closed once its last call in flight ends.
+//   - A model whose definition, provider and client options are unchanged
+//     keeps the client it has already built (a model whose client options
+//     changed is listed as Changed). Any other client the catalogue built is
+//     closed once its last call in flight ends; a client the host registered
+//     is never closed.
 //   - next's options replace c's.
 func (c *Catalog) Adopt(next *Catalog) Diff {
 	if next == nil || next == c {
@@ -387,7 +403,17 @@ func (c *Catalog) Adopt(next *Catalog) Diff {
 			diff.Added = append(diff.Added, name)
 		case !reflect.DeepEqual(oe.def, ne.def) || oe.prov != ne.prov:
 			diff.Changed = append(diff.Changed, name)
-		case !oe.registered && !ne.registered:
+		case oe.registered || ne.registered:
+			// The host's own client: the same one registered again keeps
+			// its slot; anything else takes the new one.
+			if oe.registered && ne.registered && sameClient(oe.slot.peek(), ne.slot.peek()) {
+				kept := *ne
+				kept.slot = oe.slot
+				ng.models[name] = &kept
+			}
+		case !sameClientOptions(old.cfg, ng.cfg, &ne.def, &ne.prov):
+			diff.Changed = append(diff.Changed, name)
+		case oe.slot.peek() != nil:
 			// Unchanged: keep the client, and its connections, already built.
 			if ne.slot.peek() != nil {
 				retire = append(retire, ne.slot)
@@ -424,28 +450,107 @@ func cloneModel(m modelspec.Model) modelspec.Model {
 	m.DropParams = slices.Clone(m.DropParams)
 	m.Env = maps.Clone(m.Env)
 	if m.ExtraBody != nil {
-		if body, ok := cloneJSON(m.ExtraBody).(map[string]any); ok {
+		if body, ok := reflect.TypeAssert[map[string]any](deepCopy(reflect.ValueOf(m.ExtraBody))); ok {
 			m.ExtraBody = body
 		}
 	}
 	return m
 }
 
-func cloneJSON(v any) any {
-	switch t := v.(type) {
-	case map[string]any:
-		out := make(map[string]any, len(t))
-		for k, x := range t {
-			out[k] = cloneJSON(x)
+// deepCopy returns a copy of v that shares no map, slice, array element or
+// pointer target with it, keeping every value's type. A struct's unexported
+// fields are copied as they are.
+func deepCopy(v reflect.Value) reflect.Value {
+	switch v.Kind() {
+	case reflect.Interface:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type()).Elem()
+		out.Set(deepCopy(v.Elem()))
+		return out
+	case reflect.Map:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		for it := v.MapRange(); it.Next(); {
+			out.SetMapIndex(it.Key(), deepCopy(it.Value()))
 		}
 		return out
-	case []any:
-		out := make([]any, len(t))
-		for i, x := range t {
-			out[i] = cloneJSON(x)
+	case reflect.Slice:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Len())
+		for i := range v.Len() {
+			out.Index(i).Set(deepCopy(v.Index(i)))
+		}
+		return out
+	case reflect.Array:
+		out := reflect.New(v.Type()).Elem()
+		for i := range v.Len() {
+			out.Index(i).Set(deepCopy(v.Index(i)))
+		}
+		return out
+	case reflect.Pointer:
+		if v.IsNil() {
+			return v
+		}
+		out := reflect.New(v.Type().Elem())
+		out.Elem().Set(deepCopy(v.Elem()))
+		return out
+	case reflect.Struct:
+		out := reflect.New(v.Type()).Elem()
+		out.Set(v)
+		for i := range out.NumField() {
+			if f := out.Field(i); f.CanSet() {
+				f.Set(deepCopy(v.Field(i)))
+			}
 		}
 		return out
 	default:
-		return v
+		return v // scalars
 	}
+}
+
+// sameClient reports whether a and b are the same client. A client of a type
+// that cannot be compared is never the same.
+func sameClient(a, b spawnllm.LLMProvider) bool {
+	if a == nil || b == nil || !reflect.TypeOf(a).Comparable() || !reflect.TypeOf(b).Comparable() {
+		return false
+	}
+	return a == b
+}
+
+// sameClientOptions reports whether a client of model m on prov built with
+// options a is what options b would build. The logger must be the same one,
+// or one over the same handler; option functions are compared by identity,
+// and the base environment and response-log modes by what they return now.
+func sameClientOptions(a, b *settings, m *modelspec.Model, prov *modelspec.Provider) bool {
+	if a.logContent != b.logContent || !sameLogger(a.logger, b.logger) || !sameFunc(a.declined, b.declined) {
+		return false
+	}
+	if m.ResponseLogFile != "" && a.modesFor(m.ResponseLogFile) != b.modesFor(m.ResponseLogFile) {
+		return false
+	}
+	if modelspec.CLIAgentByProtocol(prov.Protocol) != nil && !slices.Equal(a.baseEnv(), b.baseEnv()) {
+		return false
+	}
+	return true
+}
+
+func sameLogger(a, b *slog.Logger) bool {
+	if a == b {
+		return true
+	}
+	ha, hb := a.Handler(), b.Handler()
+	if !reflect.TypeOf(ha).Comparable() || !reflect.TypeOf(hb).Comparable() {
+		return false
+	}
+	return ha == hb
+}
+
+func sameFunc[F any](a, b F) bool {
+	return reflect.ValueOf(a).Pointer() == reflect.ValueOf(b).Pointer()
 }

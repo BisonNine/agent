@@ -125,8 +125,7 @@ func cliSpecFor(s *settings, m *modelspec.Model, prov *modelspec.Provider) cliSp
 	}
 	args, ignored := modelspec.CLIArgs(prov.Protocol, prov.BypassRestrictions, m.ExtraArgs)
 	if len(ignored) > 0 {
-		s.logger.Warn("ignoring permission-bypass flags in a model's extra args: bypass is off for its provider",
-			"component", component, "model", m.ModelName, "protocol", agent.Protocol, "flags", strings.Join(ignored, " "))
+		s.noticeIgnoredBypass(IgnoredBypass{Model: m.ModelName, Protocol: agent.Protocol, Flags: slices.Clone(ignored)})
 	}
 	return cliSpec{
 		protocol:  agent.Protocol,
@@ -155,8 +154,7 @@ func isolatedCLISpec(s *settings, m *modelspec.Model, prov *modelspec.Provider, 
 		kept = append(kept, a)
 	}
 	if len(stripped) > 0 && !prov.BypassRestrictions && warn(m.ModelName) {
-		s.logger.Warn("ignoring permission-bypass flags in a model's extra args: bypass is off for its provider",
-			"component", component, "model", m.ModelName, "protocol", agent.Protocol, "flags", strings.Join(stripped, " "))
+		s.noticeIgnoredBypass(IgnoredBypass{Model: m.ModelName, Protocol: agent.Protocol, Flags: stripped})
 	}
 	isolated := *m
 	isolated.ExtraArgs = kept

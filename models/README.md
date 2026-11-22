@@ -53,7 +53,9 @@ added disabled. It is a convenience over `New`, `AddProvider`, `Add` and
   model, which starts enabled whatever `m.Enabled` says (`Build` honours it).
 - `Get(name) (Info, bool)`, `Names()`, `Health()`, `ResetHealth(names...)`.
 - `RegisterClient(name, client)`: a ready-made client for a model whose
-  protocol the SDK does not build (a host-registered protocol).
+  protocol the SDK does not build (a host-registered protocol). The host owns
+  it: the catalogue never closes it. Registering the same client again changes
+  nothing.
 - `Set(id)`: the agent's set, created on first use; the handle stays valid.
 
 On a Set:
@@ -69,6 +71,8 @@ On a Set:
 - `Current(purpose, scope...)`: `Serving{Selected, Serving, Since, Reason,
   Attempts}`, what answered last and why it is not the selected model.
 - `Begin(purpose, scope...) *Chain`, `Caller(purpose, id, scope...)`.
+- `Forget(scope)`: drops the scope's selections and serving record from
+  memory (not from the store), for a scope that has ended.
 
 ## Purposes
 
@@ -90,7 +94,11 @@ enable switch, re-read before each call.
 
 - a disabled model is skipped (`Attempt.Disabled`), a parked one too
   (`Attempt.Remaining`, `Attempt.Reason` its cause);
-- a cancelled context ends the call with `context.Canceled`;
+- when the caller's context ends (cancelled or past its deadline) the call
+  stops with `ctx.Err()`: no further model is called, the call cut short is
+  not held against the model, and no `FellBack` or `Exhausted` is sent. A
+  model's own request timeout, with the context still live, is an ordinary
+  failure;
 - an error spawnllm cannot classify ends the call; a classified one is
   recorded against the model's health and the next model is tried; a
   `Retry-After` of up to 3 seconds is waited out and the same model tried once
@@ -140,9 +148,14 @@ handed over: `c.Adopt(next) Diff`.
   whose model is no longer assigned reverts to the default and is listed in
   `Diff.Reverted`.
 - Health is not carried: every model starts available.
-- A model whose definition and provider are unchanged keeps its client. Any
-  other old client is closed (`spawnllm.StatefulProvider`) once its last call
-  in flight ends.
+- A model whose definition, provider and client options are unchanged keeps
+  the client it has already built. Client options are the logger (the same
+  one, or one over the same handler), `WithLogContent`, the
+  `WithDeclinedMessage` function (by identity), and what `WithBaseEnv` and
+  `WithFileModesFor` return now; a model whose client options changed is
+  listed as changed and rebuilt. Any other client the catalogue built is
+  closed (`spawnllm.StatefulProvider`) once its last call in flight ends; a
+  registered client is never closed.
 - `next`'s options replace `c`'s; `next` is spent (`ErrAdopted`).
 
 `Diff` lists the models added, removed and changed.
@@ -182,7 +195,13 @@ The catalogue builds a model's client on first use and shares it.
 - `WithBaseEnv(fn)`: the environment a CLI starts from. Default
   `DefaultBaseEnv`, an allowlist (the POSIX basics, locale, XDG, proxies, CA
   bundles and the CLIs' own key variables), never the whole environment.
-- `WithFileModes`, `WithFileModesFor`: the modes of a response log file.
+- `WithFileModes`, `WithFileModesFor`: the modes of a response log file,
+  read when a client is built. A host that wants a permissions change to apply
+  includes it in what it compares before `Adopt`, which rebuilds the clients
+  whose modes changed.
+- `WithIgnoredBypassNotice(fn)`: what is done with the permission-bypass flags
+  a CLI model's extra args carry but that are not passed (`IgnoredBypass{Model,
+  Protocol, Flags}`). Default: a warning in the log.
 - `WithDeclinedMessage(fn)`: the text of the `*CLIDeclinedError` a CLI without
   its permission bypass returns when it declined to use tools. `fn` gets the
   identity of the call, the model and the refused tools.
