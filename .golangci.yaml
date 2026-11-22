@@ -93,6 +93,11 @@ linters:
   exclusions:
     generated: lax
     rules:
+      # The conformance suite's test bodies take the *testing.T of their own
+      # subtest; marking them helpers would report failures at the caller.
+      - linters:
+          - thelper
+        path: ^agenttest/suite\.go$
       # Tests read their own fixtures, run fixed commands and use fake keys;
       # gosec on them is noise that would need a directive per line.
       - linters:
