@@ -102,7 +102,7 @@ func (p *CursorCliProvider) chat(
 		baseEnv:   p.baseEnv,
 		env:       p.env,
 		model:     model,
-		logging:   p.logging,
+		logging:   &p.logging,
 		parse:     p.parseCursorCliResponse,
 	})
 }

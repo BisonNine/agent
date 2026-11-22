@@ -6,8 +6,11 @@
 package memory
 
 import (
+	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -312,5 +315,57 @@ func TestNoiseClassifier_DifferentContent(t *testing.T) {
 	msg2 := StoredMessage{Seq: 2, Role: "user", Content: "world"}
 	if cache.IsNoise(msg2, cronmsg.CollapseKey) {
 		t.Error("different content should not be noise")
+	}
+}
+
+// componentCountHandler flags any logger derived from it that carries the
+// attribute component more than once.
+type componentCountHandler struct {
+	attrs []slog.Attr
+	dup   *atomic.Bool
+}
+
+func (h componentCountHandler) check(attrs []slog.Attr) {
+	n := 0
+	for _, a := range attrs {
+		if a.Key == "component" {
+			n++
+		}
+	}
+	if n > 1 {
+		h.dup.Store(true)
+	}
+}
+
+func (h componentCountHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h componentCountHandler) Handle(_ context.Context, r slog.Record) error {
+	attrs := append([]slog.Attr{}, h.attrs...)
+	r.Attrs(func(a slog.Attr) bool { attrs = append(attrs, a); return true })
+	h.check(attrs)
+	return nil
+}
+
+func (h componentCountHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	next := componentCountHandler{attrs: append(append([]slog.Attr{}, h.attrs...), attrs...), dup: h.dup}
+	next.check(next.attrs)
+	return next
+}
+
+func (h componentCountHandler) WithGroup(string) slog.Handler { return h }
+
+func TestListSessions_TagsComponentOnce(t *testing.T) {
+	dir := t.TempDir()
+	openSessionArchive(t, dir, "alice")
+	// An empty file is an archive with no state: opened, then skipped.
+	if err := os.WriteFile(filepath.Join(dir, "bob"+archiveSuffix), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h := componentCountHandler{dup: &atomic.Bool{}}
+	if _, err := ListSessions(dir, slog.New(h)); err != nil {
+		t.Fatalf("ListSessions: %v", err)
+	}
+	if h.dup.Load() {
+		t.Error("a logger ListSessions built carries component more than once")
 	}
 }

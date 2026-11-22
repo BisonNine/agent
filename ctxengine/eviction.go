@@ -672,7 +672,7 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 			}
 		}
 		if minBytes := m.evictionMinSweepBytes(); minBytes > 0 && freed < minBytes {
-			m.log.Debug("eviction deferred: below the batch threshold",
+			m.logger().Debug("eviction deferred: below the batch threshold",
 				"session_key", m.sessionKey,
 				"candidates", len(marks)+len(argMarks),
 				"bytes", freed,
@@ -695,7 +695,7 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 				Reason:   "args",
 			}
 			events = append(events, ev)
-			m.log.Debug("evicted tool call argument",
+			m.logger().Debug("evicted tool call argument",
 				"session_key", m.sessionKey,
 				"seq", ev.Seq,
 				"tool", ev.Tool,
@@ -722,7 +722,7 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 		}
 		stored[idx].Content = evictionPlaceholder(meta.tool, res, ev.Bytes, ev.Seq)
 		events = append(events, ev)
-		m.log.Debug("evicted tool result",
+		m.logger().Debug("evicted tool result",
 			"session_key", m.sessionKey,
 			"seq", ev.Seq,
 			"tool", ev.Tool,
@@ -748,14 +748,14 @@ func (m *Manager) sweepEvictions(_ context.Context, force bool) []EvictionEvent 
 		err = m.store.SetHistory(m.sessionKey, plain)
 	}
 	if err != nil {
-		m.log.Warn("eviction persist failed; nothing evicted",
+		m.logger().Warn("eviction persist failed; nothing evicted",
 			"session_key", m.sessionKey,
 			"error", err.Error(),
 		)
 		return nil
 	}
 	if err := m.store.Save(m.sessionKey); err != nil {
-		m.log.Warn("eviction save failed",
+		m.logger().Warn("eviction save failed",
 			"session_key", m.sessionKey,
 			"error", err.Error(),
 		)

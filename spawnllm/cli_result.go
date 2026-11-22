@@ -27,7 +27,7 @@ type jsonCLICall struct {
 	model     string
 	parse     func(stdout string) (*LLMResponse, error)
 	// logging is the provider's logger and content setting.
-	logging logging
+	logging *logging
 }
 
 // runJSONCLI runs c.command with c.args, piping c.prompt on stdin, bounded by
@@ -108,7 +108,7 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 			"agent_id", AgentIDFromContext(ctx),
 			"exit_code", exitCode,
 		}
-		if c.logging.logContent {
+		if c.logging.logContent.Load() {
 			attrs = append(attrs, "stderr", stderrStr, "stdout", stdoutStr)
 		}
 		c.logging.log().ErrorContext(ctx, label+"-cli subprocess failed", attrs...)
@@ -148,7 +148,7 @@ func jsonCLIResult(ctx context.Context, c *jsonCLICall, bytesSent int64, run *cl
 	}
 	if resp.Content == "" {
 		var attrs []any
-		if c.logging.logContent {
+		if c.logging.logContent.Load() {
 			attrs = append(attrs, "raw_stdout", strings.TrimSpace(stdout.String()))
 		}
 		c.logging.log().WarnContext(ctx, label+"-cli returned empty content", attrs...)

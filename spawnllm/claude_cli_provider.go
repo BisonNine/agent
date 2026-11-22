@@ -98,7 +98,7 @@ func (p *ClaudeCliProvider) chat(
 		baseEnv:   p.baseEnv,
 		env:       p.env,
 		model:     model,
-		logging:   p.logging,
+		logging:   &p.logging,
 		parse:     p.parseClaudeCliResponse,
 	})
 }

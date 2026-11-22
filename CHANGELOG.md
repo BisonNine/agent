@@ -62,8 +62,10 @@ project uses [Semantic Versioning](https://semver.org/).
 - Breaking: whether a CLI's stdout and stderr may be logged is an explicit
   setting, off by default: `spawnllm.WithLogContent` on a `Worker`,
   `SetLogContent` on a CLI provider.
-- `anthropic_messages.NewProvider` and `NewProviderWithTimeout`, and
-  `azure.NewProviderWithTimeout`, take options.
+- `anthropic_messages.NewProvider` and `NewProviderWithTimeout`,
+  `azure.NewProviderWithTimeout`, and `openai_compat`'s
+  `NewProviderWithMaxTokensField` and
+  `NewProviderWithMaxTokensFieldAndTimeout` take options.
 
 - Breaking: one option for file and directory modes, taking the new
   `fsmode.Modes{Dir, File}`: `WithFileModes` on `ctxengine`, `memory.Open`,

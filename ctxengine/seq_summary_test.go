@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -235,7 +234,7 @@ func TestSeqAware_PromptContainsToolMetadata(t *testing.T) {
 		response: buildSeqSummaryJSON("tool metadata", 50, 51),
 	}
 
-	mgr := &Manager{sessionKey: "test", caller: llm, log: slog.New(slog.DiscardHandler)}
+	mgr := &Manager{sessionKey: "test", caller: llm}
 	if _, ok := mgr.callModel(context.Background(), nil, stored, 1, 100, false, "", 0, &compactionRecorder{sessionKey: "test"}); !ok {
 		t.Fatal("expected callModel to accept fake summary")
 	}

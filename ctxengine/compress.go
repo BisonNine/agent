@@ -97,7 +97,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool, start Compacti
 		debugPath:   debugPath,
 		debugPerm:   m.cfg.filePerm,
 		failureDump: m.cfg.failureDump,
-		log:         m.log,
+		log:         m.logger(),
 	}
 	beforeMsgs := len(storedConversation)
 	beforeBytes := storedBytes(storedConversation)
@@ -115,7 +115,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool, start Compacti
 	if parseErr != nil {
 		// A stored summary that is not a valid structured summary (legacy
 		// prose, a corrupt write) is not merged; this pass starts afresh.
-		m.log.DebugContext(ctx, "existing summary not parsed; compacting without it",
+		m.logger().DebugContext(ctx, "existing summary not parsed; compacting without it",
 			"session_key", m.sessionKey, "error", parseErr.Error())
 		existingSummary = nil
 	}
@@ -175,7 +175,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool, start Compacti
 			g := resolveGroup(currentConversation, len(currentStored)-1)
 			tailStart = g.start
 			storedTail = currentStored[tailStart:]
-			m.log.WarnContext(ctx, "compaction would empty the live window; retaining the last turn group",
+			m.logger().WarnContext(ctx, "compaction would empty the live window; retaining the last turn group",
 				"session_key", m.sessionKey,
 				"kept", len(storedTail),
 			)
@@ -207,7 +207,7 @@ func (m *Manager) doCompress(ctx context.Context, safetyNet bool, start Compacti
 		llmSucceeded = true
 		latestSummary = newSummary
 		if dropped := droppedRepeatSeqs(currentStored[tailStart:], storedTail); len(dropped) > 0 {
-			m.log.InfoContext(ctx, "compaction dropped adjacent repeats from the live window (kept in the archive)",
+			m.logger().InfoContext(ctx, "compaction dropped adjacent repeats from the live window (kept in the archive)",
 				"session_key", m.sessionKey,
 				"seqs", dropped,
 			)
@@ -323,7 +323,7 @@ func (m *Manager) noteRefusedModel(model, detail string) {
 		return
 	}
 	m.refusedModels[model] = true
-	m.log.Warn("summarization model refused this session's content; skipping it for future compactions",
+	m.logger().Warn("summarization model refused this session's content; skipping it for future compactions",
 		"session_key", m.sessionKey,
 		"model", model,
 		"detail", detail,
@@ -384,12 +384,12 @@ func (m *Manager) handleNormalPostLoop(
 		if !attemptedLLM {
 			// The retained tail already covers the whole conversation; there was
 			// nothing to summarize. This is a benign no-op, not a failure.
-			m.log.InfoContext(ctx, "compression: nothing to compress (tail already covers conversation)",
+			m.logger().InfoContext(ctx, "compression: nothing to compress (tail already covers conversation)",
 				"session_key", m.sessionKey,
 			)
 			return ErrNothingToCompress
 		}
-		m.log.WarnContext(ctx, "compression failed: every summarization model rejected the summary",
+		m.logger().WarnContext(ctx, "compression failed: every summarization model rejected the summary",
 			"session_key", m.sessionKey,
 		)
 		return ErrCompressionFailed
@@ -434,13 +434,13 @@ func (m *Manager) handleSafetyNetPostLoop(
 			return err
 		}
 	} else if existingSummary != nil {
-		m.log.WarnContext(ctx, "safety-net compression: all LLM clients failed; using stale summary",
+		m.logger().WarnContext(ctx, "safety-net compression: all LLM clients failed; using stale summary",
 			"session_key", m.sessionKey,
 			"stale_summary", true,
 		)
 		currentStored = originalStored
 	} else {
-		m.log.WarnContext(ctx, "safety-net compression: all LLM clients failed; no summary available",
+		m.logger().WarnContext(ctx, "safety-net compression: all LLM clients failed; no summary available",
 			"session_key", m.sessionKey,
 			"no_summary", true,
 		)
@@ -585,7 +585,7 @@ func (m *Manager) callModel(
 			return nil, false
 		}
 
-		summary, perr := validateAndUnmarshalLLMResponse(reply.Content, m.log)
+		summary, perr := validateAndUnmarshalLLMResponse(reply.Content, m.logger())
 		if perr != nil {
 			// A response that did not yield a valid summary AND carries refusal
 			// signals (finish_reason or a decline phrase) is a content refusal, not
@@ -604,7 +604,7 @@ func (m *Manager) callModel(
 		}
 
 		if dropped := summary.DropUnsourcedExact(exactSources); dropped > 0 {
-			m.log.DebugContext(ctx, "summary exact values not quoted from a user message dropped",
+			m.logger().DebugContext(ctx, "summary exact values not quoted from a user message dropped",
 				"session_key", sessionKey,
 				"model", model,
 				"dropped", dropped,
@@ -633,14 +633,14 @@ func (m *Manager) callModel(
 		// (excluding the model) if it still does not fit.
 		if summaryTokenLimit > 0 {
 			if summary.TruncateToFit(summaryTokenLimit) {
-				m.log.WarnContext(ctx, "summary truncated to fit token budget",
+				m.logger().WarnContext(ctx, "summary truncated to fit token budget",
 					"session_key", sessionKey,
 					"limit", summaryTokenLimit,
 				)
 			}
 			if data, merr := json.Marshal(summary); merr == nil {
 				if len([]rune(string(data)))/4 > summaryTokenLimit {
-					m.log.WarnContext(ctx, "summary still oversized after truncation — discarding",
+					m.logger().WarnContext(ctx, "summary still oversized after truncation — discarding",
 						"session_key", sessionKey,
 						"tokens", len([]rune(string(data)))/4,
 						"limit", summaryTokenLimit,
@@ -1178,7 +1178,7 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 			Compaction: applyState,
 		})
 		if err != nil {
-			m.log.Warn("compression: commit failed",
+			m.logger().Warn("compression: commit failed",
 				"session_key", m.sessionKey,
 				"error", err.Error(),
 			)
@@ -1198,7 +1198,7 @@ func (m *Manager) persistStoredResult(sysMsg *memory.StoredMessage, conv []memor
 	}
 
 	if err := m.store.Save(m.sessionKey); err != nil {
-		m.log.Warn("compression: failed to save session",
+		m.logger().Warn("compression: failed to save session",
 			"session_key", m.sessionKey,
 			"error", err.Error(),
 		)
@@ -1234,7 +1234,7 @@ func (m *Manager) persistStepwise(newStored []memory.StoredMessage, raw *string,
 		// the store already holds; a failure here does not fail the pass.
 		if a := m.getOrOpenArchive(); a != nil {
 			if _, appendErr := a.AppendSummary(*checkpoint); appendErr != nil {
-				m.log.Warn("compression: failed to append summary to archive",
+				m.logger().Warn("compression: failed to append summary to archive",
 					"session_key", m.sessionKey,
 					"error", appendErr.Error(),
 				)
@@ -1268,7 +1268,7 @@ func (m *Manager) dropOldestStoredGroups(_ context.Context, conv []memory.Stored
 		if span >= len(conv) {
 			break // the only group left is the current turn
 		}
-		m.log.Warn("safety-net: dropping oldest turn group",
+		m.logger().Warn("safety-net: dropping oldest turn group",
 			"session_key", m.sessionKey,
 			"group_end", span-1,
 			"tokens", tokens,
@@ -1296,7 +1296,7 @@ func (m *Manager) applyLargeMsgChecks(conv []spawnllm.Message) {
 			// The very last message: warn only if user, truncate otherwise.
 			if i == len(conv)-1 && conv[i].Role == "user" {
 				if msgTokens > hardLimit {
-					m.log.Warn("last user message exceeds hard context limit",
+					m.logger().Warn("last user message exceeds hard context limit",
 						"session_key", m.sessionKey,
 						"msg_tokens", msgTokens,
 					)

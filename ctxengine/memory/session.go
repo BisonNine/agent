@@ -84,10 +84,10 @@ func ArchivePath(dir, sessionKey string) string {
 // state row (an archive that predates the window fold, or an empty one) is
 // skipped. Returns nil, nil if dir does not exist.
 //
-// Unreadable archives are logged to log, tagged with the component "memory";
-// nil discards.
-func ListSessions(dir string, log *slog.Logger) ([]string, error) {
-	log = componentLog(log)
+// Unreadable archives are logged to logger, tagged with the component
+// "memory"; nil discards.
+func ListSessions(dir string, logger *slog.Logger) ([]string, error) {
+	log := componentLog(logger)
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -101,7 +101,7 @@ func ListSessions(dir string, log *slog.Logger) ([]string, error) {
 			continue
 		}
 		path := filepath.Join(dir, entry.Name())
-		a, err := OpenReadOnly(path, log)
+		a, err := OpenReadOnly(path, logger)
 		if err != nil {
 			continue
 		}

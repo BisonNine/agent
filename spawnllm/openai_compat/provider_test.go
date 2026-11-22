@@ -680,6 +680,44 @@ func TestProvider_RequestTimeoutOverride(t *testing.T) {
 	}
 }
 
+func TestProvider_MaxTokensFieldConstructorsApplyOptions(t *testing.T) {
+	logger := slog.New(slog.DiscardHandler)
+	tests := []struct {
+		name        string
+		build       func(opts ...Option) *Provider
+		wantTimeout time.Duration
+	}{
+		{
+			name: "NewProviderWithMaxTokensField",
+			build: func(opts ...Option) *Provider {
+				return NewProviderWithMaxTokensField("key", "https://example.com/v1", "", "max_completion_tokens", opts...)
+			},
+			wantTimeout: 7 * time.Second,
+		},
+		{
+			name: "NewProviderWithMaxTokensFieldAndTimeout",
+			build: func(opts ...Option) *Provider {
+				return NewProviderWithMaxTokensFieldAndTimeout("key", "https://example.com/v1", "", "max_completion_tokens", 300, opts...)
+			},
+			wantTimeout: 7 * time.Second,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := tt.build(WithLogger(logger), WithRequestTimeout(7*time.Second))
+			if p.logger != logger {
+				t.Fatal("logger option not applied")
+			}
+			if p.maxTokensField != "max_completion_tokens" {
+				t.Fatalf("maxTokensField = %q, want %q", p.maxTokensField, "max_completion_tokens")
+			}
+			if p.httpClient.Timeout != tt.wantTimeout {
+				t.Fatalf("http timeout = %v, want %v (caller options apply last)", p.httpClient.Timeout, tt.wantTimeout)
+			}
+		})
+	}
+}
+
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {

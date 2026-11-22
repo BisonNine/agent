@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"go.bison9.com/agent/spawnllm/internal/launch/launchtest"
@@ -107,4 +108,32 @@ func TestLogging_ProvidersAreIsolated(t *testing.T) {
 	if got := bob.Entries(); len(got) != 0 {
 		t.Errorf("bob's logger got alice's records: %+v", got)
 	}
+}
+
+func TestLogging_SettersRaceWithCalls(t *testing.T) {
+	// A host may change the logger and the content setting while a call is
+	// running; run under -race.
+	logs := &launchtest.Logs{}
+	p := NewClaudeCliProvider("", t.TempDir(), nil, nil)
+	p.command = createMockCLI(t, "", cliFailure, 1)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := range 50 {
+			p.SetLogger(logs.Logger())
+			p.SetLogContent(i%2 == 0)
+			p.SetLogger(nil)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for range 5 {
+			if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hello"}}, nil, "", nil); err == nil {
+				t.Error("Chat succeeded, want the CLI's failure")
+			}
+		}
+	}()
+	wg.Wait()
 }

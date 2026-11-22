@@ -153,7 +153,7 @@ func (p *CodexCliProvider) chat(
 			"agent_id", AgentIDFromContext(ctx),
 			"exit_code", exitCode,
 		}
-		if p.logContent {
+		if p.logContent.Load() {
 			attrs = append(attrs, "stderr", stderrStr, "stdout", stdoutStr)
 		}
 		p.log().ErrorContext(ctx, "codex-cli subprocess failed", attrs...)
@@ -373,7 +373,7 @@ func (p *CodexCliProvider) parseJSONLEvents(output, model string, durationMs int
 			rawPreview = rawPreview[:500]
 		}
 		var attrs []any
-		if p.logContent {
+		if p.logContent.Load() {
 			attrs = append(attrs, "raw_stdout", rawPreview)
 		}
 		p.log().Warn("codex-cli returned empty content", attrs...)

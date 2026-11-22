@@ -135,3 +135,13 @@ func TestSetContextWindow_Concurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestZeroManagerLogsNothing(t *testing.T) {
+	// A Manager not built by New has no logger; its logging paths discard
+	// rather than dereference nil.
+	m := &Manager{}
+	m.ObserveUsage(100, 120)
+	if err := m.SetContextWindow(1000); err != nil {
+		t.Fatalf("SetContextWindow: %v", err)
+	}
+}

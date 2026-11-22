@@ -247,20 +247,28 @@ func NewProvider(apiKey, apiBase, proxy string, opts ...Option) *Provider {
 	return p
 }
 
-func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string) *Provider {
-	return NewProvider(apiKey, apiBase, proxy, WithMaxTokensField(maxTokensField))
+// NewProviderWithMaxTokensField creates a provider that sends the token limit
+// in maxTokensField. opts are applied after it.
+func NewProviderWithMaxTokensField(apiKey, apiBase, proxy, maxTokensField string, opts ...Option) *Provider {
+	return NewProvider(apiKey, apiBase, proxy, append([]Option{WithMaxTokensField(maxTokensField)}, opts...)...)
 }
 
+// NewProviderWithMaxTokensFieldAndTimeout creates a provider that sends the
+// token limit in maxTokensField, with a custom request timeout in seconds.
+// opts are applied after both.
 func NewProviderWithMaxTokensFieldAndTimeout(
 	apiKey, apiBase, proxy, maxTokensField string,
 	requestTimeoutSeconds int,
+	opts ...Option,
 ) *Provider {
 	return NewProvider(
 		apiKey,
 		apiBase,
 		proxy,
-		WithMaxTokensField(maxTokensField),
-		WithRequestTimeout(time.Duration(requestTimeoutSeconds)*time.Second),
+		append([]Option{
+			WithMaxTokensField(maxTokensField),
+			WithRequestTimeout(time.Duration(requestTimeoutSeconds) * time.Second),
+		}, opts...)...,
 	)
 }
 
