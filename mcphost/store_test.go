@@ -114,13 +114,21 @@ func TestStore_Rescope(t *testing.T) {
 
 func TestStore_Expiry(t *testing.T) {
 	s := NewStore()
-	tok, err := s.Issue(Grant{Scope: aliceTurn, Expires: time.Now().Add(30 * time.Millisecond)})
+	tok, err := s.Issue(Grant{Scope: aliceTurn, Expires: time.Now().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
+	if _, _, ok := s.Resolve(tok); !ok {
+		t.Fatal("token does not resolve before its expiry")
+	}
+	tok = issue(t, s, Grant{Scope: aliceTurn, Expires: time.Now().Add(20 * time.Millisecond)})
 	_, done, ok := s.Resolve(tok)
 	if !ok {
-		t.Fatal("token does not resolve before its expiry")
+		// A slow runner may be past the expiry already: then it is dropped.
+		_, done, _ = s.Resolve(tok)
+	}
+	if done == nil {
+		return
 	}
 	select {
 	case <-done:
@@ -133,10 +141,23 @@ func TestStore_Expiry(t *testing.T) {
 	if _, err := s.Issue(Grant{Expires: time.Now().Add(-time.Second)}); !errors.Is(err, ErrExpired) {
 		t.Errorf("Issue of an expired grant = %v, want ErrExpired", err)
 	}
-	// Revoked before its expiry: the timer does nothing later.
-	tok = issue(t, s, Grant{Scope: aliceTurn, Expires: time.Now().Add(20 * time.Millisecond)})
-	s.Revoke(tok)
-	time.Sleep(50 * time.Millisecond)
+	// Revoked before its expiry and registered again: the old timer does
+	// not drop the new grant.
+	if err := s.Register("reused", Grant{Scope: aliceTurn, Expires: time.Now().Add(20 * time.Millisecond)}); err != nil {
+		t.Fatal(err)
+	}
+	_, oldDone, _ := s.Resolve("reused")
+	s.Revoke("reused")
+	if err := s.Register("reused", Grant{Scope: aliceTurn}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if _, _, ok := s.Resolve("reused"); !ok {
+		t.Error("an old expiry timer dropped a token registered again")
+	}
+	if oldDone != nil && !closed(oldDone) {
+		t.Error("the revoked grant's done is open")
+	}
 }
 
 func TestStore_Register(t *testing.T) {

@@ -152,11 +152,21 @@ func (e *Endpoint) run(ctx context.Context, caller Caller, call *hook.ToolCall) 
 // execute runs the tool through the caller's set with the Gate. A panic in
 // the tool fails the call as the engine fails it; its OnToolError and
 // AfterTool still run.
+//
+// A background tool (an AsyncExecutor, run when AsyncResult is set) gets
+// the call's context without its cancellation: its work outlives the MCP
+// request by design, as a turn's background tasks outlive the turn, and
+// stopping it is the host's (its task control), not the request's.
 func (e *Endpoint) execute(ctx context.Context, caller Caller, call hook.ToolCall) (res *toolkit.Result) {
 	var cb toolkit.AsyncCallback
 	if e.cfg.AsyncResult != nil {
 		ran := copyCall(call)
 		cb = func(cbCtx context.Context, r *toolkit.Result) { e.cfg.AsyncResult(cbCtx, caller, ran, r) }
+		if info, ok := caller.Set.Lookup(call.Name); ok {
+			if _, async := info.Tool.(toolkit.AsyncExecutor); async {
+				ctx = context.WithoutCancel(ctx)
+			}
+		}
 	}
 	defer func() {
 		if v := recover(); v != nil {
@@ -204,7 +214,9 @@ func copyCall(call hook.ToolCall) hook.ToolCall {
 	return call
 }
 
-// copyResult returns a shallow copy of r, or an error result for nil.
+// copyResult returns a shallow copy of r, or an error result for nil. Its
+// slices (Media, Images, ToolReferences) are shared: a callback replaces
+// them rather than editing them in place.
 func copyResult(r *toolkit.Result) *toolkit.Result {
 	if r == nil {
 		return toolkit.ErrorResult("tool returned no result")

@@ -30,7 +30,8 @@ type CLIServer struct {
 	Name string
 	URL  string
 	// Headers are the HTTP headers the CLI sends: Authorization for a
-	// Bearer endpoint, none for an Argument endpoint. A new map per call.
+	// Bearer endpoint (a new map per Access), nil for an Argument endpoint
+	// or an empty token.
 	Headers map[string]string
 }
 

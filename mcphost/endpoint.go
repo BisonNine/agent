@@ -139,8 +139,9 @@ func New(cfg Config) (*Endpoint, error) {
 	)
 	e.http = server.NewStreamableHTTPServer(e.srv, server.WithStateLess(true))
 
-	e.sync()
+	// Subscribe before the first sync, so no change falls between them.
 	e.unsub = cfg.Catalogue.Subscribe(func(toolkit.Change) { e.sync() })
+	e.sync()
 	return e, nil
 }
 
@@ -151,10 +152,10 @@ func (e *Endpoint) Close() {
 	e.closeOnce.Do(func() { e.unsub() })
 }
 
-// Watch sends tools/list_changed to the endpoint's clients on every change
-// reg reports: for a Bearer endpoint, each caller's set whose grant or
-// switches may change apart from the catalogue. Changes to the Catalogue
-// need no Watch.
+// Watch sends tools/list_changed to every client of the endpoint (MCP over
+// stateless HTTP cannot address one caller) on every change reg reports:
+// for a Bearer endpoint, each caller's set whose grant or switches may
+// change apart from the catalogue. Changes to the Catalogue need no Watch.
 func (e *Endpoint) Watch(reg toolkit.Registry) (unwatch func()) {
 	return reg.Subscribe(func(toolkit.Change) {
 		e.srv.SendNotificationToAllClients(mcp.MethodNotificationToolsListChanged, nil)

@@ -45,7 +45,15 @@ type asyncTool struct {
 }
 
 func (t *asyncTool) ExecuteAsync(ctx context.Context, args map[string]any, cb toolkit.AsyncCallback) *toolkit.Result {
-	go cb(context.WithoutCancel(ctx), toolkit.NewResult("finished "+fmt.Sprint(args["job"])))
+	go func() {
+		// Uses the context it was given: it must outlive the request.
+		time.Sleep(50 * time.Millisecond)
+		if err := ctx.Err(); err != nil {
+			cb(ctx, toolkit.ErrorResult("context ended: "+err.Error()))
+			return
+		}
+		cb(ctx, toolkit.NewResult("finished "+fmt.Sprint(args["job"])))
+	}()
 	return toolkit.AsyncResult("started")
 }
 

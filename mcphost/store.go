@@ -175,14 +175,21 @@ func (s *Store) dropLocked(token string, rec *record) {
 
 // Resolve returns the grant token stands for and a channel closed when the
 // token stops working, or ok false for a token the store does not hold or
-// one past its expiry.
+// one past its expiry (which it drops then, if its timer has not yet).
 func (s *Store) Resolve(token string) (g Grant, done <-chan struct{}, ok bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	rec, held := s.tokens[token]
-	if !held || (!rec.grant.Expires.IsZero() && !time.Now().Before(rec.grant.Expires)) {
+	if !held {
+		s.mu.Unlock()
 		return Grant{}, nil, false
 	}
+	if !rec.grant.Expires.IsZero() && !time.Now().Before(rec.grant.Expires) {
+		s.dropLocked(token, rec)
+		s.mu.Unlock()
+		s.logger.Info("Session token expired", "agent", rec.grant.Scope.AgentID, "session", rec.grant.Scope.Session)
+		return Grant{}, nil, false
+	}
+	s.mu.Unlock()
 	return rec.grant, rec.done, true
 }
 
@@ -243,10 +250,11 @@ func (s *Store) RevokeFunc(match func(Grant) bool) int {
 // for the grant's scope; any other token, an empty one included, is refused
 // with the error text refusal. A host with other credentials as well (long
 // lived service tokens) writes its own Authenticator and calls Resolve.
+// A nil sets serves no one.
 func (s *Store) Authenticator(sets func(hook.Scope) (*toolkit.Set, bool), refusal string) Authenticator {
 	return AuthenticatorFunc(func(_ context.Context, token string) (Caller, error) {
 		g, done, ok := s.Resolve(token)
-		if !ok {
+		if !ok || sets == nil {
 			return Caller{}, errors.New(refusal)
 		}
 		set, ok := sets(g.Scope)

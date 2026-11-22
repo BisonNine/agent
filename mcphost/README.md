@@ -21,7 +21,8 @@ mcp-go: a host that serves no CLI model never links it.
   arguments declared open, as `toolkit.ToolToSchema` does). Each list is
   built from snapshots taken for that request, so a client that lists right
   after a change sees it. A catalogue change sends `tools/list_changed`;
-  `Watch` sends it for changes of a caller's own set.
+  `Watch` sends it (to every client: stateless HTTP cannot address
+  one) for changes of a caller's own set.
 - **Credentials.** `Transport` is `Bearer` (an `Authorization: Bearer`
   header; a request without one or with a refused one is answered 401 with
   `WWW-Authenticate: Bearer realm="<Config.Realm>"`) or `Argument` (the
@@ -42,7 +43,8 @@ mcp-go: a host that serves no CLI model never links it.
   error flag. `ToolCallFinished` carries the whole result (`ForUser`,
   `Media`, ...) and `Config.AsyncResult` a background tool's late one; the
   host delivers them, mcphost publishes nothing. The call's context ends
-  with the MCP request.
+  with the MCP request, except a background tool's (an `AsyncExecutor`
+  with `AsyncResult` set), whose work outlives the request.
 - **`Store`** holds session tokens: `Issue` (64 hex characters from
   crypto/rand, or the host's `WithGenerator`), `Register`, `Resolve`,
   `Rescope`, `Revoke`, `RevokeFunc`, and an optional expiry per grant. A

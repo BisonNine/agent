@@ -23,7 +23,12 @@ func TestLogs_NeverCarryTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.store.Resolve(f.aliceTok)
-	time.Sleep(50 * time.Millisecond)
+	// Past its expiry, the token is dropped by its timer or by this Resolve:
+	// either logs the expiry.
+	time.Sleep(20 * time.Millisecond)
+	if _, _, ok := f.store.Resolve(expiring); ok {
+		t.Error("an expired token resolves")
+	}
 	tokens := []string{f.aliceTok, expiring, "registered-token-value", f.bobTok}
 	f.store.Revoke(f.aliceTok)
 	f.store.Revoke("registered-token-value")
