@@ -302,3 +302,15 @@ project uses [Semantic Versioning](https://semver.org/).
 - Breaking: `WithFolderPermissions` and `WithFilePermissions` (ctxengine,
   memory, session, cogmem store and consolidate) and the two-argument
   `WithFileModes(dir, file)` (openai_compat, openai_responses).
+
+### Fixed
+
+- `ctxengine/session`: `SQLiteStore` could silently lose messages when a
+  session was forgotten (`ForgetSession`, as when a host evicts or deletes a
+  session's manager) or the store closed while that session was being
+  written: a write arriving meanwhile opened a second database handle, took
+  the same sequence number as the write in flight, and one message
+  overwrote the other. A forget or close now waits for the write in flight,
+  the session keeps one handle at a time, and each write takes its sequence
+  number inside its own transaction. `memory.ArchiveStore.Update` runs such a
+  read-then-write transaction.

@@ -53,7 +53,9 @@ holds four things:
 
 `session.NewSQLiteStore(dir)` is the `SessionStore` the engine and the host
 use; it opens each session's database lazily and closes it on `ForgetSession`
-or `Close`. Read-only access by path (a web UI listing sessions, say) goes
+or `Close`, after the operation in flight on that session; a session has one
+open handle at a time, and each write reads the next sequence number inside
+its own transaction, so no two messages can get the same one. Read-only access by path (a web UI listing sessions, say) goes
 through `memory.OpenReadOnly` and its `Window()` / `State()` methods;
 `memory.ListSessions` and `memory.DeleteSession` enumerate and remove whole
 sessions. Truncation deletes window rows; nothing is logically skipped.

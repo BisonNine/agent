@@ -220,13 +220,23 @@ func (a *ArchiveStore) State() (SessionState, error) {
 		return SessionState{}, err
 	}
 	defer done()
+	return readState(db)
+}
 
+// queryRower is the subset of *sql.DB and *sql.Conn readState uses.
+type queryRower interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// readState reads the session_state row, or the zero value and nil if there
+// is none yet.
+func readState(q queryRower) (SessionState, error) {
 	var (
 		st                                                      SessionState
 		createdAt, updatedAt, summaryGeneratedAt                int64
 		cooling, exposeReasoning, showToolActivity, pendingTurn bool
 	)
-	err = db.QueryRowContext(context.Background(),
+	err := q.QueryRowContext(context.Background(),
 		`SELECT key, summary, next_seq, created_at, updated_at,
 		        meaningful_count, compressed_at_meaningful_count, cooling, cooling_since_count,
 		        summary_generated_at, summary_model, active_model_index,
@@ -253,9 +263,17 @@ func (a *ArchiveStore) State() (SessionState, error) {
 	return st, nil
 }
 
-// execer is the subset of *sql.DB and *sql.Tx the state and window writers use.
+// execer is the subset of *sql.DB and txConn the state and window writers use.
 type execer interface {
 	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// txConn is the connection a write transaction runs on.
+type txConn struct{ *sql.Conn }
+
+// Exec runs query on the transaction's connection.
+func (c txConn) Exec(query string, args ...any) (sql.Result, error) {
+	return c.ExecContext(context.Background(), query, args...)
 }
 
 // writeState upserts the single session_state row.
@@ -298,31 +316,89 @@ func (a *ArchiveStore) SetState(st SessionState) error {
 	return writeState(a.db, st)
 }
 
-// withTx runs fn inside one write transaction.
-func (a *ArchiveStore) withTx(fn func(tx *sql.Tx) error) error {
+// withTx runs fn inside one write transaction. The transaction takes the
+// database's write lock when it begins (BEGIN IMMEDIATE), not at its first
+// write, so what fn reads cannot be changed by another connection to the same
+// file before fn's writes commit; a second writer waits out the busy timeout.
+func (a *ArchiveStore) withTx(fn func(tx txConn) error) error {
 	if a.unavailable || a.db == nil {
 		return ErrArchiveUnavailable
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	tx, err := a.db.Begin()
+	conn, err := a.db.Conn(context.Background())
 	if err != nil {
 		return err
 	}
-	if err := fn(tx); err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
-			a.logger().Warn("archive rollback failed",
-				"path", a.path, "error", rbErr.Error())
-		}
+	defer iox.CloseQuietly(a.logger(), conn)
+	tx := txConn{conn}
+	if _, err := tx.Exec("BEGIN IMMEDIATE"); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := fn(tx); err != nil {
+		a.rollback(tx)
+		return err
+	}
+	if _, err := tx.Exec("COMMIT"); err != nil {
+		a.rollback(tx)
+		return err
+	}
+	return nil
+}
+
+// rollback ends tx's transaction after a failure, so the connection goes back
+// to the pool without one open.
+func (a *ArchiveStore) rollback(tx txConn) {
+	if _, err := tx.Exec("ROLLBACK"); err != nil {
+		a.logger().Warn("archive rollback failed",
+			"path", a.path, "error", err.Error())
+	}
+}
+
+// StateTx is one write transaction begun by Update. It holds the database's
+// write lock from the start, so the session_state row State returns is the
+// committed one and stays so until the transaction ends: a value computed
+// from it (the next seq) cannot be taken by another writer, even one on a
+// second connection to the same file.
+type StateTx struct {
+	tx txConn
+}
+
+// Update runs fn in one write transaction and commits what it wrote, or rolls
+// all of it back when fn returns an error.
+func (a *ArchiveStore) Update(fn func(tx *StateTx) error) error {
+	return a.withTx(func(tx txConn) error {
+		return fn(&StateTx{tx: tx})
+	})
+}
+
+// State returns the session_state row, or the zero value and nil if there is
+// none yet.
+func (t *StateTx) State() (SessionState, error) { return readState(t.tx) }
+
+// SetState upserts the session_state row.
+func (t *StateTx) SetState(st SessionState) error { return writeState(t.tx, st) }
+
+// AppendWindow inserts one window row.
+func (t *StateTx) AppendWindow(msg StoredMessage) error { return insertWindow(t.tx, msg) }
+
+// ReplaceWindow replaces every window row with msgs.
+func (t *StateTx) ReplaceWindow(msgs []StoredMessage) error { return replaceWindow(t.tx, msgs) }
+
+// TruncateWindow deletes all but the newest keepLast window rows (every row
+// when keepLast <= 0).
+func (t *StateTx) TruncateWindow(keepLast int) error { return truncateWindow(t.tx, keepLast) }
+
+// AppendSummary appends rec to the summaries table.
+func (t *StateTx) AppendSummary(rec SummaryRecord) error {
+	_, err := insertSummary(t.tx, rec)
+	return err
 }
 
 // AppendWindow inserts one window row and writes st, in one transaction.
 func (a *ArchiveStore) AppendWindow(msg StoredMessage, st SessionState) error {
-	return a.withTx(func(tx *sql.Tx) error {
+	return a.withTx(func(tx txConn) error {
 		if err := insertWindow(tx, msg); err != nil {
 			return err
 		}
@@ -346,7 +422,7 @@ func replaceWindow(ex execer, msgs []StoredMessage) error {
 // ReplaceWindow replaces every window row with msgs and writes st, in one
 // transaction.
 func (a *ArchiveStore) ReplaceWindow(msgs []StoredMessage, st SessionState) error {
-	return a.withTx(func(tx *sql.Tx) error {
+	return a.withTx(func(tx txConn) error {
 		if err := replaceWindow(tx, msgs); err != nil {
 			return err
 		}
@@ -361,7 +437,7 @@ func (a *ArchiveStore) ReplaceWindow(msgs []StoredMessage, st SessionState) erro
 // window beside a stale summary, or a checkpoint for a window that was never
 // written.
 func (a *ArchiveStore) CommitCompaction(msgs []StoredMessage, st SessionState, checkpoint *SummaryRecord) error {
-	return a.withTx(func(tx *sql.Tx) error {
+	return a.withTx(func(tx txConn) error {
 		if err := replaceWindow(tx, msgs); err != nil {
 			return err
 		}
@@ -380,18 +456,23 @@ func (a *ArchiveStore) CommitCompaction(msgs []StoredMessage, st SessionState, c
 // TruncateWindow deletes all but the newest keepLast window rows (every row
 // when keepLast <= 0) and writes st, in one transaction.
 func (a *ArchiveStore) TruncateWindow(keepLast int, st SessionState) error {
-	return a.withTx(func(tx *sql.Tx) error {
-		var err error
-		if keepLast <= 0 {
-			_, err = tx.Exec(`DELETE FROM window`)
-		} else {
-			_, err = tx.Exec(
-				`DELETE FROM window WHERE seq NOT IN (SELECT seq FROM window ORDER BY seq DESC LIMIT ?)`,
-				keepLast)
-		}
-		if err != nil {
+	return a.withTx(func(tx txConn) error {
+		if err := truncateWindow(tx, keepLast); err != nil {
 			return err
 		}
 		return writeState(tx, st)
 	})
+}
+
+// truncateWindow deletes all but the newest keepLast window rows (every row
+// when keepLast <= 0).
+func truncateWindow(ex execer, keepLast int) error {
+	if keepLast <= 0 {
+		_, err := ex.Exec(`DELETE FROM window`)
+		return err
+	}
+	_, err := ex.Exec(
+		`DELETE FROM window WHERE seq NOT IN (SELECT seq FROM window ORDER BY seq DESC LIMIT ?)`,
+		keepLast)
+	return err
 }

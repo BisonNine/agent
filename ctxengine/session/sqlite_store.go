@@ -8,6 +8,7 @@ package session
 import (
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -78,9 +79,11 @@ func WithFileModes(m fsmode.Modes) StoreOption {
 }
 
 // sessionHandle is the cached per-session state: the archive handle and the
-// noise cache, both guarded by mu. closed is set when the handle is dropped
-// from the cache so an operation that raced the drop reopens instead of
-// using a closed database.
+// noise cache, both guarded by mu. closed is set, under mu, when the handle is
+// closed and dropped from the cache, so an operation that was waiting for mu
+// looks the session up again and reopens instead of using a closed database.
+// Lock order: s.mu may be taken while holding mu, never mu while holding
+// s.mu.
 type sessionHandle struct {
 	mu      sync.Mutex
 	archive *memory.ArchiveStore
@@ -161,10 +164,20 @@ func (s *SQLiteStore) with(key string, fn func(a *memory.ArchiveStore, h *sessio
 	}
 }
 
-// state reads the session_state row with Key filled in for a session that
-// has no row yet.
-func state(a *memory.ArchiveStore, key string) (memory.SessionState, error) {
-	st, err := a.State()
+// update runs fn on key's archive in one write transaction, under the session
+// lock as with does. fn reads the state inside the transaction (state), so
+// what it computes from it, the next seq above all, cannot be taken by
+// another writer before it commits.
+func (s *SQLiteStore) update(key string, fn func(tx *memory.StateTx) error) error {
+	return s.with(key, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
+		return a.Update(fn)
+	})
+}
+
+// state reads the session_state row inside tx with Key filled in for a
+// session that has no row yet.
+func state(tx *memory.StateTx, key string) (memory.SessionState, error) {
+	st, err := tx.State()
 	if err != nil {
 		return memory.SessionState{}, err
 	}
@@ -182,38 +195,48 @@ func (s *SQLiteStore) AddMessage(sessionKey, role, content string) error {
 }
 
 // AddFullMessage appends msg to the window under the next sequence number and
-// returns it, or 0 and the error when nothing was written. The message counts
-// towards meaningful_count unless the noise classifier finds it a duplicate
-// of the previous one.
+// returns it, or 0 and the error when nothing was written. The seq is read
+// from the committed state inside the write transaction, so no other writer
+// can be given it. The message counts towards meaningful_count unless the
+// noise classifier finds it a duplicate of the previous one.
 func (s *SQLiteStore) AddFullMessage(sessionKey string, msg spawnllm.Message) (int64, error) {
 	var seq int64
 	err := s.with(sessionKey, func(a *memory.ArchiveStore, h *sessionHandle, noise memory.NoiseKeyFunc) error {
-		st, err := state(a, sessionKey)
-		if err != nil {
-			return err
-		}
+		var (
+			stored  memory.StoredMessage
+			isNoisy bool
+		)
+		if err := a.Update(func(tx *memory.StateTx) error {
+			st, err := state(tx, sessionKey)
+			if err != nil {
+				return err
+			}
 
-		// Assign monotonically increasing sequence number.
-		seq = st.NextSeq + 1
-		if seq <= 0 {
-			seq = 1
-		}
-		stored := memory.NewStoredMessage(seq, msg)
+			// Assign monotonically increasing sequence number.
+			seq = st.NextSeq + 1
+			if seq <= 0 {
+				seq = 1
+			}
+			stored = memory.NewStoredMessage(seq, msg)
 
-		// Determine if this message is noise (no new information).
-		isNoisy := h.noise.IsNoise(stored, noise)
+			// Determine if this message is noise (no new information).
+			isNoisy = h.noise.IsNoise(stored, noise)
 
-		now := time.Now()
-		if st.CreatedAt.IsZero() {
-			st.CreatedAt = now
-		}
-		st.NextSeq = seq
-		if !isNoisy {
-			st.Compaction.MeaningfulCount++
-		}
-		st.UpdatedAt = now
+			now := time.Now()
+			if st.CreatedAt.IsZero() {
+				st.CreatedAt = now
+			}
+			st.NextSeq = seq
+			if !isNoisy {
+				st.Compaction.MeaningfulCount++
+			}
+			st.UpdatedAt = now
 
-		if err := a.AppendWindow(stored, st); err != nil {
+			if err := tx.AppendWindow(stored); err != nil {
+				return err
+			}
+			return tx.SetState(st)
+		}); err != nil {
 			return err
 		}
 
@@ -272,8 +295,8 @@ func (s *SQLiteStore) GetSummary(key string) string {
 }
 
 func (s *SQLiteStore) SetSummary(key, summary string) error {
-	return s.with(key, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
-		st, err := state(a, key)
+	return s.update(key, func(tx *memory.StateTx) error {
+		st, err := state(tx, key)
 		if err != nil {
 			return err
 		}
@@ -283,7 +306,7 @@ func (s *SQLiteStore) SetSummary(key, summary string) error {
 		}
 		st.Summary = summary
 		st.UpdatedAt = now
-		return a.SetState(st)
+		return tx.SetState(st)
 	})
 }
 
@@ -292,8 +315,8 @@ func (s *SQLiteStore) SetSummary(key, summary string) error {
 // SetHistory takes []spawnllm.Message, so there is no prior CreatedAt to carry
 // over and each message is stamped now.
 func (s *SQLiteStore) SetHistory(key string, history []spawnllm.Message) error {
-	return s.with(key, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
-		st, err := state(a, key)
+	return s.update(key, func(tx *memory.StateTx) error {
+		st, err := state(tx, key)
 		if err != nil {
 			return err
 		}
@@ -310,7 +333,10 @@ func (s *SQLiteStore) SetHistory(key string, history []spawnllm.Message) error {
 			stored[i] = memory.NewStoredMessage(seq, msg)
 		}
 		st.NextSeq = seq
-		return a.ReplaceWindow(stored, st)
+		if err := tx.ReplaceWindow(stored); err != nil {
+			return err
+		}
+		return tx.SetState(st)
 	})
 }
 
@@ -339,8 +365,8 @@ func withStableSeqs(history []memory.StoredMessage, nextSeq int64) ([]memory.Sto
 // summaries and written to the archive. Messages without a seq are minted one
 // after the highest seen; NextSeq never goes backwards.
 func (s *SQLiteStore) SetHistoryWithSeqs(key string, history []memory.StoredMessage) error {
-	return s.with(key, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
-		st, err := state(a, key)
+	return s.update(key, func(tx *memory.StateTx) error {
+		st, err := state(tx, key)
 		if err != nil {
 			return err
 		}
@@ -352,7 +378,10 @@ func (s *SQLiteStore) SetHistoryWithSeqs(key string, history []memory.StoredMess
 
 		stored, next := withStableSeqs(history, st.NextSeq)
 		st.NextSeq = next
-		return a.ReplaceWindow(stored, st)
+		if err := tx.ReplaceWindow(stored); err != nil {
+			return err
+		}
+		return tx.SetState(st)
 	})
 }
 
@@ -363,8 +392,8 @@ func (s *SQLiteStore) SetHistoryWithSeqs(key string, history []memory.StoredMess
 // window beside a stale summary, or a checkpoint without the window it
 // describes.
 func (s *SQLiteStore) CommitCompaction(key string, c CompactionCommit) error {
-	return s.with(key, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
-		st, err := state(a, key)
+	return s.update(key, func(tx *memory.StateTx) error {
+		st, err := state(tx, key)
 		if err != nil {
 			return err
 		}
@@ -382,7 +411,16 @@ func (s *SQLiteStore) CommitCompaction(key string, c CompactionCommit) error {
 		if c.Compaction != nil {
 			c.Compaction(&st.Compaction)
 		}
-		return a.CommitCompaction(stored, st, c.Checkpoint)
+		if err := tx.ReplaceWindow(stored); err != nil {
+			return err
+		}
+		if err := tx.SetState(st); err != nil {
+			return err
+		}
+		if c.Checkpoint == nil {
+			return nil
+		}
+		return tx.AppendSummary(*c.Checkpoint)
 	})
 }
 
@@ -390,8 +428,8 @@ func (s *SQLiteStore) CommitCompaction(key string, c CompactionCommit) error {
 // full reset: the window is emptied and the compression counters cleared
 // (the archive is untouched — Manager.Reset preserves it by design).
 func (s *SQLiteStore) TruncateHistory(key string, keepLast int) error {
-	return s.with(key, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
-		st, err := state(a, key)
+	return s.update(key, func(tx *memory.StateTx) error {
+		st, err := state(tx, key)
 		if err != nil {
 			return err
 		}
@@ -401,18 +439,21 @@ func (s *SQLiteStore) TruncateHistory(key string, keepLast int) error {
 			st.Compaction.Cooling = false
 		}
 		st.UpdatedAt = time.Now()
-		return a.TruncateWindow(keepLast, st)
+		if err := tx.TruncateWindow(keepLast); err != nil {
+			return err
+		}
+		return tx.SetState(st)
 	})
 }
 
 func (s *SQLiteStore) setPendingTurn(key string, pending bool) error {
-	return s.with(key, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
-		st, err := state(a, key)
+	return s.update(key, func(tx *memory.StateTx) error {
+		st, err := state(tx, key)
 		if err != nil {
 			return err
 		}
 		st.PendingTurn = pending
-		return a.SetState(st)
+		return tx.SetState(st)
 	})
 }
 
@@ -493,14 +534,14 @@ func (s *SQLiteStore) GetCompactionState(sessionKey string) (memory.CompactionSt
 // SetCompactionState writes the compaction counters back to the session state.
 // Implements the ctxengine.CompactionStateStore interface via structural typing.
 func (s *SQLiteStore) SetCompactionState(sessionKey string, cs memory.CompactionState) error {
-	return s.with(sessionKey, func(a *memory.ArchiveStore, _ *sessionHandle, _ memory.NoiseKeyFunc) error {
-		st, err := state(a, sessionKey)
+	return s.update(sessionKey, func(tx *memory.StateTx) error {
+		st, err := state(tx, sessionKey)
 		if err != nil {
 			return err
 		}
 		st.Compaction = cs
 		st.UpdatedAt = time.Now()
-		return a.SetState(st)
+		return tx.SetState(st)
 	})
 }
 
@@ -509,10 +550,13 @@ func (s *SQLiteStore) SetCompactionState(sessionKey string, cs memory.Compaction
 // reopens the database. Called when a session's context manager is evicted so
 // the cache does not grow unbounded over the lifetime of the process, and
 // before a session's database is deleted.
+//
+// An operation in flight on the session finishes on the old handle first;
+// one that starts meanwhile waits and then reopens. The handle stays cached
+// until it is closed, so a session never has two open at once.
 func (s *SQLiteStore) ForgetSession(key string) {
 	s.mu.Lock()
 	h, ok := s.sessions[key]
-	delete(s.sessions, key)
 	s.mu.Unlock()
 	if !ok {
 		return
@@ -520,26 +564,36 @@ func (s *SQLiteStore) ForgetSession(key string) {
 	s.closeHandle(key, h)
 }
 
-// closeHandle marks h dropped and closes its database once any in-flight
-// operation has finished.
+// closeHandle waits for any in-flight operation on h, closes its database,
+// marks it dropped and removes it from the cache, all under h's lock: an
+// operation waiting for the lock then finds it dropped and looks key up
+// again, by which time it is gone and a fresh handle is opened.
 func (s *SQLiteStore) closeHandle(key string, h *sessionHandle) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.closed = true
-	if h.archive == nil {
+	if h.closed {
 		return
 	}
-	if err := h.archive.Close(); err != nil {
-		s.warn("close", key, err)
+	h.closed = true
+	if h.archive != nil {
+		if err := h.archive.Close(); err != nil {
+			s.warn("close", key, err)
+		}
+		h.archive = nil
 	}
-	h.archive = nil
+	s.mu.Lock()
+	if s.sessions[key] == h {
+		delete(s.sessions, key)
+	}
+	s.mu.Unlock()
 }
 
-// Close closes every cached database handle.
+// Close closes every cached database handle, each after the operation in
+// flight on it, as ForgetSession does. A later access reopens the database.
 func (s *SQLiteStore) Close() error {
 	s.mu.Lock()
-	handles := s.sessions
-	s.sessions = make(map[string]*sessionHandle)
+	handles := make(map[string]*sessionHandle, len(s.sessions))
+	maps.Copy(handles, s.sessions)
 	s.mu.Unlock()
 	for key, h := range handles {
 		s.closeHandle(key, h)

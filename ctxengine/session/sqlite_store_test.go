@@ -273,3 +273,207 @@ func TestConcurrent_AddAndRead(t *testing.T) {
 		t.Error("summary lost")
 	}
 }
+
+// gate is a noise key function that stops AddFullMessage for chosen contents
+// at the point where the seq has been read and the row not yet written: the
+// call reports on arrived and waits for release.
+type gate struct {
+	arrived map[string]chan struct{}
+	release map[string]chan struct{}
+}
+
+func newGate(contents ...string) *gate {
+	g := &gate{arrived: map[string]chan struct{}{}, release: map[string]chan struct{}{}}
+	for _, c := range contents {
+		g.arrived[c] = make(chan struct{})
+		g.release[c] = make(chan struct{})
+	}
+	return g
+}
+
+// key is the memory.NoiseKeyFunc. IsNoise and Record both call it; only the
+// first call (IsNoise, before the write) stops.
+func (g *gate) key(content string) (string, bool) {
+	if ch, ok := g.arrived[content]; ok {
+		select {
+		case <-ch:
+		default:
+			close(ch)
+			<-g.release[content]
+		}
+	}
+	return "", false
+}
+
+// reached reports whether the add of content arrived at the gate within d.
+func (g *gate) reached(content string, d time.Duration) bool {
+	select {
+	case <-g.arrived[content]:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// waitForgotten waits up to d for key's handle to leave the cache.
+func waitForgotten(s *SQLiteStore, key string, d time.Duration) {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		_, ok := s.sessions[key]
+		s.mu.Unlock()
+		if !ok {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestForgetSession_WriterInFlight forgets a session while an add holds its
+// seq and has not yet written, then adds again: the second add must not run
+// on a second database handle and reuse the seq, which overwrote the first
+// message.
+func TestForgetSession_WriterInFlight(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		forget func(s *SQLiteStore, key string)
+	}{
+		{"ForgetSession", func(s *SQLiteStore, key string) { s.ForgetSession(key) }},
+		{"Close", func(s *SQLiteStore, _ string) { noErr(t, s.Close()) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newStore(t)
+			const key = "alice"
+			g := newGate("first", "second")
+			s.SetNoiseKey(g.key)
+
+			var wg sync.WaitGroup
+			errs := make(chan error, 2)
+			wg.Go(func() {
+				if err := s.AddMessage(key, "user", "first"); err != nil {
+					errs <- err
+				}
+			})
+			if !g.reached("first", 5*time.Second) {
+				t.Fatal("the first add never reached the gate")
+			}
+			forgotten := make(chan struct{})
+			go func() {
+				tc.forget(s, key)
+				close(forgotten)
+			}()
+			// Before the fix the handle left the cache at once; after it, it
+			// stays until the in-flight add has finished.
+			waitForgotten(s, key, 100*time.Millisecond)
+			wg.Go(func() {
+				if err := s.AddMessage(key, "user", "second"); err != nil {
+					errs <- err
+				}
+			})
+			// Before the fix the second add ran on a second handle and reached
+			// its write here holding the same seq as the first; after it, it
+			// waits for the first add and the close.
+			g.reached("second", 100*time.Millisecond)
+			close(g.release["second"])
+			close(g.release["first"])
+			wg.Wait()
+			<-forgotten
+			close(errs)
+			for err := range errs {
+				t.Error(err)
+			}
+
+			stored := s.GetHistoryWithSeqs(key)
+			got := make([]string, len(stored))
+			for i, sm := range stored {
+				got[i] = fmt.Sprintf("%d:%s", sm.Seq, sm.Content)
+			}
+			if want := []string{"1:first", "2:second"}; !slices.Equal(got, want) {
+				t.Fatalf("window = %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+// TestSessionsIndependent holds one session's lock (an add stopped before its
+// write) while that session is being forgotten: adds, reads and a forget on
+// another session still complete.
+func TestSessionsIndependent(t *testing.T) {
+	s := newStore(t)
+	g := newGate("held")
+	s.SetNoiseKey(g.key)
+
+	var wg sync.WaitGroup
+	wg.Go(func() { noErr(t, s.AddMessage("alice", "user", "held")) })
+	if !g.reached("held", 5*time.Second) {
+		t.Fatal("the add never reached the gate")
+	}
+	wg.Go(func() { s.ForgetSession("alice") })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := range 5 {
+			if err := s.AddMessage("bob", "user", fmt.Sprintf("m%d", i)); err != nil {
+				t.Error(err)
+			}
+		}
+		_ = s.GetHistory("bob")
+		s.ForgetSession("bob")
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("bob's session waited for alice's")
+	}
+	close(g.release["held"])
+	wg.Wait()
+
+	if got := len(s.GetHistory("bob")); got != 5 {
+		t.Errorf("bob = %d messages, want 5", got)
+	}
+	if got := s.GetHistory("alice"); len(got) != 1 || got[0].Content != "held" {
+		t.Errorf("alice = %+v", got)
+	}
+}
+
+// TestTwoHandlesNeverShareSeq writes one session through two stores on the
+// same directory, so two database handles are open at once: each add takes
+// its seq inside its own write transaction, so none is reused or lost.
+func TestTwoHandlesNeverShareSeq(t *testing.T) {
+	dir := t.TempDir()
+	stores := []*SQLiteStore{openStore(t, dir), openStore(t, dir)}
+	// Open both handles one after the other: memory.Open of a new file is
+	// not what this tests.
+	for _, s := range stores {
+		_ = s.GetHistory("alice")
+	}
+	const perWriter = 25
+	var wg sync.WaitGroup
+	errs := make(chan error, 2*len(stores)*perWriter)
+	for _, s := range stores {
+		for range 2 {
+			wg.Go(func() {
+				for i := range perWriter {
+					if err := s.AddMessage("alice", "user", fmt.Sprintf("m%d", i)); err != nil {
+						errs <- err
+					}
+				}
+			})
+		}
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	stored := stores[0].GetHistoryWithSeqs("alice")
+	if len(stored) != 2*len(stores)*perWriter {
+		t.Fatalf("window = %d messages, want %d", len(stored), 2*len(stores)*perWriter)
+	}
+	for i, sm := range stored {
+		if sm.Seq != int64(i+1) {
+			t.Fatalf("stored[%d].Seq = %d", i, sm.Seq)
+		}
+	}
+}

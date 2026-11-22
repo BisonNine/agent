@@ -6,9 +6,7 @@
 package session
 
 import (
-	"fmt"
 	"os"
-	"sync"
 	"testing"
 
 	"go.bison9.com/agent/ctxengine/memory"
@@ -46,43 +44,6 @@ func TestMemoryStore_DeleteSession(t *testing.T) {
 	}
 	if h := s.GetHistory("b"); len(h) != 1 || h[0].Content != "kept" {
 		t.Errorf("other session = %+v", h)
-	}
-}
-
-// TestMemoryStore_ForgetSessionConcurrent forgets a session while it is being
-// written: no add is lost and no seq is reused.
-func TestMemoryStore_ForgetSessionConcurrent(t *testing.T) {
-	s := NewMemory()
-	const goroutines, perGoroutine = 10, 20
-	var wg sync.WaitGroup
-	errs := make(chan error, goroutines*perGoroutine)
-	for range goroutines {
-		wg.Go(func() {
-			for i := range perGoroutine {
-				if err := s.AddMessage("k", "user", fmt.Sprintf("m%d", i)); err != nil {
-					errs <- err
-				}
-			}
-		})
-	}
-	wg.Go(func() {
-		for range 50 {
-			s.ForgetSession("k")
-		}
-	})
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Error(err)
-	}
-	stored := s.GetHistoryWithSeqs("k")
-	if len(stored) != goroutines*perGoroutine {
-		t.Fatalf("window = %d messages, want %d", len(stored), goroutines*perGoroutine)
-	}
-	for i, sm := range stored {
-		if sm.Seq != int64(i+1) {
-			t.Fatalf("stored[%d].Seq = %d", i, sm.Seq)
-		}
 	}
 }
 

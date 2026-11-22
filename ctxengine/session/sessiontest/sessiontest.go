@@ -63,6 +63,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"MeaningfulCount", check.testMeaningfulCount},
 		{"NoiseKey", check.testNoiseKey},
 		{"ForgetSession", check.testForgetSession},
+		{"ForgetSessionConcurrent", check.testForgetSessionConcurrent},
 		{"CompactionStateRoundTrip", check.testCompactionStateRoundTrip},
 		{"CommitCompaction", check.testCommitCompaction},
 		{"PendingTurn", check.testPendingTurn},
@@ -571,6 +572,43 @@ func (c check) testForgetSession() {
 	noErr(t, err)
 	if st.MeaningfulCount != 2 {
 		t.Errorf("MeaningfulCount = %d, want 2 (cache dropped)", st.MeaningfulCount)
+	}
+}
+
+// testForgetSessionConcurrent forgets a session while it is being written: no
+// add is lost and no seq is reused.
+func (c check) testForgetSessionConcurrent() {
+	t, s := c.t, c.s
+	const goroutines, perGoroutine = 10, 20
+	var wg sync.WaitGroup
+	errs := make(chan error, goroutines*perGoroutine)
+	for range goroutines {
+		wg.Go(func() {
+			for i := range perGoroutine {
+				if err := s.AddMessage("k", "user", fmt.Sprintf("m%d", i)); err != nil {
+					errs <- err
+				}
+			}
+		})
+	}
+	wg.Go(func() {
+		for range 50 {
+			s.ForgetSession("k")
+		}
+	})
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+	stored := s.GetHistoryWithSeqs("k")
+	if len(stored) != goroutines*perGoroutine {
+		t.Fatalf("window = %d messages, want %d", len(stored), goroutines*perGoroutine)
+	}
+	for i, sm := range stored {
+		if sm.Seq != int64(i+1) {
+			t.Fatalf("stored[%d].Seq = %d", i, sm.Seq)
+		}
 	}
 }
 
