@@ -36,6 +36,7 @@ var (
 
 	_ = hook.Plugin{
 		BeforeTurn: func(context.Context, *hook.Turn) (*hook.TurnResult, error) { return nil, nil }, //nolint:nilnil // (nil, nil): run the step
+		BeforeLoop: func(context.Context, *hook.Loop) error { return nil },
 		AfterTurn:  func(context.Context, *hook.Turn, *hook.TurnResult) {},
 		BeforeModel: func(context.Context, *hook.ModelInfo) (*protocoltypes.LLMResponse, error) {
 			return nil, nil //nolint:nilnil // (nil, nil): run the step

@@ -40,13 +40,12 @@ type TurnStarted struct {
 // was stored (unless AlreadyStored) with any compaction that started, after
 // the session's context was first assembled for the turn (with any
 // compaction that ran) and the pending marker was written (or its failure
-// logged); before the first iteration's tool definitions, assembly and
-// BeforeModel, so before every ModelCallStarted. A turn BeforeTurn answered
-// or refused, or one that ended before its loop (the store refused its
-// message), has none. It is emitted on the turn's goroutine, so OnEvent
-// sees it there, on the turn's context, before the loop goes on: a host
-// that starts something for the model loop (a progress heartbeat, per-chat
-// settings read once) starts it here.
+// logged), and after every BeforeLoop callback returned without error;
+// before the first iteration's tool definitions, assembly and BeforeModel,
+// so before every ModelCallStarted. A turn BeforeTurn answered or refused,
+// one a BeforeLoop callback ended, or one that ended before its loop (the
+// store refused its message), has none. It only reports: set-up the turn
+// depends on belongs in BeforeLoop, whose failure ends the turn.
 type LoopStarted struct {
 	EventHeader
 }
@@ -109,8 +108,9 @@ type ModelAnswer struct {
 }
 
 // TextDelta is partial reply text as the model streams it. The engine asks
-// a provider for partial text only when the agent has an OnTextDelta
-// callback; without one no TextDelta is emitted. Every TextDelta of a run
+// a provider for partial text only when Loop.TextDeltas is true after
+// BeforeLoop (by default, when the agent has an OnTextDelta callback);
+// otherwise no TextDelta is emitted. Every TextDelta of a run
 // comes before its TurnFinished.
 type TextDelta struct {
 	EventHeader

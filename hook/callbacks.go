@@ -96,6 +96,44 @@ type ToolCall struct {
 // which runs in both cases.
 type BeforeTurnFunc func(ctx context.Context, turn *Turn) (*TurnResult, error)
 
+// Loop is a turn's model loop about to start, as BeforeLoop sees it.
+type Loop struct {
+	// Turn is the turn: its message as stored and the run's options. Read
+	// only.
+	Turn Turn
+	// TextDeltas reports whether the turn's model calls ask the provider
+	// for partial text (TextDelta, OnTextDelta). It starts true when any
+	// OnTextDelta callback is registered and false otherwise; BeforeLoop
+	// may turn it off or on for this turn. On with no OnTextDelta
+	// callback, the deltas reach only the events. A provider that cannot
+	// stream ignores it.
+	TextDeltas bool
+}
+
+// BeforeLoopFunc runs once per turn that reaches its model loop, on the
+// turn's goroutine and context: after BeforeTurn let the turn run, the
+// session was opened (and reset when the run asked), the message was stored
+// (unless AlreadyStored) with any compaction that started, the session's
+// context was first assembled for the turn (with any compaction that ran)
+// and the pending marker written (or its failure logged); before
+// LoopStarted and the first iteration (its tool definitions, assembly,
+// BeforeModel and model call). Nothing of the loop has happened yet.
+//
+// It is where a host sets up what the loop depends on: settings read once
+// for the turn, work that lives for the loop, and whether the turn streams
+// (loop.TextDeltas). It may change loop.TextDeltas only. It cannot register
+// callbacks: every callback is registered when the agent is built, and one
+// a host switches per turn acts on state this callback sets.
+//
+// A non-nil error ends the turn: the later BeforeLoop callbacks do not run,
+// LoopStarted is not emitted and no model is called; the turn ends with
+// OutcomeError and that error, as a loop that failed before its first model
+// call: AfterTurn runs, the reply it leaves in Stored (empty unless it sets
+// one) is stored, the session saved and the pending marker cleared (kept
+// when the cause wraps ErrShutdown), then TurnFinished. The stored message
+// stays.
+type BeforeLoopFunc func(ctx context.Context, loop *Loop) error
+
 // AfterTurnFunc runs once at the end of every turn that ran BeforeTurn,
 // however it ended, before the engine stores result.Stored and emits
 // TurnFinished. Its context carries the turn's values but is never
@@ -189,7 +227,9 @@ type OnCompactionFunc func(ctx context.Context, ev Compaction)
 
 // OnTextDeltaFunc observes partial reply text as a provider streams it, on
 // the goroutine the provider delivers it on, in order for one model call.
-// It must return quickly. The TextDelta event carries the same.
+// It must return quickly. The TextDelta event carries the same. Partial
+// text is asked for only when Loop.TextDeltas is true after BeforeLoop:
+// registering one turns it on by default.
 type OnTextDeltaFunc func(ctx context.Context, ev TextDelta)
 
 // OnInterruptFunc observes an interrupt (Agent.Interrupt, Run.Interrupt) or
@@ -241,6 +281,7 @@ type Plugin struct {
 	Name string
 
 	BeforeTurn   BeforeTurnFunc
+	BeforeLoop   BeforeLoopFunc
 	AfterTurn    AfterTurnFunc
 	BeforeModel  BeforeModelFunc
 	AfterModel   AfterModelFunc

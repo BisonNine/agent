@@ -49,7 +49,7 @@
 //   - An observing callback (OnFallback, OnCompaction, OnTextDelta,
 //     OnInterrupt, OnEvent): nothing more; the turn goes on as if it had
 //     returned. Only an observer is safe to skip.
-//   - A turn or model step (BeforeTurn, BeforeModel, AfterModel,
+//   - A turn or model step (BeforeTurn, BeforeLoop, BeforeModel, AfterModel,
 //     OnModelError, DescribeImages): the turn ends with OutcomeError, its
 //     Err the *PanicError. The later callbacks of that kind do not run and
 //     nothing of the step is used or stored (after an AfterModel panic no
@@ -79,9 +79,10 @@
 //     AfterTurn, storing the reply and saving the session. Only the
 //     compaction deferred until after the reply falls outside it.
 //   - A turn that reaches its model loop has exactly one LoopStarted, after
-//     its message is stored and the pending marker written, before its first
-//     ModelCallStarted (and before anything else of the loop). A turn
-//     BeforeTurn answered or refused, or that ended before its loop, has
+//     its message is stored, the pending marker written and every BeforeLoop
+//     callback returned without error, before its first ModelCallStarted
+//     (and before anything else of the loop). A turn BeforeTurn answered or
+//     refused, one BeforeLoop ended, or one that ended before its loop, has
 //     none.
 //   - Every ModelCallStarted is followed by exactly one ModelCall. A
 //     dispatch's events come in this order: ModelCallStarted and ModelCall

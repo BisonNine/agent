@@ -110,3 +110,46 @@ func ExampleRun_consumer() {
 	// > on 20 November.
 	// ok: It shipped on 20 November.
 }
+
+// A BeforeLoop callback that sets up a turn's model loop: the turn streams
+// only when its chat can show partial text, read once now, and a chat that
+// cannot be reached ends the turn before any model is called. The breadcrumb
+// consumer, registered with the agent, acts only when this callback switched
+// it on.
+func ExampleBeforeLoopFunc() {
+	type chat struct {
+		streams, reachable, breadcrumbs bool
+	}
+	chats := map[string]chat{
+		"s-42": {streams: true, reachable: true, breadcrumbs: true},
+		"s-43": {streams: false, reachable: true},
+		"s-44": {reachable: false},
+	}
+	var showBreadcrumbs bool // the turn's state, read by a consumer
+	var before hook.BeforeLoopFunc = func(ctx context.Context, loop *hook.Loop) error {
+		scope, _ := hook.ScopeOf(ctx)
+		c := chats[scope.Session]
+		if !c.reachable {
+			return fmt.Errorf("chat %s cannot be reached", scope.Session)
+		}
+		loop.TextDeltas = c.streams
+		showBreadcrumbs = c.breadcrumbs
+		return nil
+	}
+
+	for _, session := range []string{"s-42", "s-43", "s-44"} {
+		ctx := hook.WithScope(context.Background(), hook.Scope{AgentID: "alice", Session: session})
+		// An OnTextDelta callback is registered, so TextDeltas starts true.
+		loop := hook.Loop{Turn: hook.Turn{Message: hook.UserText("Where is my order?")}, TextDeltas: true}
+		showBreadcrumbs = false
+		if err := before(ctx, &loop); err != nil {
+			fmt.Printf("%s: turn ends: %v\n", session, err)
+			continue
+		}
+		fmt.Printf("%s: text deltas %v, breadcrumbs %v\n", session, loop.TextDeltas, showBreadcrumbs)
+	}
+	// Output:
+	// s-42: text deltas true, breadcrumbs true
+	// s-43: text deltas false, breadcrumbs false
+	// s-44: turn ends: chat s-44 cannot be reached
+}

@@ -238,7 +238,9 @@ project uses [Semantic Versioning](https://semver.org/).
   its earlier edits are gone.
 - `hook` package, the contract the agent loop will be built on, without the
   loop: the callback types (`BeforeTurnFunc`, `AfterTurnFunc`,
-  `BeforeModelFunc`, `AfterModelFunc`, `OnModelErrorFunc`, `OnFallbackFunc`,
+  `BeforeLoopFunc` with `Loop` (set-up when the model loop starts, and
+  whether the turn asks for partial text), `BeforeModelFunc`,
+  `AfterModelFunc`, `OnModelErrorFunc`, `OnFallbackFunc`,
   `BeforeToolFunc`, `AfterToolFunc`, `OnToolErrorFunc`, `OnCompactionFunc`,
   `OnTextDeltaFunc`, `OnInterruptFunc`, `OnEventFunc`, bundled as a
   `Plugin`) with what each may change; the events (`TurnStarted`,

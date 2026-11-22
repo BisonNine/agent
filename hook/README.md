@@ -28,13 +28,17 @@ Watching is done with events; a callback exists only to change a step.
   `ToolResultStored`; `Compaction`; `Image`; `TaskStarted`, `TaskFinished`;
   and `TurnFinished`. Each carries an `EventHeader` (the turn's `Scope` and
   the time).
-- **Callbacks that change a step.** `BeforeTurn`, `AfterTurn`,
-  `BeforeModel`, `AfterModel`, `OnModelError`, `BeforeTool`, `AfterTool`,
-  `OnToolError`, and `DescribeImages` (one text for the images a batch's
-  tools returned, for a model that cannot see them). A `Before…` callback
-  may edit the step's input; a non-nil replacement it returns skips the
-  step. An `After…` callback edits the step's result in place. Several of
-  one kind run in registration order.
+- **Callbacks that change a step.** `BeforeTurn`, `BeforeLoop` (set-up
+  when the model loop starts, after the message is stored; it decides
+  whether the turn streams, `Loop.TextDeltas`, and its error ends the turn),
+  `AfterTurn`, `BeforeModel`, `AfterModel`, `OnModelError`, `BeforeTool`,
+  `AfterTool`, `OnToolError`, and `DescribeImages` (one text for the
+  images a batch's tools returned, for a model that cannot see them). A
+  `Before…` callback may edit the step's input; a non-nil replacement it
+  returns skips the step. An `After…` callback edits the step's result in
+  place. Several of one kind run in registration order. Every callback is
+  registered when the agent is built; one a host switches per turn acts on
+  state its `BeforeLoop` sets.
 - **Panics.** A panic in an observer is logged and the turn goes on; in a
   callback that changes a turn or model step it ends the turn with
   `OutcomeError` and a `*PanicError`; in a tool callback it fails that call.
