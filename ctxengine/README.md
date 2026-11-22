@@ -105,9 +105,13 @@ options that name a directory. Without them:
 - no `WithCompressionProfileDir`: no compression profile and no
   `compact.jsonl` debug log.
 
-Eviction placeholders still name `session_messages` as a way back to an
-evicted result; without an archive the model's only way back is to re-read
-the resource.
+Eviction placeholders and the rendered summary still name
+`session_messages` as the way back to older messages; without an archive the
+model's only way back to an evicted result is to re-read the resource.
+
+`NewMemory()` with `WithArchiveDir` archives messages but no summary
+checkpoints: the manager hands checkpoints to the store, and the in-memory
+store does not keep them.
 
 ## What it does not own
 

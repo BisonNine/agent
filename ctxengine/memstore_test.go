@@ -174,11 +174,11 @@ func TestMemoryStore_SameAsSQLite(t *testing.T) {
 }
 
 // TestMemoryStore_NoDisk runs the scenario over the in-memory store with the
-// working, temporary and home directories all pointing at an empty read-only
-// directory, and checks that nothing was created in it.
+// working, temporary and home directories all pointing at one empty, writable
+// directory, so a write by relative or default path would land there, and
+// checks that it is still empty.
 func TestMemoryStore_NoDisk(t *testing.T) {
 	dir := t.TempDir()
-	noErr(t, os.Chmod(dir, 0o500))
 	t.Chdir(dir)
 	t.Setenv("TMPDIR", dir)
 	t.Setenv("HOME", dir)

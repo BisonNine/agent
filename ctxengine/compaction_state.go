@@ -22,7 +22,7 @@ type CompactionCommitter interface {
 // CompactionStateStore is an optional interface that session store backends
 // may implement to persist compression state across process restarts.
 // Manager checks for this interface via type assertion; backends that do not
-// implement it (an in-memory test store) use zero-state initialization.
+// implement it (a test fake) use zero-state initialization.
 //
 // CompactionState is defined in memory so that implementing backends in
 // session can satisfy this interface without importing the engine package

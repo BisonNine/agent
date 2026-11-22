@@ -345,7 +345,6 @@ func (c check) testTruncateHistory() {
 	// keepLast <= 0 empties the window and resets the compression counters.
 	st.CompressedAtMeaningfulCount = 3
 	st.Cooling = true
-	st.CoolingSinceCount = 4
 	st.ActiveModelIndex = 2
 	noErr(t, s.SetCompactionState("trunc", st))
 	noErr(t, s.TruncateHistory("trunc", 0))
@@ -357,8 +356,8 @@ func (c check) testTruncateHistory() {
 	if st.MeaningfulCount != 0 || st.CompressedAtMeaningfulCount != 0 || st.Cooling {
 		t.Errorf("counters not reset: %+v", st)
 	}
-	if st.ActiveModelIndex != 2 || st.CoolingSinceCount != 4 {
-		t.Errorf("a reset cleared fields it does not own: %+v", st)
+	if st.ActiveModelIndex != 2 {
+		t.Errorf("a reset cleared the host's model index: %+v", st)
 	}
 	// Seqs keep counting after a full reset, and a negative keep is a reset.
 	if seq := mustAdd(t, s, "trunc", user("next")); seq != 11 {

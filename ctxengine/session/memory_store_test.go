@@ -86,12 +86,12 @@ func TestMemoryStore_ForgetSessionConcurrent(t *testing.T) {
 	}
 }
 
-// TestMemoryStore_WritesNothing runs every store operation with the working
-// and temporary directories pointing at a read-only directory and checks that
-// nothing was created anywhere in it.
+// TestMemoryStore_WritesNothing runs every store operation with the working,
+// temporary and home directories pointing at one empty, writable directory,
+// so a write by relative or default path would land there, and checks that it
+// is still empty.
 func TestMemoryStore_WritesNothing(t *testing.T) {
 	dir := t.TempDir()
-	noErr(t, os.Chmod(dir, 0o500))
 	t.Chdir(dir)
 	t.Setenv("TMPDIR", dir)
 	t.Setenv("HOME", dir)

@@ -29,7 +29,7 @@ type SessionStore interface { //nolint:interfacebloat // the engine's public sto
 	// GetHistory returns the full message history for the session.
 	GetHistory(key string) []spawnllm.Message
 	// GetHistoryWithSeqs returns the full message history with seq numbers intact.
-	// Implementations that have no durable seq counter (an in-memory test store)
+	// Implementations that have no durable seq counter (a test fake)
 	// synthesize seq as i+1 for the i-th message.
 	GetHistoryWithSeqs(key string) []memory.StoredMessage
 	// GetSummary returns the conversation summary, or "" if none.

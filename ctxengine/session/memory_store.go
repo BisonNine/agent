@@ -226,7 +226,9 @@ func (s *MemoryStore) SetHistoryWithSeqs(key string, history []memory.StoredMess
 // preserved, as SetHistoryWithSeqs), the current summary when c.Summary is
 // set, and the compaction counters after c.Compaction. c.Checkpoint is not
 // kept: the checkpoint log belongs to the archive, which this store does not
-// have.
+// have. A manager given WithArchiveDir over this store therefore archives
+// messages but no checkpoints. c.Compaction runs under the store's lock and
+// must not call the store.
 func (s *MemoryStore) CommitCompaction(key string, c CompactionCommit) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -357,6 +359,14 @@ func (s *MemoryStore) DeleteSession(key string) {
 	delete(s.sessions, key)
 }
 
-// Close is a no-op: the store holds no resource but memory, and its sessions
-// stay readable, as a closed SQLiteStore's databases stay on disk.
-func (s *MemoryStore) Close() error { return nil }
+// Close drops the noise caches, as SQLiteStore.Close drops its cached
+// handles. The sessions stay readable, as a closed SQLiteStore's databases
+// stay on disk.
+func (s *MemoryStore) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ms := range s.sessions {
+		ms.noise = memory.NewNoiseCache()
+	}
+	return nil
+}
