@@ -27,6 +27,9 @@ project uses [Semantic Versioning](https://semver.org/).
   its prompt text and MCP server entry. Logging is `Config.Logger` /
   `WithLogger`, never with token values. Adds the dependency
   `github.com/mark3labs/mcp-go` (v1.6.0), imported by `mcphost` alone.
+- `ctxengine/memory`: `ArchiveStore.Update` runs one write transaction
+  (`StateTx`) that holds the file's write lock from its start, so state read
+  in it cannot change before its writes commit.
 - `ctxengine/session`: `MemoryStore` (`NewMemory`), an in-memory session
   store for tests and small or ephemeral hosts. It implements
   `SessionStore` and the optional interfaces the manager uses, behaves as
@@ -298,6 +301,9 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Removed
 
+- Breaking: `memory.ArchiveStore.SetState`, `AppendWindow`, `ReplaceWindow`,
+  `CommitCompaction` and `TruncateWindow`, which wrote a state read before
+  the transaction; use `Update`.
 - Breaking: the `logger` package and its process-wide `SetBackend`.
 - Breaking: `WithFolderPermissions` and `WithFilePermissions` (ctxengine,
   memory, session, cogmem store and consolidate) and the two-argument
@@ -312,5 +318,6 @@ project uses [Semantic Versioning](https://semver.org/).
   the same sequence number as the write in flight, and one message
   overwrote the other. A forget or close now waits for the write in flight,
   the session keeps one handle at a time, and each write takes its sequence
-  number inside its own transaction. `memory.ArchiveStore.Update` runs such a
-  read-then-write transaction.
+  number inside its own transaction.
+- `ctxengine/session`: a panic in the host's noise key function left that
+  session locked, so every later operation on it hung.

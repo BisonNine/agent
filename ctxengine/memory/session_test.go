@@ -67,7 +67,7 @@ func TestSetState_RoundTrip(t *testing.T) {
 			ShowToolActivity:            true,
 		},
 	}
-	if err := a.SetState(want); err != nil {
+	if err := setState(a, want); err != nil {
 		t.Fatalf("SetState: %v", err)
 	}
 	got, err := a.State()
@@ -81,7 +81,7 @@ func TestSetState_RoundTrip(t *testing.T) {
 	// Upsert: a second write replaces the single row.
 	want.Summary = "changed"
 	want.PendingTurn = false
-	if err = a.SetState(want); err != nil {
+	if err = setState(a, want); err != nil {
 		t.Fatalf("SetState again: %v", err)
 	}
 	got, err = a.State()
@@ -97,7 +97,7 @@ func TestWindow_AppendReplaceTruncate(t *testing.T) {
 	for i := int64(1); i <= 5; i++ {
 		st.NextSeq = i
 		m := NewStoredMessage(i, spawnllm.Message{Role: "user", Content: string(rune('a' + i - 1))})
-		if err := a.AppendWindow(m, st); err != nil {
+		if err := appendWindow(a, m, st); err != nil {
 			t.Fatalf("AppendWindow(%d): %v", i, err)
 		}
 	}
@@ -118,7 +118,7 @@ func TestWindow_AppendReplaceTruncate(t *testing.T) {
 	}
 
 	st.NextSeq = 9
-	if err = a.TruncateWindow(2, st); err != nil {
+	if err = truncateWindowTo(a, 2, st); err != nil {
 		t.Fatalf("TruncateWindow: %v", err)
 	}
 	w, err = a.Window()
@@ -137,7 +137,7 @@ func TestWindow_AppendReplaceTruncate(t *testing.T) {
 		NewStoredMessage(11, spawnllm.Message{Role: "assistant", Content: "y"}),
 	}
 	st.NextSeq = 11
-	if err = a.ReplaceWindow(repl, st); err != nil {
+	if err = replaceWindowWith(a, repl, st); err != nil {
 		t.Fatalf("ReplaceWindow: %v", err)
 	}
 	w, err = a.Window()
@@ -146,7 +146,7 @@ func TestWindow_AppendReplaceTruncate(t *testing.T) {
 		t.Fatalf("after replace: %+v", w)
 	}
 
-	if err = a.TruncateWindow(0, st); err != nil {
+	if err = truncateWindowTo(a, 0, st); err != nil {
 		t.Fatalf("TruncateWindow(0): %v", err)
 	}
 	w, err = a.Window()
@@ -161,7 +161,7 @@ func TestWindow_AppendReplaceTruncate(t *testing.T) {
 func TestWindow_PreservesZeroCreatedAt(t *testing.T) {
 	a := openSessionArchive(t, t.TempDir(), "z")
 	legacy := StoredMessage{Seq: 1, Role: "user", Content: "old"}
-	if err := a.ReplaceWindow([]StoredMessage{legacy}, SessionState{Key: "z", NextSeq: 1}); err != nil {
+	if err := replaceWindowWith(a, []StoredMessage{legacy}, SessionState{Key: "z", NextSeq: 1}); err != nil {
 		t.Fatalf("ReplaceWindow: %v", err)
 	}
 	w, err := a.Window()
@@ -175,7 +175,7 @@ func TestOpenReadOnly_WindowAndState(t *testing.T) {
 	dir := t.TempDir()
 	a := openSessionArchive(t, dir, "ro")
 	st := SessionState{Key: "ro", Summary: "sum", NextSeq: 1}
-	if err := a.AppendWindow(NewStoredMessage(1, spawnllm.Message{Role: "user", Content: "hi"}), st); err != nil {
+	if err := appendWindow(a, NewStoredMessage(1, spawnllm.Message{Role: "user", Content: "hi"}), st); err != nil {
 		t.Fatalf("AppendWindow: %v", err)
 	}
 
@@ -207,7 +207,7 @@ func TestListSessions(t *testing.T) {
 	dir := t.TempDir()
 	for _, key := range []string{"agent:bob:main", "telegram:1/2"} {
 		a := openSessionArchive(t, dir, key)
-		if err := a.SetState(SessionState{Key: key, NextSeq: 1}); err != nil {
+		if err := setState(a, SessionState{Key: key, NextSeq: 1}); err != nil {
 			t.Fatalf("SetState: %v", err)
 		}
 	}
@@ -236,7 +236,7 @@ func TestDeleteSession(t *testing.T) {
 	dir := t.TempDir()
 	const key = "agent:alice:main"
 	a := openSessionArchive(t, dir, key)
-	if err := a.SetState(SessionState{Key: key, NextSeq: 1}); err != nil {
+	if err := setState(a, SessionState{Key: key, NextSeq: 1}); err != nil {
 		t.Fatalf("SetState: %v", err)
 	}
 	path := ArchivePath(dir, key)

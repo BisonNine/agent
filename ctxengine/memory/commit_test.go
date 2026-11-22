@@ -12,8 +12,8 @@ import (
 	"go.bison9.com/agent/spawnllm"
 )
 
-// TestCommitCompaction_AllOrNothing checks that CommitCompaction writes the
-// window, the session state and the summary checkpoint in one transaction: a
+// TestCommitCompaction_AllOrNothing checks that one Update writes the window,
+// the session state and the summary checkpoint in one transaction: a
 // commit that fails part-way (here on a message that cannot be marshalled,
 // after the window was already cleared inside the transaction) leaves all
 // three exactly as they were.
@@ -23,15 +23,15 @@ func TestCommitCompaction_AllOrNothing(t *testing.T) {
 		return NewStoredMessage(seq, spawnllm.Message{Role: "user", Content: content})
 	}
 	st := SessionState{Key: "k", NextSeq: 3}
-	if err := a.ReplaceWindow([]StoredMessage{msg(1, "a"), msg(2, "b"), msg(3, "c")}, st); err != nil {
-		t.Fatalf("ReplaceWindow: %v", err)
+	if err := replaceWindowWith(a, []StoredMessage{msg(1, "a"), msg(2, "b"), msg(3, "c")}, st); err != nil {
+		t.Fatalf("replaceWindowWith: %v", err)
 	}
 
 	// A commit writes window, state and checkpoint together.
 	st.Summary = "first"
-	if err := a.CommitCompaction([]StoredMessage{msg(2, "b"), msg(3, "c")}, st,
+	if err := commitCompaction(a, []StoredMessage{msg(2, "b"), msg(3, "c")}, st,
 		&SummaryRecord{Model: "m", SourceSeqStart: 1, SourceSeqEnd: 1, Summary: "first"}); err != nil {
-		t.Fatalf("CommitCompaction: %v", err)
+		t.Fatalf("commitCompaction: %v", err)
 	}
 	assertWindowSeqs(t, a, 2, 3)
 	got, err := a.State()
@@ -51,7 +51,7 @@ func TestCommitCompaction_AllOrNothing(t *testing.T) {
 	})
 	st.Summary = "second"
 	st.NextSeq = 4
-	err = a.CommitCompaction([]StoredMessage{msg(3, "c"), bad}, st,
+	err = commitCompaction(a, []StoredMessage{msg(3, "c"), bad}, st,
 		&SummaryRecord{Model: "m", SourceSeqStart: 2, SourceSeqEnd: 2, Summary: "second"})
 	if err == nil {
 		t.Fatal("expected the commit to fail on an unmarshalable message")
@@ -72,8 +72,8 @@ func TestCommitCompaction_AllOrNothing(t *testing.T) {
 func TestCommitCompaction_NoCheckpoint(t *testing.T) {
 	a := openTestArchive(t)
 	m := NewStoredMessage(1, spawnllm.Message{Role: "user", Content: "x"})
-	if err := a.CommitCompaction([]StoredMessage{m}, SessionState{Key: "k", Summary: "s", NextSeq: 1}, nil); err != nil {
-		t.Fatalf("CommitCompaction: %v", err)
+	if err := commitCompaction(a, []StoredMessage{m}, SessionState{Key: "k", Summary: "s", NextSeq: 1}, nil); err != nil {
+		t.Fatalf("commitCompaction: %v", err)
 	}
 	assertWindowSeqs(t, a, 1)
 	got, err := a.State()

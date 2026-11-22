@@ -36,7 +36,7 @@ func TestReadOnlyConnections_WaitOutLock(t *testing.T) {
 	if _, err = a.AppendSummary(SummaryRecord{Summary: "s"}); err != nil {
 		t.Fatalf("AppendSummary: %v", err)
 	}
-	if err = a.ReplaceWindow([]StoredMessage{NewStoredMessage(1, spawnllm.Message{Role: "user", Content: "hello archive"})},
+	if err = replaceWindowWith(a, []StoredMessage{NewStoredMessage(1, spawnllm.Message{Role: "user", Content: "hello archive"})},
 		SessionState{Key: "k", NextSeq: 1}); err != nil {
 		t.Fatalf("ReplaceWindow: %v", err)
 	}

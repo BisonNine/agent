@@ -275,8 +275,8 @@ func TestConcurrent_AddAndRead(t *testing.T) {
 }
 
 // gate is a noise key function that stops AddFullMessage for chosen contents
-// at the point where the seq has been read and the row not yet written: the
-// call reports on arrived and waits for release.
+// while it holds the session and before it writes: the call reports on
+// arrived and waits for release.
 type gate struct {
 	arrived map[string]chan struct{}
 	release map[string]chan struct{}
@@ -292,8 +292,11 @@ func newGate(contents ...string) *gate {
 }
 
 // key is the memory.NoiseKeyFunc. IsNoise and Record both call it; only the
-// first call (IsNoise, before the write) stops.
+// first call (IsNoise, before the write) stops. Content "panic" panics.
 func (g *gate) key(content string) (string, bool) {
+	if content == "panic" {
+		panic("noise key")
+	}
 	if ch, ok := g.arrived[content]; ok {
 		select {
 		case <-ch:
@@ -315,31 +318,39 @@ func (g *gate) reached(content string, d time.Duration) bool {
 	}
 }
 
-// waitForgotten waits up to d for key's handle to leave the cache.
-func waitForgotten(s *SQLiteStore, key string, d time.Duration) {
+// waitForgotten waits up to d for key's handle to leave the cache and
+// reports whether it did.
+func waitForgotten(s *SQLiteStore, key string, d time.Duration) bool {
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		s.mu.Lock()
 		_, ok := s.sessions[key]
 		s.mu.Unlock()
 		if !ok {
-			return
+			return true
 		}
 		time.Sleep(time.Millisecond)
 	}
+	return false
 }
 
-// TestForgetSession_WriterInFlight forgets a session while an add holds its
-// seq and has not yet written, then adds again: the second add must not run
-// on a second database handle and reuse the seq, which overwrote the first
-// message.
+// TestForgetSession_WriterInFlight forgets a session while an add holds it
+// and has not yet written, then adds again. The handle stays cached until the
+// add in flight finishes and the second add waits for it, so the session
+// never has two handles; before the fix the second add ran on a second handle,
+// took the same seq and overwrote the first message.
 func TestForgetSession_WriterInFlight(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
-		forget func(s *SQLiteStore, key string)
+		forget func(t *testing.T, s *SQLiteStore, key string)
 	}{
-		{"ForgetSession", func(s *SQLiteStore, key string) { s.ForgetSession(key) }},
-		{"Close", func(s *SQLiteStore, _ string) { noErr(t, s.Close()) }},
+		{"ForgetSession", func(_ *testing.T, s *SQLiteStore, key string) { s.ForgetSession(key) }},
+		{"Close", func(t *testing.T, s *SQLiteStore, _ string) {
+			t.Helper()
+			if err := s.Close(); err != nil {
+				t.Error(err)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := newStore(t)
@@ -359,21 +370,20 @@ func TestForgetSession_WriterInFlight(t *testing.T) {
 			}
 			forgotten := make(chan struct{})
 			go func() {
-				tc.forget(s, key)
+				tc.forget(t, s, key)
 				close(forgotten)
 			}()
-			// Before the fix the handle left the cache at once; after it, it
-			// stays until the in-flight add has finished.
-			waitForgotten(s, key, 100*time.Millisecond)
+			if waitForgotten(s, key, 100*time.Millisecond) {
+				t.Error("the handle left the cache while a write on it was in flight")
+			}
 			wg.Go(func() {
 				if err := s.AddMessage(key, "user", "second"); err != nil {
 					errs <- err
 				}
 			})
-			// Before the fix the second add ran on a second handle and reached
-			// its write here holding the same seq as the first; after it, it
-			// waits for the first add and the close.
-			g.reached("second", 100*time.Millisecond)
+			if g.reached("second", 100*time.Millisecond) {
+				t.Error("a second add ran while the first held the session")
+			}
 			close(g.release["second"])
 			close(g.release["first"])
 			wg.Wait()
@@ -475,5 +485,67 @@ func TestTwoHandlesNeverShareSeq(t *testing.T) {
 		if sm.Seq != int64(i+1) {
 			t.Fatalf("stored[%d].Seq = %d", i, sm.Seq)
 		}
+	}
+}
+
+// TestNoiseKeyPanic panics in the host's noise function during an add: the
+// session is not left locked and the next add succeeds.
+func TestNoiseKeyPanic(t *testing.T) {
+	s := newStore(t)
+	g := newGate()
+	s.SetNoiseKey(g.key)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("the panic did not reach the caller")
+			}
+		}()
+		_ = s.AddMessage("alice", "user", "panic") //nolint:errcheck // it panics
+	}()
+	done := make(chan error, 1)
+	go func() { done <- s.AddMessage("alice", "user", "after") }()
+	select {
+	case err := <-done:
+		noErr(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the session stayed locked after the panic")
+	}
+	if got := s.GetHistory("alice"); len(got) != 1 || got[0].Content != "after" {
+		t.Errorf("window = %+v", got)
+	}
+}
+
+// openFDs counts the process's open file descriptors, or skips the test where
+// /proc/self/fd does not exist.
+func openFDs(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("cannot count open files: %v", err)
+	}
+	return len(entries)
+}
+
+// TestListPendingSessions_ClosesDatabases lists pending sessions many times:
+// every database it opens to read is closed again.
+func TestListPendingSessions_ClosesDatabases(t *testing.T) {
+	dir := t.TempDir()
+	writer := openStore(t, dir)
+	for _, key := range []string{"alice", "bob"} {
+		noErr(t, writer.SetPendingTurn(key))
+	}
+	noErr(t, writer.Close())
+
+	s := openStore(t, dir)
+	before := openFDs(t)
+	for range 20 {
+		keys, err := s.ListPendingSessions()
+		noErr(t, err)
+		if len(keys) != 2 {
+			t.Fatalf("pending = %v", keys)
+		}
+	}
+	if after := openFDs(t); after > before {
+		t.Errorf("open files grew from %d to %d", before, after)
 	}
 }

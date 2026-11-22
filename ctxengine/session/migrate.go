@@ -143,48 +143,63 @@ func migrateSession(dir, base string, hasWindow bool, logger *slog.Logger) (key 
 	}
 	defer iox.CloseQuietly(log, a)
 
-	st, err := a.State()
-	if err != nil {
-		return key, false, fmt.Errorf("read state: %w", err)
-	}
-	if st.NextSeq > 0 {
-		return key, true, nil
-	}
-
-	var msgs []memory.StoredMessage
+	// The check and the write share one transaction, so a session written
+	// between them (the service started too early) is not overwritten.
+	var (
+		msgs    []memory.StoredMessage
+		nextSeq int64
+	)
 	windowPath := filepath.Join(dir, base+".jsonl")
-	if hasWindow {
-		msgs, err = readLegacyWindow(windowPath, meta.Skip, log)
-		if err != nil {
-			return key, false, err
+	err = a.Update(func(tx *memory.StateTx) error {
+		st, stErr := tx.State()
+		if stErr != nil {
+			return fmt.Errorf("read state: %w", stErr)
 		}
-	}
-	nextSeq := meta.NextSeq
-	for _, m := range msgs {
-		if m.Seq > nextSeq {
-			nextSeq = m.Seq
+		if st.NextSeq > 0 {
+			skipped = true
+			return nil
 		}
+		if hasWindow {
+			var readErr error
+			msgs, readErr = readLegacyWindow(windowPath, meta.Skip, log)
+			if readErr != nil {
+				return readErr
+			}
+		}
+		nextSeq = meta.NextSeq
+		for _, m := range msgs {
+			if m.Seq > nextSeq {
+				nextSeq = m.Seq
+			}
+		}
+		st = memory.SessionState{
+			Key:       key,
+			Summary:   meta.Summary,
+			NextSeq:   nextSeq,
+			CreatedAt: meta.CreatedAt,
+			UpdatedAt: meta.UpdatedAt,
+			Compaction: memory.CompactionState{
+				MeaningfulCount:             meta.MeaningfulCount,
+				CompressedAtMeaningfulCount: meta.CompressedAtMeaningfulCount,
+				Cooling:                     meta.CompressionCooling,
+				CoolingSinceCount:           meta.CoolingSinceCount,
+				SummaryGeneratedAt:          meta.SummaryGeneratedAt,
+				SummaryModel:                meta.SummaryModel,
+				ActiveModelIndex:            meta.ActiveModelIndex,
+				ExposeReasoning:             meta.ExposeReasoning,
+				ShowToolActivity:            meta.ShowToolActivity,
+			},
+		}
+		if wErr := tx.ReplaceWindow(msgs); wErr != nil {
+			return fmt.Errorf("write window: %w", wErr)
+		}
+		return tx.SetState(st)
+	})
+	if err != nil {
+		return key, false, err
 	}
-	st = memory.SessionState{
-		Key:       key,
-		Summary:   meta.Summary,
-		NextSeq:   nextSeq,
-		CreatedAt: meta.CreatedAt,
-		UpdatedAt: meta.UpdatedAt,
-		Compaction: memory.CompactionState{
-			MeaningfulCount:             meta.MeaningfulCount,
-			CompressedAtMeaningfulCount: meta.CompressedAtMeaningfulCount,
-			Cooling:                     meta.CompressionCooling,
-			CoolingSinceCount:           meta.CoolingSinceCount,
-			SummaryGeneratedAt:          meta.SummaryGeneratedAt,
-			SummaryModel:                meta.SummaryModel,
-			ActiveModelIndex:            meta.ActiveModelIndex,
-			ExposeReasoning:             meta.ExposeReasoning,
-			ShowToolActivity:            meta.ShowToolActivity,
-		},
-	}
-	if err := a.ReplaceWindow(msgs, st); err != nil {
-		return key, false, fmt.Errorf("write window: %w", err)
+	if skipped {
+		return key, true, nil
 	}
 	if err := a.Close(); err != nil {
 		return key, false, fmt.Errorf("close archive: %w", err)

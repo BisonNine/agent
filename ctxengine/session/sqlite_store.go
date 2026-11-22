@@ -143,25 +143,31 @@ func (s *SQLiteStore) with(key string, fn func(a *memory.ArchiveStore, h *sessio
 		noise := s.noiseKey
 		s.mu.Unlock()
 
-		h.mu.Lock()
-		if h.closed {
-			h.mu.Unlock()
-			continue
+		if done, err := s.withHandle(key, h, noise, fn); done {
+			return err
 		}
-		if h.archive == nil {
-			// Open logs the cause of a failure itself; the handle stays
-			// unopened so the next call retries.
-			a, err := memory.Open(memory.ArchivePath(s.dir, key), s.openOptions()...)
-			if err != nil {
-				h.mu.Unlock()
-				return err
-			}
-			h.archive = a
-		}
-		err := fn(h.archive, h, noise)
-		h.mu.Unlock()
-		return err
 	}
+}
+
+// withHandle runs fn on h under h's lock, released even if fn panics. done is
+// false when h was dropped before the lock was taken, so the caller looks key
+// up again.
+func (s *SQLiteStore) withHandle(key string, h *sessionHandle, noise memory.NoiseKeyFunc, fn func(a *memory.ArchiveStore, h *sessionHandle, noise memory.NoiseKeyFunc) error) (done bool, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed {
+		return false, nil
+	}
+	if h.archive == nil {
+		// Open logs the cause of a failure itself; the handle stays
+		// unopened so the next call retries.
+		a, err := memory.Open(memory.ArchivePath(s.dir, key), s.openOptions()...)
+		if err != nil {
+			return true, err
+		}
+		h.archive = a
+	}
+	return true, fn(h.archive, h, noise)
 }
 
 // update runs fn on key's archive in one write transaction, under the session
@@ -202,10 +208,11 @@ func (s *SQLiteStore) AddMessage(sessionKey, role, content string) error {
 func (s *SQLiteStore) AddFullMessage(sessionKey string, msg spawnllm.Message) (int64, error) {
 	var seq int64
 	err := s.with(sessionKey, func(a *memory.ArchiveStore, h *sessionHandle, noise memory.NoiseKeyFunc) error {
-		var (
-			stored  memory.StoredMessage
-			isNoisy bool
-		)
+		// Determine if this message is noise (no new information). The
+		// host's noise function runs here, outside the write transaction.
+		isNoisy := h.noise.IsNoise(memory.NewStoredMessage(0, msg), noise)
+
+		var stored memory.StoredMessage
 		if err := a.Update(func(tx *memory.StateTx) error {
 			st, err := state(tx, sessionKey)
 			if err != nil {
@@ -218,9 +225,6 @@ func (s *SQLiteStore) AddFullMessage(sessionKey string, msg spawnllm.Message) (i
 				seq = 1
 			}
 			stored = memory.NewStoredMessage(seq, msg)
-
-			// Determine if this message is noise (no new information).
-			isNoisy = h.noise.IsNoise(stored, noise)
 
 			now := time.Now()
 			if st.CreatedAt.IsZero() {
@@ -589,7 +593,10 @@ func (s *SQLiteStore) closeHandle(key string, h *sessionHandle) {
 }
 
 // Close closes every cached database handle, each after the operation in
-// flight on it, as ForgetSession does. A later access reopens the database.
+// flight on it, as ForgetSession does. It is not final: an operation that
+// arrives during or after Close opens a handle, which stays open until the
+// next ForgetSession or Close. (MemoryStore.Close likewise leaves its
+// sessions usable.)
 func (s *SQLiteStore) Close() error {
 	s.mu.Lock()
 	handles := make(map[string]*sessionHandle, len(s.sessions))
