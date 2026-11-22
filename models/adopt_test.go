@@ -1,6 +1,7 @@
 package models_test
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -9,6 +10,36 @@ import (
 	"go.bison9.com/agent/models/modelstest"
 	"go.bison9.com/agent/modelspec"
 )
+
+// The agents' handle does not change: a set taken before Adopt sees the new
+// contents.
+func TestAdoptKeepsHandles(t *testing.T) {
+	f := newFixture(t, three)
+	bob := f.cat.Set("bob")
+	if err := bob.Assign(models.Chat, "gpt", 0); err != nil {
+		t.Fatal(err)
+	}
+	next := build(t, f.fake, three)
+	if err := next.Set("bob").Assign(models.Chat, "haiku", 0); err != nil {
+		t.Fatal(err)
+	}
+	f.cat.Adopt(next)
+	if got := names(bob.List(models.Chat)); !slices.Equal(got, []string{"haiku"}) {
+		t.Fatalf("bob after adopt = %q", got)
+	}
+	if f.cat.Set("bob") != bob {
+		t.Fatal("the handle changed")
+	}
+	if err := next.AddProvider(modelspec.Provider{Name: "z", Protocol: "openai-chat", BaseURL: "https://x"}); !errors.Is(err, models.ErrAdopted) {
+		t.Fatalf("the adopted catalogue is still usable: %v", err)
+	}
+	if err := next.Select(models.Chat, "sonnet"); !errors.Is(err, models.ErrAdopted) {
+		t.Fatalf("select on the adopted catalogue: %v", err)
+	}
+	if d := f.cat.Adopt(next); d.Added != nil || d.Removed != nil {
+		t.Fatal("a spent catalogue was adopted twice")
+	}
+}
 
 func TestAdoptDiff(t *testing.T) {
 	f := newFixture(t, three)
@@ -43,6 +74,35 @@ func TestAdoptInFlightTurnFinishesOnPinned(t *testing.T) {
 	res, err = f.cat.Begin(models.Chat).Chat(t.Context(), alice, models.Request{})
 	if err != nil || res.Candidate.Model != "claude-sonnet-new" || len(newer.Calls()) != 1 {
 		t.Fatalf("next turn: %v %+v", err, res)
+	}
+}
+
+// Selections are carried by model name; one whose model is no longer assigned
+// reverts to the default and is listed.
+func TestAdoptCarriesSelections(t *testing.T) {
+	f := newFixture(t, three)
+	if err := f.cat.Select(models.Chat, "haiku", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.cat.Select(models.Chat, "gpt", "s2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.cat.Begin(models.Chat, "s1").Chat(t.Context(), alice, models.Request{}); err != nil {
+		t.Fatal(err)
+	}
+	d := f.cat.Adopt(build(t, f.fake, []spec{three[0], three[2]}))
+	if got := f.cat.Selected(models.Chat, "s1").Name; got != "haiku" {
+		t.Fatalf("s1 = %q, want the carried selection", got)
+	}
+	if got := f.cat.Selected(models.Chat, "s2").Name; got != "sonnet" {
+		t.Fatalf("s2 = %q, want the default", got)
+	}
+	want := []models.Reverted{{Set: "", Purpose: models.Chat, Scope: "s2", Model: "gpt"}}
+	if !slices.Equal(d.Reverted, want) {
+		t.Fatalf("reverted = %+v, want %+v", d.Reverted, want)
+	}
+	if cur := f.cat.Current(models.Chat, "s1"); cur.Serving != "haiku" {
+		t.Fatalf("serving now was not carried: %+v", cur)
 	}
 }
 
@@ -108,6 +168,66 @@ func TestAdoptClosesOldClientAfterItsCall(t *testing.T) {
 	c.Adopt(build(t, modelstest.New(), []spec{m("sonnet", "anthropic", "claude-sonnet")}))
 	if idle.Closed() != 1 {
 		t.Fatal("an idle old client was not closed at once")
+	}
+}
+
+func TestBuild(t *testing.T) {
+	t.Setenv("MODELS_TEST_KEY", "secret")
+	off := false
+	doc := modelspec.Document{
+		Version: 1,
+		Providers: []modelspec.Provider{
+			{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com", APIKey: "env:MODELS_TEST_KEY"},
+		},
+		Models: []modelspec.Model{
+			{ModelName: "sonnet", Model: "claude-sonnet", Provider: "anthropic", Enabled: true},
+			{ModelName: "haiku", Model: "claude-haiku", Provider: "anthropic", Enabled: true},
+			{ModelName: "old", Model: "claude-old", Provider: "anthropic"},
+		},
+		Assignments: map[string]map[string][]modelspec.Assignment{
+			"alice": {
+				"chat":      {{Model: "sonnet"}, {Model: "old"}, {Model: "haiku", Enabled: &off}},
+				"summarize": {{Model: "haiku"}},
+			},
+		},
+	}
+	c, err := models.Build(doc, models.WithSecrets(modelspec.DefaultResolver(0o600)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := c.Get("sonnet"); info.Provider.APIKey != "secret" {
+		t.Fatalf("key = %q, want resolved", info.Provider.APIKey)
+	}
+	if doc.Providers[0].APIKey != "env:MODELS_TEST_KEY" {
+		t.Fatal("the document was changed")
+	}
+	if c.Enabled("old") || !c.Enabled("sonnet") {
+		t.Fatal("the model switches were not taken from the document")
+	}
+	alice := c.Set("alice")
+	chat := alice.List(models.Chat)
+	if got := names(chat); !slices.Equal(got, []string{"sonnet", "old", "haiku"}) {
+		t.Fatalf("chat = %q", got)
+	}
+	if !chat[0].Enabled || chat[1].Enabled || chat[2].Enabled {
+		t.Fatalf("switches = %+v", chat)
+	}
+	if !alice.List(models.Summarize)[0].Enabled {
+		t.Fatal("the summarize assignment of haiku is off")
+	}
+
+	bad := doc
+	bad.Models = append(slices.Clone(doc.Models), modelspec.Model{ModelName: "x", Model: "x", Provider: "nope", Enabled: true})
+	if _, err := models.Build(bad); err == nil {
+		t.Fatal("an invalid document was built")
+	}
+	empty := doc
+	empty.Assignments = map[string]map[string][]modelspec.Assignment{"bob": {"chat": {}}}
+	if _, err := models.Build(empty); err == nil {
+		t.Fatal("a purpose with no model was accepted")
+	}
+	if _, err := models.Build(doc, models.WithSecrets(func(string) (string, error) { return "", errors.New("no") })); err == nil {
+		t.Fatal("a secret that does not resolve was accepted")
 	}
 }
 

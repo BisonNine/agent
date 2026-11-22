@@ -26,15 +26,19 @@ type settings struct {
 	modesFor      func(path string) fsmode.Modes
 	declined      func(Declined) string
 	limitDefaults modelspec.LimitDefaults
+	store         SelectionStore
+	fallbacks     map[Purpose]Purpose
+	secrets       modelspec.Resolver
 }
 
 func defaultSettings() *settings {
 	return &settings{
-		observer: nopObserver{},
-		logger:   slog.New(slog.DiscardHandler),
-		baseEnv:  DefaultBaseEnv,
-		modesFor: func(string) fsmode.Modes { return fsmode.Modes{} },
-		declined: DefaultDeclinedMessage,
+		observer:  nopObserver{},
+		logger:    slog.New(slog.DiscardHandler),
+		baseEnv:   DefaultBaseEnv,
+		modesFor:  func(string) fsmode.Modes { return fsmode.Modes{} },
+		declined:  DefaultDeclinedMessage,
+		fallbacks: map[Purpose]Purpose{Worker: Chat},
 	}
 }
 
@@ -121,4 +125,30 @@ func WithDeclinedMessage(fn func(Declined) string) Option {
 // with (Chain.Limits, Candidate.Limits).
 func WithLimitDefaults(d modelspec.LimitDefaults) Option {
 	return func(s *settings) { s.limitDefaults = d }
+}
+
+// WithSelectionStore persists selections (Set.Select) so they survive a
+// restart. Without one they are held in memory only.
+func WithSelectionStore(st SelectionStore) Option {
+	return func(s *settings) { s.store = st }
+}
+
+// WithFallback declares that a purpose with no models of its own uses those of
+// another. Worker → Chat is declared by default; WithFallback(p, "") removes
+// a rule.
+func WithFallback(from, to Purpose) Option {
+	return func(s *settings) {
+		if to == "" {
+			delete(s.fallbacks, from)
+			return
+		}
+		s.fallbacks[from] = to
+	}
+}
+
+// WithSecrets resolves the secret references of the document Build is given
+// (modelspec.ResolveSecrets). Without it the document's values are used as
+// they are. Ignored by New.
+func WithSecrets(r modelspec.Resolver) Option {
+	return func(s *settings) { s.secrets = r }
 }

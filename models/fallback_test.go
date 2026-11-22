@@ -253,7 +253,7 @@ func TestChainFallback(t *testing.T) {
 				if ex, ok := errors.AsType[*models.ExhaustedError](err); ok {
 					attempts = ex.Attempts
 				} else {
-					attempts = f.obs.exhausted[0].Attempts
+					attempts = f.cat.Current(models.Chat).Attempts
 				}
 			}
 			if got := describeAll(attempts); tc.attempts != nil && !slices.Equal(got, tc.attempts) {

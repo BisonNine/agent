@@ -53,7 +53,9 @@ type Recovered struct {
 // a single failed attempt or a run of consecutive skipped ones, and Next is
 // the model that will be tried next.
 type FellBack struct {
+	Set     string
 	Purpose Purpose
+	Scope   Scope
 	Passed  []Attempt
 	Next    Candidate
 }
@@ -61,7 +63,9 @@ type FellBack struct {
 // Exhausted reports a chain call that ended without an answer. Err is the
 // error the call returned.
 type Exhausted struct {
+	Set      string
 	Purpose  Purpose
+	Scope    Scope
 	Attempts []Attempt
 	Err      error
 }

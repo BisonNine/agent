@@ -41,6 +41,7 @@ type Candidate struct {
 	Protocol string
 	Model    string // wire model id
 	Priority int
+	Settings any
 	Limits   modelspec.Limits
 }
 
@@ -48,8 +49,8 @@ func candidateOf(g *generation, a assignment) Candidate {
 	e := g.models[a.name]
 	return Candidate{
 		Name: a.name, Provider: e.prov.Name, Protocol: e.prov.Protocol, Model: e.def.Model,
-		Priority: a.priority,
-		Limits:   modelspec.ResolveLimits(&e.def, g.cfg.limitDefaults),
+		Priority: a.priority, Settings: a.settings,
+		Limits: modelspec.ResolveLimits(&e.def, g.cfg.limitDefaults),
 	}
 }
 
@@ -107,15 +108,19 @@ func (e *ExhaustedError) Error() string {
 	return sb.String()
 }
 
-// Chain is the models pinned for one turn (Catalog.Begin). Its order and clients
+// Chain is the models pinned for one turn (Set.Begin). Its order and clients
 // do not change for its life, so a multi-step turn never changes model
 // half-way; only the enable switches are re-read before each call. A Chain
 // may be used from several goroutines.
 type Chain struct {
 	cat       *Catalog
 	gen       *generation
-	purpose   Purpose
+	set       string
+	purpose   Purpose // as asked
+	used      Purpose // whose list it is (a fallback rule may have applied)
+	scope     Scope
 	cands     []Candidate
+	off       []bool // assignment switched off
 	isolated  bool
 	workspace string
 }
@@ -123,8 +128,9 @@ type Chain struct {
 // Candidates returns the chain's models in the order they are tried.
 func (ch *Chain) Candidates() []Candidate { return slices.Clone(ch.cands) }
 
-// Purpose returns the purpose whose models the chain holds.
-func (ch *Chain) Purpose() Purpose { return ch.purpose }
+// Purpose returns the purpose whose models the chain holds: the one asked
+// for, or the one a fallback rule led to.
+func (ch *Chain) Purpose() Purpose { return ch.used }
 
 // Limits returns the limits of the chain's first model.
 func (ch *Chain) Limits() modelspec.Limits {
@@ -211,14 +217,17 @@ func (ch *Chain) skip(i int) (Attempt, bool) {
 	}, true
 }
 
-// disabled re-reads the switch of the i-th model, from the catalogue's
+// disabled re-reads the switches of the i-th model, from the catalogue's
 // current contents when it still has the model, else from the pinned ones.
 func (ch *Chain) disabled(i int) bool {
+	if ch.off[i] {
+		return true
+	}
 	name := ch.cands[i].Name
-	if ok, known := ch.cat.gen.Load().usable("", name); known {
+	if ok, known := ch.cat.gen.Load().usable(ch.set, name); known {
 		return !ok
 	}
-	ok, _ := ch.gen.usable("", name)
+	ok, _ := ch.gen.usable(ch.set, name)
 	return !ok
 }
 
@@ -299,7 +308,7 @@ func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, 
 		if cfg.notify != nil {
 			cfg.notify(passed, next)
 		}
-		obs.FellBack(FellBack{Purpose: ch.purpose, Passed: slices.Clone(passed), Next: next})
+		obs.FellBack(FellBack{Set: ch.set, Purpose: ch.purpose, Scope: ch.scope, Passed: slices.Clone(passed), Next: next})
 	}
 	for i, c := range ch.cands {
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -372,10 +381,32 @@ func (ch *Chain) chat(ctx context.Context, id accounting.Identity, req Request, 
 	return result, &ExhaustedError{Purpose: ch.purpose, Attempts: result.Attempts}
 }
 
-// report tells the observer when a call found no answer.
+// report records the outcome of a Chat call as what is serving now, and tells
+// the observer when the call found no answer.
 func (ch *Chain) report(res *Result, err error) {
-	if err == nil || errors.Is(err, context.Canceled) {
+	k := selKey{set: ch.set, purpose: ch.purpose, scope: ch.scope}
+	now := ch.clock().Now()
+	if err == nil {
+		ch.cat.state.served(k, res.Candidate.Name, firstReason(ch, res.Attempts, res.Candidate.Name), res.Attempts, now)
 		return
 	}
-	ch.gen.cfg.observer.Exhausted(Exhausted{Purpose: ch.purpose, Attempts: slices.Clone(res.Attempts), Err: err})
+	if errors.Is(err, context.Canceled) {
+		return
+	}
+	attempts := res.Attempts
+	ch.cat.state.served(k, "", firstReason(ch, attempts, ""), attempts, now)
+	ch.gen.cfg.observer.Exhausted(Exhausted{Set: ch.set, Purpose: ch.purpose, Scope: ch.scope, Attempts: slices.Clone(attempts), Err: err})
+}
+
+// firstReason is why the chain's first model did not answer, when another
+// did (or none did): "disabled" or its failover reason.
+func firstReason(ch *Chain, attempts []Attempt, answered string) string {
+	if len(ch.cands) == 0 || ch.cands[0].Name == answered || len(attempts) == 0 {
+		return ""
+	}
+	a := attempts[0]
+	if a.Disabled {
+		return "disabled"
+	}
+	return string(a.Reason)
 }

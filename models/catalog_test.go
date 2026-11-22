@@ -26,6 +26,12 @@ func TestChainLimits(t *testing.T) {
 	if l.ContextWindow != 200000 || l.MaxTokens != 1000 || l.ThinkingLevel != modelspec.ThinkingHigh || !l.NoTools {
 		t.Fatalf("limits = %+v", l)
 	}
+	if err := c.Select(models.Chat, "small"); err != nil {
+		t.Fatal(err)
+	}
+	if l := c.Begin(models.Chat).Limits(); l.ContextWindow != 50000 {
+		t.Fatalf("selected model's limits = %+v", l)
+	}
 	if l := c.Begin(models.Memory).Limits(); l.MaxTokens != 1000 {
 		t.Fatalf("no models: %+v", l)
 	}
@@ -34,7 +40,7 @@ func TestChainLimits(t *testing.T) {
 func TestObserverEvents(t *testing.T) {
 	f := newFixture(t, three)
 	f.fake.Script("claude-sonnet", modelstest.Status(402, 0), modelstest.Reply("back"))
-	ch := f.cat.Begin(models.Chat)
+	ch := f.cat.Set("").Begin(models.Chat, "s")
 	if _, err := ch.Chat(t.Context(), alice, models.Request{}); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +48,7 @@ func TestObserverEvents(t *testing.T) {
 		f.obs.parked[0].Reason != spawnllm.FailoverBilling || f.obs.parked[0].Cooldown != 30*time.Minute {
 		t.Fatalf("parked = %+v", f.obs.parked)
 	}
-	if len(f.obs.fellBack) != 1 || f.obs.fellBack[0].Next.Name != "gpt" || f.obs.fellBack[0].Purpose != models.Chat {
+	if len(f.obs.fellBack) != 1 || f.obs.fellBack[0].Next.Name != "gpt" || f.obs.fellBack[0].Scope != "s" || f.obs.fellBack[0].Purpose != models.Chat {
 		t.Fatalf("fell back = %+v", f.obs.fellBack)
 	}
 	f.clock.Advance(30 * time.Minute)

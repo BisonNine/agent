@@ -154,6 +154,14 @@ func answeredBy(t *testing.T, ch *models.Chain) string {
 	return res.Candidate.Name
 }
 
+func names(list []models.Entry) []string {
+	out := make([]string, 0, len(list))
+	for _, e := range list {
+		out = append(out, e.Name)
+	}
+	return out
+}
+
 func candNames(ch *models.Chain) []string {
 	cands := ch.Candidates()
 	out := make([]string, 0, len(cands))

@@ -14,7 +14,7 @@ the SDK never imports a host.
 | [`cogmem`](cogmem) | Cognitive memory: durable, typed memories organised into domains and refined by background consolidation. |
 | [`accounting`](accounting) | One record per LLM or API call launched through spawnllm, written to a file or to the logger. |
 | [`modelspec`](modelspec) | The shared definition of providers and models: their JSON form, validation, the CLI table, cooldown policy, a model document, secret references and per-model limits. |
-| [`models`](models) | Models at run time: the install-wide catalogue (clients, health, cooldown), pinned fallback chains, and `Adopt` for configuration changes. |
+| [`models`](models) | Models at run time: the install-wide catalogue (clients, health, cooldown), per-agent sets by purpose and priority, pinned fallback chains, and `Adopt` for configuration changes. |
 | [`clock`](clock) | The time source for code whose timing is tested: the system clock and a fake one moved by hand, with deadline contexts. |
 | [`fsmode`](fsmode) | The modes of the directories and files the packages create, taken by each as `WithFileModes`. |
 

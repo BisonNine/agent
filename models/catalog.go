@@ -18,17 +18,19 @@ import (
 var ErrAdopted = errors.New("models: this catalogue was adopted by another; use that one")
 
 // Catalog is the install-wide model object: every provider and model, their
-// clients and their health, and the models of each purpose. Its methods are safe from
+// clients and their health, and one Set per agent. Its methods are safe from
 // any goroutine. It has no exported fields; what it returns is a copy.
 //
 // Readers take an immutable snapshot (a generation) from an atomic pointer;
 // writers build the next snapshot under one mutex. No lock is held across a
 // model call, an Observer call or a SelectionStore call.
 type Catalog struct {
-	mu    sync.Mutex
-	gen   atomic.Pointer[generation]
-	spent atomic.Bool
-	book  *parkedBook
+	mu      sync.Mutex
+	gen     atomic.Pointer[generation]
+	handles map[string]*Set // under mu
+	spent   atomic.Bool
+	book    *parkedBook
+	state   *runState
 }
 
 // generation is one immutable snapshot of a catalogue's contents. Writers
@@ -62,13 +64,13 @@ func (g *generation) clone() *generation {
 	return &n
 }
 
-// New returns an empty catalogue.
+// New returns an empty catalogue with a default set (Set("")).
 func New(opts ...Option) *Catalog {
 	cfg := defaultSettings()
 	for _, o := range opts {
 		o(cfg)
 	}
-	c := &Catalog{book: newParkedBook()}
+	c := &Catalog{handles: make(map[string]*Set), book: newParkedBook(), state: newRunState()}
 	c.gen.Store(&generation{
 		cfg:       cfg,
 		providers: make(map[string]modelspec.Provider),
@@ -120,21 +122,22 @@ func (c *Catalog) AddProvider(p modelspec.Provider) error {
 	})
 }
 
-// Use assigns a model to a purpose when it is added (Add).
+// Use assigns a model to a purpose of the default set when it is added (Add).
 type Use struct {
 	purpose  Purpose
 	priority int
+	opts     []AssignOption
 }
 
-// For is a Use: the model serves purpose p at the given priority (lower
-// first; equal priorities keep the order they were added in).
-func For(p Purpose, priority int) Use {
-	return Use{purpose: p, priority: priority}
+// For is a Use: the model serves purpose p in the default set at the given
+// priority (lower first).
+func For(p Purpose, priority int, opts ...AssignOption) Use {
+	return Use{purpose: p, priority: priority, opts: opts}
 }
 
 // Add adds a model. It must be valid (modelspec.Model.Validate), its name new
 // and its provider added. The model starts enabled, whatever m.Enabled says;
-// Disable turns it off. uses assign it to purposes.
+// Disable turns it off. uses assign it in the default set.
 func (c *Catalog) Add(m modelspec.Model, uses ...Use) error {
 	m = cloneModel(m)
 	m.ModelName = strings.TrimSpace(m.ModelName)
@@ -157,7 +160,7 @@ func (c *Catalog) Add(m modelspec.Model, uses ...Use) error {
 		g.models[m.ModelName] = newEntry(g.cfg, m, prov)
 		g.order = append(g.order, m.ModelName)
 		for _, u := range uses {
-			if err := g.assign("", u.purpose, m.ModelName, u.priority); err != nil {
+			if err := g.assign("", u.purpose, m.ModelName, u.priority, u.opts); err != nil {
 				return nil, err
 			}
 		}
@@ -171,8 +174,9 @@ func newEntry(cfg *settings, m modelspec.Model, prov modelspec.Provider) *modelE
 	return e
 }
 
-// Remove removes a model, from the catalogue and from every purpose. Its
-// client is closed once the calls in flight on it have ended.
+// Remove removes a model, from the catalogue and from every set. A selection
+// of it reverts to the default. Its client is closed once the calls in flight
+// on it have ended.
 func (c *Catalog) Remove(name string) error {
 	return c.update(func(g *generation) ([]*clientSlot, error) {
 		e, ok := g.models[name]
@@ -186,6 +190,7 @@ func (c *Catalog) Remove(name string) error {
 				g.sets[id] = sd.without(name)
 			}
 		}
+		c.state.prune(g)
 		return []*clientSlot{e.slot}, nil
 	})
 }
@@ -272,12 +277,13 @@ func (c *Catalog) RegisterClient(name string, cl spawnllm.LLMProvider) error {
 	})
 }
 
-// Enable turns the named models on. An unknown name is an error and nothing
-// is changed.
+// Enable turns the named models on for every agent. An unknown name is an
+// error and nothing is changed.
 func (c *Catalog) Enable(names ...string) error { return c.setDisabled(names, false) }
 
-// Disable turns the named models off: every chain skips them as it skips a
-// parked model. An unknown name is an error and nothing is changed.
+// Disable turns the named models off for every agent: every chain skips them
+// as it skips a parked model. A selection of one is kept. An unknown name is
+// an error and nothing is changed.
 func (c *Catalog) Disable(names ...string) error { return c.setDisabled(names, true) }
 
 func (c *Catalog) setDisabled(names []string, off bool) error {
@@ -296,17 +302,42 @@ func (c *Catalog) setDisabled(names []string, off bool) error {
 	})
 }
 
-// Enabled reports whether the model is enabled.
+// Enabled reports whether the model is enabled in the catalogue.
 func (c *Catalog) Enabled(name string) bool {
 	e, ok := c.gen.Load().models[name]
 	return ok && !e.disabled
 }
 
+// Set returns agent id's set, created empty on first use. The handle stays
+// valid across Adopt. Set("") is the default set.
+func (c *Catalog) Set(id string) *Set {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	s, ok := c.handles[id]
+	if !ok {
+		s = &Set{cat: c, id: id}
+		c.handles[id] = s
+	}
+	return s
+}
+
+// Default returns the default set, Set("").
+func (c *Catalog) Default() *Set { return c.Set("") }
+
 // Diff is what Adopt changed, for the host to log.
 type Diff struct {
-	Added   []string // models new in the adopted catalogue
-	Removed []string // models no longer in it
-	Changed []string // models whose definition or provider changed
+	Added    []string   // models new in the adopted catalogue
+	Removed  []string   // models no longer in it
+	Changed  []string   // models whose definition or provider changed
+	Reverted []Reverted // selections whose model is no longer assigned
+}
+
+// Reverted is a selection that reverted to the default.
+type Reverted struct {
+	Set     string
+	Purpose Purpose
+	Scope   Scope
+	Model   string
 }
 
 // Adopt replaces the contents of c with those of next, in one step, and
@@ -315,9 +346,12 @@ type Diff struct {
 //
 //   - Every error was returned while next was built, so Adopt cannot fail
 //     half-way.
-//   - c stays the one the agents hold.
+//   - c and its Set handles stay the ones the agents hold.
 //   - A chain begun before Adopt finishes on what it pinned, its clients
 //     included; every chain begun after uses the new contents.
+//   - Selections and what is serving now are carried over by model name; a
+//     selection whose model is no longer assigned reverts to the default and
+//     is listed in the Diff.
 //   - Health is not carried over: every model starts available.
 //   - A model whose definition and provider are unchanged keeps its client.
 //     Any other old client is closed once its last call in flight ends.
@@ -374,6 +408,9 @@ func (c *Catalog) Adopt(next *Catalog) Diff {
 		}
 	}
 	c.gen.Store(ng)
+	for _, k := range c.state.prune(ng) {
+		diff.Reverted = append(diff.Reverted, Reverted{Set: k.key.set, Purpose: k.key.purpose, Scope: k.key.scope, Model: k.model})
+	}
 	c.mu.Unlock()
 	for _, s := range retire {
 		s.retire()
