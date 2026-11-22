@@ -81,9 +81,9 @@ func (c *Catalog) update(fn func(next *catState) (changed bool, err error)) erro
 		c.mu.Unlock()
 		return err
 	}
-	ev := c.commitLocked(cur, next, nil)
+	c.commitLocked(cur, next, nil)
 	c.mu.Unlock()
-	c.publish(ev)
+	c.notify()
 	return nil
 }
 
@@ -96,15 +96,16 @@ func (c *Catalog) change(fn func(next *catState) (changed bool)) {
 		c.mu.Unlock()
 		return
 	}
-	ev := c.commitLocked(cur, next, nil)
+	c.commitLocked(cur, next, nil)
 	c.mu.Unlock()
-	c.publish(ev)
+	c.notify()
 }
 
 // commitLocked publishes next (a changed copy of cur, or nil when only set
-// configurations change) and the new configurations in cfgs, and returns
-// the event to deliver once the lock is released. Caller holds c.mu.
-func (c *Catalog) commitLocked(cur, next *catState, cfgs map[*Set]*setConfig) event {
+// configurations change) and the new configurations in cfgs, and queues
+// the change notice, so notices queue in commit order. The caller
+// delivers with c.notify once it has released the lock. Caller holds c.mu.
+func (c *Catalog) commitLocked(cur, next *catState, cfgs map[*Set]*setConfig) {
 	if next == nil {
 		next = cur
 	} else {
@@ -116,7 +117,9 @@ func (c *Catalog) commitLocked(cur, next *catState, cfgs map[*Set]*setConfig) ev
 	for s, cfg := range cfgs {
 		s.cfg.Store(cfg)
 	}
-	return ev
+	if len(ev.sets) > 0 {
+		c.notes.push(ev)
+	}
 }
 
 // eventLocked records a change for every subscribed set. cfgs holds the
@@ -135,13 +138,8 @@ func (c *Catalog) eventLocked(oldState, newState *catState, cfgs map[*Set]*setCo
 	return ev
 }
 
-func (c *Catalog) publish(ev event) {
-	if len(ev.sets) == 0 {
-		return
-	}
-	c.notes.push(ev)
-	c.notes.drain()
-}
+// notify delivers queued change notices. Call it with no lock held.
+func (c *Catalog) notify() { c.notes.drain() }
 
 // newEntry validates in and returns it as an entry from source.
 func newEntry(in Entry, source string) (*entry, error) {

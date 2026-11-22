@@ -132,9 +132,9 @@ func (s *Set) setFlags(off bool, pick func(st *catState) ([]string, error)) erro
 	next := *cur
 	next.version = cur.version + 1
 	next.disabled = disabled
-	ev := c.commitLocked(st, nil, map[*Set]*setConfig{s: &next})
+	c.commitLocked(st, nil, map[*Set]*setConfig{s: &next})
 	c.mu.Unlock()
-	c.publish(ev)
+	c.notify()
 	return nil
 }
 

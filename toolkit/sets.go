@@ -37,9 +37,9 @@ func (s *Set) Grant(allow AllowChecker) {
 	next := *cur
 	next.version = cur.version + 1
 	next.allow = allow
-	ev := c.commitLocked(c.state.Load(), nil, map[*Set]*setConfig{s: &next})
+	c.commitLocked(c.state.Load(), nil, map[*Set]*setConfig{s: &next})
 	c.mu.Unlock()
-	c.publish(ev)
+	c.notify()
 }
 
 // Adopt replaces the catalogue's contents with next's, in one step: "when
@@ -92,9 +92,9 @@ func (c *Catalog) Adopt(next *Catalog) Change {
 		nc.version = s.cfg.Load().version + 1
 		cfgs[s] = &nc
 	}
-	ev := c.commitLocked(cur, st, cfgs)
+	c.commitLocked(cur, st, cfgs)
 	c.mu.Unlock()
-	c.publish(ev)
+	c.notify()
 
 	ch := diff(cur.entries, st.entries)
 	c.logger.Info("Adopted a new tool catalogue",

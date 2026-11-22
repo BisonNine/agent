@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -490,3 +491,50 @@ func TestInfoIsACopy(t *testing.T) {
 }
 
 func toolSpecDeps() toolspec.Deps { return toolspec.Deps{} }
+
+// Notices from concurrent writers arrive in commit order: replaying them
+// gives the catalogue's contents, and none adds a tool already added or
+// removes one not there.
+func TestSubscribe_OrderedUnderConcurrentWriters(t *testing.T) {
+	c := New()
+	var mu sync.Mutex
+	seen := map[string]bool{}
+	defer c.Subscribe(func(ch Change) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, n := range ch.Added {
+			if seen[n] {
+				t.Errorf("%s added twice", n)
+			}
+			seen[n] = true
+		}
+		for _, n := range ch.Removed {
+			if !seen[n] {
+				t.Errorf("%s removed before it was added", n)
+			}
+			delete(seen, n)
+		}
+	})()
+	var wg sync.WaitGroup
+	for w := range 8 {
+		wg.Go(func() {
+			for i := range 200 {
+				name := fmt.Sprintf("w%d_%d", w, i)
+				if err := c.AddEntries(listed(name)...); err != nil {
+					t.Error(err)
+					return
+				}
+				if i%2 == 0 {
+					c.Remove(name)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	got := slices.Sorted(maps.Keys(seen))
+	if !slices.Equal(got, c.Names()) {
+		t.Fatalf("replayed notices give %d tools, catalogue has %d", len(got), len(c.Names()))
+	}
+}
