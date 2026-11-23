@@ -3,6 +3,8 @@ package spawnllm
 import (
 	"encoding/json"
 	"testing"
+
+	"go.bison9.com/agent/spawnllm/internal/launch/launchtest"
 )
 
 func TestNormalizeToolCall_NameFromFunction(t *testing.T) {
@@ -124,5 +126,37 @@ func TestNormalizeToolCall_InvalidFunctionArguments(t *testing.T) {
 	// Arguments should be initialized to empty map, not panic
 	if result.Arguments == nil {
 		t.Error("Arguments should not be nil")
+	}
+}
+
+func TestNormalizeToolCall_UnencodableArgumentsAreLogged(t *testing.T) {
+	logs := &launchtest.Logs{}
+	tc := ToolCall{ID: "call_8", Name: "send", Arguments: map[string]any{"ch": make(chan int)}}
+
+	result := NormalizeToolCall(tc, logs.Logger())
+	if result.Function == nil || result.Function.Name != "send" || result.Function.Arguments != "" {
+		t.Errorf("Function = %+v, want name send and no encoded arguments", result.Function)
+	}
+	e, ok := logs.Find("tool call arguments are not JSON-encodable")
+	if !ok || e.Attrs["tool"] != "send" || e.Attrs["component"] != "provider" {
+		t.Errorf("record = %+v (found %v), want one naming tool send", e, ok)
+	}
+
+	// A nil logger discards the record instead of panicking.
+	if got := NormalizeToolCall(tc, nil); got.Name != "send" {
+		t.Errorf("Name = %q, want send", got.Name)
+	}
+}
+
+func TestNormalizeToolCall_FillsEmptyFunctionFields(t *testing.T) {
+	tc := ToolCall{
+		ID:        "call_9",
+		Name:      "lookup",
+		Arguments: map[string]any{"q": "alice"},
+		Function:  &FunctionCall{},
+	}
+	result := NormalizeToolCall(tc, nil)
+	if result.Function.Name != "lookup" || result.Function.Arguments != `{"q":"alice"}` {
+		t.Errorf("Function = %+v, want name lookup and the encoded arguments", result.Function)
 	}
 }

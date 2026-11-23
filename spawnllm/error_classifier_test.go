@@ -544,3 +544,49 @@ func TestClassifyError_UnavailableModel(t *testing.T) {
 		t.Errorf("ReasonText = %q", ReasonText(FailoverUnavailable))
 	}
 }
+
+func TestClassifyError_StatusEdgeCases(t *testing.T) {
+	tests := []struct {
+		msg  string
+		want FailoverReason // "" means not classifiable
+	}{
+		{"API error: status: 413 entity rejected", FailoverContextLimit},
+		{"API error: status: 418 i'm a teapot", ""},
+		{"failed to decode response: unexpected EOF", FailoverTimeout},
+	}
+	for _, tt := range tests {
+		got := ClassifyError(errors.New(tt.msg), "p", "m")
+		switch {
+		case tt.want == "" && got != nil:
+			t.Errorf("%q: reason = %q, want unclassified", tt.msg, got.Reason)
+		case tt.want != "" && (got == nil || got.Reason != tt.want):
+			t.Errorf("%q: got %+v, want reason %q", tt.msg, got, tt.want)
+		}
+	}
+}
+
+func TestFailoverReason_TextAndCooldown(t *testing.T) {
+	tests := []struct {
+		reason    FailoverReason
+		text      string
+		coolsDown bool
+	}{
+		{FailoverBilling, "out of credits", true},
+		{FailoverAuth, "auth failed", true},
+		{FailoverRateLimit, "rate limited", true},
+		{FailoverTimeout, "timeout", false},
+		{FailoverOverloaded, "overloaded", true},
+		{FailoverContextLimit, "context too large", false},
+		{FailoverFormat, "bad response format", false},
+		{FailoverUnavailable, "model not available", true},
+		{FailoverUnknown, "error", false},
+	}
+	for _, tt := range tests {
+		if got := ReasonText(tt.reason); got != tt.text {
+			t.Errorf("ReasonText(%q) = %q, want %q", tt.reason, got, tt.text)
+		}
+		if got := tt.reason.CoolsDown(); got != tt.coolsDown {
+			t.Errorf("%q.CoolsDown() = %v, want %v", tt.reason, got, tt.coolsDown)
+		}
+	}
+}

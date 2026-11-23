@@ -3,6 +3,7 @@ package spawnllm
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -181,5 +182,19 @@ func TestCreateCodexCliTokenSource_Expired(t *testing.T) {
 	_, _, err := source()
 	if err == nil {
 		t.Fatal("expected error for expired credentials")
+	}
+}
+
+func TestCodexCliCredentials_NoHomeDirectory(t *testing.T) {
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("HOME", "")
+	t.Setenv("USERPROFILE", "")
+
+	if _, _, _, err := ReadCodexCliCredentials(); err == nil || !strings.Contains(err.Error(), "getting home dir") {
+		t.Errorf("ReadCodexCliCredentials err = %v, want a home directory error", err)
+	}
+	_, _, err := CreateCodexCliTokenSource()()
+	if err == nil || !strings.HasPrefix(err.Error(), "reading codex cli credentials: getting home dir") {
+		t.Errorf("token source err = %v, want the wrapped home directory error", err)
 	}
 }

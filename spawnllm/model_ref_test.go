@@ -122,3 +122,20 @@ func TestParseModelRef_DefaultProviderNormalization(t *testing.T) {
 		t.Errorf("provider = %q, want openai (normalized from GPT)", ref.Provider)
 	}
 }
+
+func TestSplitModelKey(t *testing.T) {
+	tests := []struct {
+		key, provider, model string
+	}{
+		{ModelKey("OpenRouter", " stepfun/Step-3.5-Flash:free "), "openrouter", "stepfun/step-3.5-flash:free"},
+		{"anthropic/claude-opus", "anthropic", "claude-opus"},
+		{"noslash", "noslash", ""},
+		{"", "", ""},
+	}
+	for _, tt := range tests {
+		p, m := SplitModelKey(tt.key)
+		if p != tt.provider || m != tt.model {
+			t.Errorf("SplitModelKey(%q) = %q, %q; want %q, %q", tt.key, p, m, tt.provider, tt.model)
+		}
+	}
+}
