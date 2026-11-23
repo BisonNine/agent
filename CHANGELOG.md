@@ -431,6 +431,8 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `openai_responses`: a user message whose attachments cannot be sent is no
+  longer sent with an empty content list.
 - `examples/chat`: the example stopped at once with "base_url is required";
   its Anthropic provider now names the API's base URL.
 - `ctxengine/memory`: two session keys that map to one file (`a:b`, `a/b`

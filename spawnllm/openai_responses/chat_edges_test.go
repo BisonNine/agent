@@ -446,6 +446,24 @@ func TestUserInputMessage_Media(t *testing.T) {
 	}
 }
 
+// A user message with no text whose media cannot be sent must not go out with
+// an empty content list; its content is sent as a string, as a tool result is.
+func TestUserInputMessage_NoSendablePart(t *testing.T) {
+	got := userInputMessage(Message{Role: "user", Media: []string{"https://example.com/a.pdf"}})
+	if got["role"] != "user" {
+		t.Errorf("role = %v, want user", got["role"])
+	}
+	if c, ok := got["content"].(string); !ok || c != "" {
+		t.Errorf("content = %#v, want the empty string", got["content"])
+	}
+
+	// Text with only non-image media is still a single text part.
+	got = userInputMessage(Message{Role: "user", Content: "see", Media: []string{"https://example.com/a.pdf"}})
+	if parts := asType[[]map[string]any](t, got["content"], "content"); len(parts) != 1 || parts[0]["text"] != "see" {
+		t.Errorf("text parts = %v", parts)
+	}
+}
+
 func TestFunctionCallOutput_NonImageMedia(t *testing.T) {
 	// Text with only non-image media is a single text part.
 	got := functionCallOutput(Message{Role: "tool", Content: "done", Media: []string{"https://example.com/a.pdf"}})

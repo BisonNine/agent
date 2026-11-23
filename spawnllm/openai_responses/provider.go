@@ -595,7 +595,9 @@ func functionCallOutput(m Message) any {
 }
 
 // userInputMessage maps a user message to a Responses input message, using
-// multipart content when media (data: image URLs) is attached.
+// multipart content when media (data: image URLs) is attached. A message with
+// no text and no image is sent with its content as a string, never as an empty
+// content list.
 func userInputMessage(m Message) map[string]any {
 	if len(m.Media) == 0 {
 		return map[string]any{"role": "user", "content": m.Content}
@@ -608,6 +610,9 @@ func userInputMessage(m Message) map[string]any {
 		if strings.HasPrefix(url, "data:image/") {
 			parts = append(parts, map[string]any{"type": "input_image", "image_url": url})
 		}
+	}
+	if len(parts) == 0 {
+		return map[string]any{"role": "user", "content": m.Content}
 	}
 	return map[string]any{"role": "user", "content": parts}
 }
