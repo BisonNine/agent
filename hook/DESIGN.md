@@ -150,6 +150,16 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 - 2.7 Interrupt or cancel: the context cancelled with the cause; the call in
   flight ends with its `ModelCall`; tools get `Limits.CancelGrace`, then
   `InterruptedResult` and their `ToolCallFinished`; every result stored.
+  **A cancel wins** (package documentation, "Cancel wins"): an answer that
+  comes back once the context ended is discarded and the turn ends as if
+  the call had been cut short in flight. Its `ModelCall` keeps the
+  `Response` (usage) with `Err` nil; no `ModelAnswer`, `AfterModel`, batch,
+  store or reply follows. The context is checked as the call returns
+  (`requestModel`, a supplied answer too), before and after `AfterModel`,
+  just before `ToolBatchStarted` (from there the batch is the turn's and a
+  stop interrupts its tools), before each iteration, and where the loop's
+  end decides the outcome (`turnResult`, before `AfterTurn`). A stop after
+  that changes nothing: the reply is stored and handed on, no cause.
 - 2.8 `TurnResult` built (`CauseOutcome` for a stopped turn); `AfterTurn`
   on a context that is never cancelled.
 - 2.9 `Stored` stored and observed, the session saved (`SaveErr`); the
@@ -449,8 +459,11 @@ not listed.
     `TestUnresolvedAgent_DefaultModelTemperature` pass unchanged.
 - 7.11 **`TextDelta`** only when `Loop.TextDeltas` is true after
   `BeforeLoop` (by default, with an `OnTextDelta` callback); see 7.16b.
-- 7.13 **`ModelCall.Err`** is `ctx.Err()` once the turn's context ended:
-  in the `WithFinish` hook, `if ctx.Err() != nil { err = ctx.Err() }`.
+- 7.13 **`ModelCall.Err`** is `ctx.Err()` for a call that failed once the
+  turn's context ended: in the `WithFinish` hook,
+  `if err != nil && ctx.Err() != nil { err = ctx.Err() }`. A call that
+  answered keeps `Err` nil and its `Response`, so its usage is counted even
+  when a cancel discards the answer (2.7).
 - 7.14 **Store failure after `AfterTurn`**: the reply consumer sends the
   reply only when `TurnFinished.Outcome` is still the one it rendered for;
   `finishTurn`'s store failure becomes `Err` and `OutcomeError`.

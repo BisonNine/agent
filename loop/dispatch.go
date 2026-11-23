@@ -105,6 +105,12 @@ func (e *engineTurn) newDispatch(ctx context.Context, defs []spawnllm.ToolDefini
 // each attempt BeforeModel may change the working request or answer it; a
 // dispatch that failed for good goes to OnModelError. An error it returns
 // ends the turn; a *hook.PanicError from a callback ends it too.
+//
+// A cancel wins: an answer (a model's, or one a callback supplied) that
+// comes back once the turn's context has ended is discarded, and the
+// dispatch fails with ctx.Err() as a call cut short in flight does, so the
+// turn ends alike either way. The model's ModelCall has already reported
+// the call, with its response and usage.
 func (e *engineTurn) requestModel(ctx context.Context, d *llmDispatch) (*spawnllm.LLMResponse, error) {
 	var err error
 	for retry := 0; retry <= e.spec.retries; retry++ {
@@ -123,25 +129,31 @@ func (e *engineTurn) requestModel(ctx context.Context, d *llmDispatch) (*spawnll
 			break
 		}
 		if answer != nil {
-			d.supplied = true
-			return answer, nil
-		}
-		e.logAt(slog.LevelInfo, "LLM dispatch", map[string]any{
-			"agent_id":     e.spec.agentID,
-			"iteration":    e.iteration,
-			"provider":     d.provider,
-			"model":        e.spec.model,
-			"num_messages": len(e.messages),
-			"num_tools":    len(d.defs),
-			"max_tokens":   d.maxTokens(e.spec.modelMaxTokens),
-		})
-		var response *spawnllm.LLMResponse
-		response, err = e.callModel(ctx, d)
-		if err == nil {
-			if d.promptEstimate > 0 && response != nil && response.Usage != nil && response.Usage.PromptTokens > 0 {
-				e.spec.cm.ObserveUsage(d.promptEstimate, response.Usage.PromptTokens)
+			if err = ctx.Err(); err == nil {
+				d.supplied = true
+				return answer, nil
 			}
-			return response, nil
+		} else {
+			e.logAt(slog.LevelInfo, "LLM dispatch", map[string]any{
+				"agent_id":     e.spec.agentID,
+				"iteration":    e.iteration,
+				"provider":     d.provider,
+				"model":        e.spec.model,
+				"num_messages": len(e.messages),
+				"num_tools":    len(d.defs),
+				"max_tokens":   d.maxTokens(e.spec.modelMaxTokens),
+			})
+			var response *spawnllm.LLMResponse
+			response, err = e.callModel(ctx, d)
+			if err == nil {
+				err = ctx.Err()
+			}
+			if err == nil {
+				if d.promptEstimate > 0 && response != nil && response.Usage != nil && response.Usage.PromptTokens > 0 {
+					e.spec.cm.ObserveUsage(d.promptEstimate, response.Usage.PromptTokens)
+				}
+				return response, nil
+			}
 		}
 
 		isTimeoutError, isContextError := classifyLLMError(err, d.provider, e.spec.model)
@@ -162,13 +174,30 @@ func (e *engineTurn) requestModel(ctx context.Context, d *llmDispatch) (*spawnll
 		if perr != nil {
 			return nil, perr
 		}
-		if answer != nil {
+		switch {
+		case answer == nil:
+			err = left
+		case ctx.Err() == nil:
 			d.supplied = true
 			return answer, nil
+		default:
+			err = ctx.Err()
 		}
-		err = left
 	}
 	return nil, e.dispatchFailed(ctx, err)
+}
+
+// stopped is the error a turn whose context ended before it took a
+// dispatch's answer ends with: the one requestModel fails with when its
+// context cuts a dispatch's first call short (a budget that ran out is
+// ctx.Err() itself, as waitToRetry returns it), so a turn stopped there ends
+// as one stopped in flight.
+func (e *engineTurn) stopped(ctx context.Context) error {
+	err := ctx.Err()
+	if errors.Is(err, context.DeadlineExceeded) && e.spec.retries > 0 {
+		return err
+	}
+	return e.dispatchFailed(ctx, err)
 }
 
 // modelInfo is the dispatch as the model callbacks see it: the turn's

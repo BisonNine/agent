@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"go.bison9.com/agent"
+	"go.bison9.com/agent/ctxengine/session"
 	"go.bison9.com/agent/hook"
 	"go.bison9.com/agent/toolkit"
 	"go.bison9.com/agent/toolspec"
@@ -469,6 +470,15 @@ func TestSuiteFailsBrokenAgents(t *testing.T) {
 		{"AgentCancel: tasks listed", testAgentCancel, building(broken{
 			tasks: func() []hook.TaskInfo { return []hook.TaskInfo{{ID: "t1"}} },
 		}, nil), "tasks left: "},
+		{"CancelWins: result", testCancelWins, rewriting(outcome(hook.OutcomeCancelled, hook.OutcomeOK)), "result = "},
+		{
+			"CancelWins: usage", testCancelWins, rewriting(each(func(e *hook.ModelCall) { e.Response = nil })),
+			"ModelCall = ",
+		},
+		{"CancelWins: answer reported", testCancelWins, rewriting(func(in []yielded) []yielded {
+			return slices.Insert(slices.Clone(in), len(in)-1, yielded{ev: hook.ModelAnswer{}})
+		}), "ModelAnswer 1 times"},
+		{"CancelWins: answer stored", testCancelWins, storingLate(), "the discarded answer was stored"},
 		{
 			"AbandonedTool: call", testAbandonedTool, rewriting(each(func(e *hook.ToolCallFinished) { e.Interrupted = false })),
 			"ToolCallFinished = ",
@@ -543,6 +553,26 @@ func TestSuiteFailsBrokenAgents(t *testing.T) {
 
 // unqueued builds the agent not to queue runs, as RunUnqueued does.
 func unqueued(f *Fixture) { f.Unqueued = true }
+
+// storingLate is an agent that stores the answer of a turn it cancelled.
+func storingLate() func(testing.TB) Factory {
+	var mu sync.Mutex
+	var store session.SessionStore
+	return building(broken{events: func(in []yielded) []yielded {
+		mu.Lock()
+		defer mu.Unlock()
+		if tf, ok := in[len(in)-1].ev.(hook.TurnFinished); ok && tf.Outcome == hook.OutcomeCancelled {
+			if err := store.AddMessage("s1", "assistant", "late"); err != nil {
+				panic(err)
+			}
+		}
+		return in
+	}}, func(f *Fixture) {
+		mu.Lock()
+		defer mu.Unlock()
+		store = f.Sessions
+	})
+}
 
 // interruptingCancel is an agent whose Run.Cancel only interrupts the turn,
 // leaving its tasks, while reporting the cause it was given.

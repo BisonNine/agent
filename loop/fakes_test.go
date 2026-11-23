@@ -41,6 +41,8 @@ type fakeContext struct {
 	failAfterForce bool
 	// assembled is the history every Assembly returns.
 	assembled []spawnllm.Message
+	// onObserve, when set, runs as ObserveUsage is called, outside the lock.
+	onObserve func()
 }
 
 func (f *fakeContext) add(kind string, msg spawnllm.Message) (int64, error) {
@@ -89,9 +91,12 @@ func (f *fakeContext) Assemble(context.Context, ctxengine.AssembleRequest) (ctxe
 
 func (f *fakeContext) ObserveUsage(est, actual int) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.log = append(f.log, "observe")
 	f.observed = append(f.observed, [2]int{est, actual})
+	f.mu.Unlock()
+	if f.onObserve != nil {
+		f.onObserve()
+	}
 }
 
 func (f *fakeContext) SetContextWindow(int) error                        { return nil }

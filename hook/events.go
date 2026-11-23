@@ -79,9 +79,13 @@ type ModelCall struct {
 	// Response is the provider's response as it returned it; nil on a
 	// failure. The engine never changes it: AfterModel works on a copy.
 	Response *protocoltypes.LLMResponse
-	// Err is the call's error; nil on success. When the turn's context had
-	// ended by the time the call returned, Err is ctx.Err() (the cause is in
-	// TurnResult.Cause), whatever the provider returned.
+	// Err is the call's error; nil on success. A call that failed once the
+	// turn's context had ended has Err ctx.Err() (the cause is in
+	// TurnResult.Cause), whatever the provider returned. A call that
+	// returned an answer keeps a nil Err and its Response, with its usage,
+	// even when the turn then discards the answer because it was stopped
+	// (package documentation, "Cancel wins"); that dispatch has no
+	// ModelAnswer.
 	Err     error
 	Elapsed time.Duration
 }

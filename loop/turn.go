@@ -497,6 +497,10 @@ func (e *engineTurn) startLoop(ctx context.Context, turn *hook.Turn) error {
 func (e *engineTurn) loop(ctx context.Context) (engineResult, error) {
 	e.logDispatchTarget()
 	for e.iteration < e.spec.maxIterations {
+		// A cancel wins: a stopped turn starts no further dispatch.
+		if ctx.Err() != nil {
+			return engineResult{iterations: e.iteration}, e.stopped(ctx)
+		}
 		e.iteration++
 		done, ierr := e.iterate(ctx)
 		if ierr != nil {
@@ -553,8 +557,14 @@ func (e *engineTurn) clearPending(tr hook.TurnResult) {
 
 // turnResult is the TurnResult the model loop's end reports, before
 // AfterTurn: its outcome from the error and the cancel cause
-// (hook.CauseOutcome), the reply and what to store.
+// (hook.CauseOutcome), the reply and what to store. It is where a turn's
+// outcome is decided, and so the last point a cancel wins: a loop that
+// ended with an answer on a context that has ended since is a stopped turn,
+// its answer discarded. A cancel after this changes nothing.
 func (e *engineTurn) turnResult(ctx context.Context, err error) hook.TurnResult {
+	if err == nil && ctx.Err() != nil {
+		err = e.stopped(ctx)
+	}
 	tr := hook.TurnResult{
 		Err:          err,
 		FinishReason: e.finishReason,
@@ -688,6 +698,11 @@ func (e *engineTurn) iterate(ctx context.Context) (bool, error) {
 		return false, err
 	}
 
+	// A cancel wins (package hook, "Cancel wins"): an answer the turn's
+	// context ended before AfterModel had it is discarded unseen.
+	if ctx.Err() != nil {
+		return false, e.stopped(ctx)
+	}
 	// AfterModel works on a copy, so the ModelCall event keeps the
 	// provider's response; it may change it and adds the notes and reply
 	// lines for what it did with it (generated images).
@@ -698,6 +713,11 @@ func (e *engineTurn) iterate(ctx context.Context) (bool, error) {
 	mr := &hook.ModelResponse{Model: answered, Response: copyResponse(response)}
 	if perr := e.hooks.callAfterModel(ctx, e.modelInfo(d), mr); perr != nil {
 		return false, perr
+	}
+	// The turn takes the answer here: one the turn was stopped while
+	// AfterModel had it is discarded too.
+	if ctx.Err() != nil {
+		return false, e.stopped(ctx)
 	}
 	response = mr.Response
 	e.lastImages = len(response.Images)
@@ -719,6 +739,11 @@ func (e *engineTurn) iterate(ctx context.Context) (bool, error) {
 
 	if len(response.ToolCalls) == 0 {
 		return e.directAnswer(response), nil
+	}
+	// The last point a cancel discards a batch: from here its call message
+	// is stored and its tools run, and a cancel stops them as it would any.
+	if ctx.Err() != nil {
+		return false, e.stopped(ctx)
 	}
 	return e.runToolCalls(ctx, response)
 }

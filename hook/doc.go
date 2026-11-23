@@ -132,4 +132,42 @@
 //     ModelCall whose Err is ctx.Err(), the tools in flight end as
 //     above, and TurnFinished carries the outcome the cause decides
 //     (CauseOutcome) and the cause.
+//
+// # Cancel wins
+//
+// A turn is stopped from the instant its context ends: Run.Cancel,
+// Run.Interrupt, Agent.Interrupt, Agent.Cancel, Close's shutdown, the
+// run's own context or the turn budget. A model's answer (or one
+// BeforeModel or OnModelError supplied) that the turn has not yet taken by
+// then is discarded, and the turn ends exactly as one stopped with its
+// model call in flight: the cause's outcome (CauseOutcome) and the cause,
+// the same error, OnInterrupt and TurnFinished as always, nothing stored
+// from the answer, no AfterModel continuation, no ModelAnswer, no tool
+// batch, no reply. A stopped turn starts no further dispatch either.
+//
+// The ModelCall of a call that returned an answer still carries the
+// provider's Response, with its usage, and a nil Err: the call succeeded
+// and was paid for. That the answer was discarded shows as the dispatch
+// having no ModelAnswer and the turn ending stopped.
+//
+// What the turn had stored before the instant stays stored (the user's
+// message, earlier iterations' calls and results), and the session holds
+// no tool call without a result. The boundary, the last point a stop
+// discards what the model answered:
+//
+//   - AfterModel is given the answer only when the turn is live as the
+//     call returns and again just before AfterModel; the answer is
+//     reported (ModelAnswer, Image) only when the turn is still live as
+//     AfterModel returns;
+//   - a batch of tool calls is checked last just before ToolBatchStarted.
+//     From ToolBatchStarted on the batch is the turn's: its call message
+//     is stored and its tools run, and a stop stops them as during any
+//     batch, a result stored for every call;
+//   - a reply is checked last when the model loop ends, where the turn's
+//     outcome is decided, before AfterTurn: a loop that ended with a reply
+//     on a context that has ended since is a stopped turn, its reply
+//     discarded (its ModelAnswer, already emitted, is then followed by a
+//     stopped TurnFinished). A stop after that (during AfterTurn, or once
+//     the reply was stored and handed on with TurnFinished) changes
+//     nothing: the turn keeps its outcome and its reply, with no cause.
 package hook

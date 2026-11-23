@@ -38,6 +38,9 @@ batch order), and then:
 - interrupt: the running turn stops, queued runs are dropped and counted
   and emit only `TurnFinished`, tasks keep running;
 - `Run.Cancel` stops the turn and its tasks; `Agent.Cancel` stops all;
+- a cancel wins: an answer that returns after the interrupt is discarded
+  (turn cancelled, no `ModelAnswer`, nothing stored), its `ModelCall`
+  still carrying the usage;
 - a tool that ignores its context is abandoned with `InterruptedResult`;
 - a panic in a step callback ends the turn with a `*hook.PanicError`; one
   in an observer does not;

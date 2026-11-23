@@ -174,6 +174,7 @@ func run(t *testing.T, factory Factory, unqueued bool) {
 		{"InterruptLeavesTasks", testInterruptLeavesTasks},
 		{"RunCancelStopsTasks", testRunCancelStopsTasks},
 		{"AgentCancel", testAgentCancel},
+		{"CancelWins", testCancelWins},
 		{"AbandonedTool", testAbandonedTool},
 		{"CallbackPanic", testCallbackPanic},
 		{"ObserverPanic", testObserverPanic},

@@ -92,6 +92,14 @@ step, prompt-token calibration).
 
 `OnInterrupt` is told once per stop, with what was stopped and dropped.
 
+A cancel wins (package `hook`, "Cancel wins"): once a turn's context has
+ended, a model answer it has not taken is discarded and the turn ends as one
+stopped with its call in flight. Its `ModelCall` still carries the response
+and usage (`Err` nil). The last points are: just before `ToolBatchStarted`
+for tool calls (then the batch runs and a stop interrupts its tools), and
+the loop's end, before `AfterTurn`, for a reply. A stop after that keeps the
+turn's outcome and stored reply.
+
 ## Tasks
 
 The agent is the `hook.TaskRegistrar` on every tool call's and task's

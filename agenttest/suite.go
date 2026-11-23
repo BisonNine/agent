@@ -516,6 +516,45 @@ func testAgentCancel(t testing.TB, factory Factory) {
 	}
 }
 
+// lateUsage is the usage of the answer testCancelWins discards.
+var lateUsage = spawnllm.UsageInfo{PromptTokens: 120, CompletionTokens: 30, TotalTokens: 150}
+
+func testCancelWins(t testing.TB, factory Factory) {
+	var a agent.Agent
+	var once sync.Once
+	// The interrupt lands as the model's answer is reported, after the call
+	// returned and before the agent took the answer.
+	f := newFixture(t, hook.Plugin{Name: "stop", OnEvent: func(_ context.Context, ev hook.Event) {
+		if c, ok := ev.(hook.ModelCall); ok && c.Response != nil {
+			once.Do(func() { a.Interrupt("s1") })
+		}
+	}})
+	usage := lateUsage
+	f.Provider.Script(PrimaryWire, modelstest.Step{Response: &spawnllm.LLMResponse{Content: "late", FinishReason: "stop", Usage: &usage}})
+	a = build(t, factory, f)
+	evs := collect(t, a.Run(context.Background(), "s1", agent.UserText("Hello")))
+	res := result(evs)
+	if res.Outcome != hook.OutcomeCancelled || !errors.Is(res.Cause, hook.ErrInterrupted) || res.Reply != "" {
+		t.Fatalf("result = %+v", res.TurnResult)
+	}
+	call, ok := first[hook.ModelCall](evs)
+	if !ok || call.Err != nil || call.Response == nil || call.Response.Usage == nil || *call.Response.Usage != lateUsage {
+		t.Fatalf("ModelCall = %+v, want the answer with its usage", call)
+	}
+	if n := count[hook.ModelAnswer](evs); n != 0 {
+		t.Fatalf("ModelAnswer %d times for a discarded answer", n)
+	}
+	history := f.Sessions.GetHistory("s1")
+	if len(history) == 0 || history[0].Content != "Hello" {
+		t.Fatalf("session s1 history = %+v, want the user's message first", history)
+	}
+	for _, m := range history {
+		if m.Role == "assistant" {
+			t.Fatalf("the discarded answer was stored: %+v", m)
+		}
+	}
+}
+
 func testAbandonedTool(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	inTool := make(chan struct{})

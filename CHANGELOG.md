@@ -369,6 +369,9 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- A cancel wins: a model answer that returns after its turn was stopped is
+  discarded and the turn ends stopped (it used to end OK with the cause);
+  its `ModelCall` still reports the usage.
 - Breaking: `ctxengine.WithModelCaller` and `consolidate.NewWorker` take a
   `hook.Caller`; `ctxengine.ModelCaller`, `ModelRequest`, `ModelReply`,
   `ErrNoModel` and `consolidate.ModelCaller`, `ModelRequest`, `ModelReply`
