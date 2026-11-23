@@ -58,15 +58,13 @@ type Worker struct {
 	st    *store.Store
 	model hook.Caller
 
-	batchOpts      BatchOptions
-	proposeDomains bool
-	autoPromote    bool
-	debugDump      string
-	modelName      string
-	folderMode     os.FileMode
-	fileMode       os.FileMode
-	logger         *slog.Logger // the host's logger; nil discards
-	log            *slog.Logger // logger tagged with the component "cogmem"
+	batchOpts  BatchOptions
+	debugDump  string
+	modelName  string
+	folderMode os.FileMode
+	fileMode   os.FileMode
+	logger     *slog.Logger // the host's logger; nil discards
+	log        *slog.Logger // logger tagged with the component "cogmem"
 
 	// Retention windows in days; 0 means keep forever. Applied on each run,
 	// because consolidation is already the regular sweep over a store and a
@@ -80,13 +78,6 @@ type Option func(*Worker)
 
 // WithBatchOptions sets the batching levers (count/token/char budgets).
 func WithBatchOptions(o BatchOptions) Option { return func(w *Worker) { w.batchOpts = o } }
-
-// WithProposeDomains lets the model create new domains (informational lever).
-func WithProposeDomains(v bool) Option { return func(w *Worker) { w.proposeDomains = v } }
-
-// WithAutoPromote is currently informational: inferred items already land in
-// review via the contract, so promotion stays a human/MCP action.
-func WithAutoPromote(v bool) Option { return func(w *Worker) { w.autoPromote = v } }
 
 // WithDebugDump writes the system/user/raw payloads of each run to dir.
 func WithDebugDump(dir string) Option { return func(w *Worker) { w.debugDump = dir } }
@@ -281,12 +272,6 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		return result, fmt.Errorf("consolidate: model call: %w", err)
 	}
 
-	// Repair safe, mechanically-fixable deviations (e.g. an inferred item the
-	// model marked active → review) before validating, so a single such mistake
-	// doesn't discard the whole batch and lose real memories. Genuinely malformed
-	// batches still fail Validate below.
-	repairs := out.Normalize()
-
 	if verr := out.Validate(in); verr != nil {
 		w.recordRun(ctx, p, model, "aborted", 0, consolidated+1, lastSeq, inputTokens, outputTokens, verr.Error(), "", started)
 		w.dump(p, system, string(userJSON), raw, 0)
@@ -316,19 +301,13 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	if _, err := w.st.DeleteInboxThrough(ctx, w.st.DB(), lastSeq); err != nil {
 		drainErr = "drain inbox: " + err.Error()
 	}
-	// Auto-repairs are a NOTE: the run succeeded and the deviation was safely
-	// corrected. drainErr is a real error — the run itself was fine, but the
-	// cleanup genuinely failed — so it stays in Error.
-	// Generic keywords the model proposed are dropped, not failed on: they are
-	// a NOTE too.
-	var notes []string
-	if len(repairs) > 0 {
-		notes = append(notes, "auto-repaired: "+strings.Join(repairs, "; "))
-	}
+	// drainErr is a real error — the run itself was fine, but the cleanup
+	// genuinely failed — so it stays in Error. Generic keywords the model
+	// proposed are dropped, not failed on: they are a NOTE.
+	runNote := ""
 	if len(applyRes.DroppedKeywords) > 0 {
-		notes = append(notes, "keywords not added: "+droppedKeywordsText(applyRes.DroppedKeywords, 0))
+		runNote = "keywords not added: " + droppedKeywordsText(applyRes.DroppedKeywords, 0)
 	}
-	runNote := strings.Join(notes, "; ")
 	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, drainErr, runNote, started)
 	w.dump(p, system, string(userJSON), raw, applied)
 
@@ -501,8 +480,8 @@ func (w *Worker) applyRetention(ctx context.Context, id string) {
 
 // recordRun writes the run record. errMsg is why the run FAILED; note is
 // something worth reporting about a run that SUCCEEDED. They are separate
-// arguments on purpose: passing a note as an error is what made the memory page
-// show a successful auto-repair in red.
+// arguments on purpose: passing a note as an error makes the memory page show a
+// successful run in red.
 func (w *Worker) recordRun(ctx context.Context, p RunParams, model, status string, applied int, seqStart, seqEnd int64, inTok, outTok int, errMsg, note string, started time.Time) {
 	finished := time.Now()
 	_ = w.st.RecordRun(ctx, w.st.DB(), store.Run{

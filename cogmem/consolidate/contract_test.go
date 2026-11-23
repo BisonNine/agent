@@ -406,32 +406,6 @@ func TestBuildPromptIgnoresACopyOfTheEnginePrompt(t *testing.T) {
 
 func ev(a, b int64) store.Evidence { return store.Evidence{SeqStart: a, SeqEnd: b} }
 
-// Normalize no longer repairs anything. The one repair it had downgraded an
-// inferred memory the model marked active to review, and both the status field
-// and the review state are gone — the model states type and nothing else, so
-// there is no longer a field it can set to a value needing correction.
-//
-// The function survives because the repair-and-note path is the right shape for
-// the next safely-correctable deviation, and its callers already handle an empty
-// result. This test pins that it reports no notes and mutates nothing.
-func TestOutput_Normalize_IsANoOp(t *testing.T) {
-	out := Output{MemoryOps: []MemoryOp{
-		{Op: "add", Domain: "d1", Type: "fact", Text: "a"},
-		{Op: "add", Domain: "d1", Type: "event", Text: "b"},
-		{Op: "supersede", OldID: "h1", Domain: "d1", Type: "operational", Text: "c"},
-	}}
-	before := append([]MemoryOp(nil), out.MemoryOps...)
-
-	if notes := out.Normalize(); len(notes) != 0 {
-		t.Errorf("Normalize reported %d notes, want none: %v", len(notes), notes)
-	}
-	for i := range before {
-		if out.MemoryOps[i] != before[i] {
-			t.Errorf("memory_ops[%d] was mutated: %+v -> %+v", i, before[i], out.MemoryOps[i])
-		}
-	}
-}
-
 // A retire may carry no evidence, because it removes a memory that already
 // exists rather than asserting anything a message would have to justify.
 //

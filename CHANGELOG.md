@@ -425,6 +425,9 @@ project uses [Semantic Versioning](https://semver.org/).
 - Breaking: `WithFolderPermissions` and `WithFilePermissions` (ctxengine,
   memory, session, cogmem store and consolidate) and the two-argument
   `WithFileModes(dir, file)` (openai_compat, openai_responses).
+- Breaking: `cogmem.ConsolidationSettings.ProposeDomains` and `AutoPromote`,
+  `consolidate.WithProposeDomains`, `consolidate.WithAutoPromote` and
+  `consolidate.Output.Normalize`, which nothing read or which did nothing.
 
 ### Fixed
 

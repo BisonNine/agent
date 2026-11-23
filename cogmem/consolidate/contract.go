@@ -91,8 +91,6 @@ type Message struct {
 }
 
 // Output is the strict JSON the model must return.
-//
-//nolint:recvcheck // Validate is a read-only check on a value; Normalize must mutate in place. Either receiver change alters the exported method set.
 type Output struct {
 	DomainOps      []DomainOp    `json:"domain_ops"`
 	MemoryOps      []MemoryOp    `json:"memory_ops"`
@@ -308,27 +306,5 @@ func (o Output) Validate(in Input) error {
 			return fmt.Errorf("conflict_ledger[%d]: %w", i, err)
 		}
 	}
-	return nil
-}
-
-// Normalize repairs safe, unambiguous contract deviations in place, so a single
-// mechanically-fixable mistake doesn't make Validate reject an otherwise-good
-// batch (which would silently drop real memories). It returns a human-readable
-// note per repair, for the run record/log.
-//
-// There are currently no repairs. The one that existed downgraded an inferred
-// memory the model had marked active to review, and both the status field and
-// the review state are gone — the model no longer states anything that can be
-// wrong in a way an automatic correction could fix.
-//
-// The function is kept because the repair-and-note path is the right shape for
-// the next contract deviation that turns out to be safely correctable, and its
-// callers (the worker's run record, the memory page's note field) already
-// handle an empty result.
-//
-// Genuinely ambiguous violations (unknown domain, missing or invalid type, empty
-// text, dangling supersede/retire references) are NOT repaired — Validate
-// rejects those, since there is no safe automatic correction.
-func (o *Output) Normalize() []string {
 	return nil
 }

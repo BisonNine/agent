@@ -190,7 +190,7 @@ type Run struct {
 	// Error is why the run FAILED. Leave it empty on a successful run.
 	Error string
 	// Note is something worth telling the operator about a run that
-	// SUCCEEDED — e.g. a contract deviation that was safely auto-repaired.
+	// SUCCEEDED — e.g. keywords the model proposed that were not added.
 	// Kept separate from Error so the UI can show it without dressing a
 	// success up as a failure, which is exactly what happened when the two
 	// shared one column.

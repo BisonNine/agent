@@ -73,13 +73,11 @@ func TestSettings_ComposerOptions(t *testing.T) {
 
 func TestSettings_WorkerOptions(t *testing.T) {
 	type resolved struct {
-		batch          consolidate.BatchOptions
-		proposeDomains bool
-		autoPromote    bool
-		eventDays      int
-		retiredDays    int
-		debugDump      string
-		modelName      string
+		batch       consolidate.BatchOptions
+		eventDays   int
+		retiredDays int
+		debugDump   string
+		modelName   string
 	}
 	read := func(t *testing.T, w *consolidate.Worker) resolved {
 		t.Helper()
@@ -92,12 +90,10 @@ func TestSettings_WorkerOptions(t *testing.T) {
 				PerMessageChars: int(field(t, bo, "PerMessageChars").Int()),
 				OverheadTokens:  int(field(t, bo, "OverheadTokens").Int()),
 			},
-			proposeDomains: field(t, rv, "proposeDomains").Bool(),
-			autoPromote:    field(t, rv, "autoPromote").Bool(),
-			eventDays:      int(field(t, rv, "eventDays").Int()),
-			retiredDays:    int(field(t, rv, "retiredDays").Int()),
-			debugDump:      field(t, rv, "debugDump").String(),
-			modelName:      field(t, rv, "modelName").String(),
+			eventDays:   int(field(t, rv, "eventDays").Int()),
+			retiredDays: int(field(t, rv, "retiredDays").Int()),
+			debugDump:   field(t, rv, "debugDump").String(),
+			modelName:   field(t, rv, "modelName").String(),
 		}
 	}
 	defaults := consolidate.DefaultBatchOptions()
@@ -117,14 +113,13 @@ func TestSettings_WorkerOptions(t *testing.T) {
 			s: Settings{
 				Consolidation: ConsolidationSettings{
 					MaxBatchMessages: 7, MaxInputTokens: 900, PerMessageChars: 50,
-					ProposeDomains: true, AutoPromote: true, DebugDump: true,
+					DebugDump: true,
 				},
 				Retention: RetentionSettings{EventDays: 30, RetiredDays: 90},
 			},
 			workspace: "/ws",
 			want: resolved{
-				batch:          consolidate.BatchOptions{MaxMessages: 7, MaxInputTokens: 900, PerMessageChars: 50},
-				proposeDomains: true, autoPromote: true,
+				batch:     consolidate.BatchOptions{MaxMessages: 7, MaxInputTokens: 900, PerMessageChars: 50},
 				eventDays: 30, retiredDays: 90,
 				debugDump: filepath.Join("/ws", "cogmem-dumps"),
 			},

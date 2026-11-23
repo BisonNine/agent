@@ -35,9 +35,7 @@ type ConsolidationSettings struct {
 	IdleMinutes      int    // run after this long idle; <=0 disables
 	Nightly          bool   // run once a day
 	NightlyAt        string // "HH:MM" local; "" = 03:00
-	ProposeDomains   bool
-	AutoPromote      bool
-	DebugDump        bool // write each run's payloads under <workspace>/cogmem-dumps
+	DebugDump        bool   // write each run's payloads under <workspace>/cogmem-dumps
 	MaxBatchMessages int
 	MaxInputTokens   int
 	PerMessageChars  int
@@ -87,8 +85,6 @@ func (s Settings) WorkerOptions(workspace string) []consolidate.Option {
 	}
 	opts := []consolidate.Option{
 		consolidate.WithBatchOptions(bo),
-		consolidate.WithProposeDomains(s.Consolidation.ProposeDomains),
-		consolidate.WithAutoPromote(s.Consolidation.AutoPromote),
 		consolidate.WithRetention(s.Retention.EventDays, s.Retention.RetiredDays),
 	}
 	if s.Consolidation.DebugDump && workspace != "" {
