@@ -45,6 +45,11 @@ type RunOptions struct {
 	// NoTurnID runs the turn with no id at all: Scope.TurnID stays empty and
 	// the engine's lines carry no turn id. It wins over TurnID.
 	NoTurnID bool
+	// NoEvents: the run's handle keeps none of its events but TurnFinished,
+	// so a host that only calls Wait holds no request, response or tool
+	// result in memory while the turn runs. Run.Events then yields
+	// TurnFinished alone; OnEvent consumers still see every event.
+	NoEvents bool
 }
 
 // RunOption sets one of the RunOptions.
@@ -67,6 +72,10 @@ func WithTurnID(id string) RunOption { return func(o *RunOptions) { o.TurnID = i
 
 // WithoutTurnID runs the turn with no turn id.
 func WithoutTurnID() RunOption { return func(o *RunOptions) { o.NoTurnID = true } }
+
+// WithoutEvents runs the turn with a handle that keeps no events but
+// TurnFinished: for a host that only calls Wait.
+func WithoutEvents() RunOption { return func(o *RunOptions) { o.NoEvents = true } }
 
 // ApplyRunOptions returns the RunOptions opts set, in order. A nil option is
 // skipped.

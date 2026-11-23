@@ -42,15 +42,19 @@ func newRun(a *Agent, ctx context.Context, session string, msg hook.Message, opt
 
 var _ hook.Run = (*run)(nil)
 
-// add holds ev for Events. Nothing is added after TurnFinished, which also
-// closes Done.
+// add holds ev for Events; a run WithoutEvents holds only its TurnFinished.
+// Nothing is added after TurnFinished, which also closes Done.
 func (r *run) add(_ context.Context, ev hook.Event) {
-	if _, last := ev.(hook.TurnFinished); last {
+	tf, last := ev.(hook.TurnFinished)
+	if last {
 		// The run is no longer running before anyone can read its
 		// TurnFinished: an Interrupt from then on stops nothing of it.
 		r.a.mu.Lock()
 		r.ended = true
 		r.a.mu.Unlock()
+	}
+	if r.opts.NoEvents && !last {
+		return
 	}
 	r.mu.Lock()
 	if r.finished {
@@ -58,7 +62,6 @@ func (r *run) add(_ context.Context, ev hook.Event) {
 		return
 	}
 	r.events = append(r.events, ev)
-	tf, last := ev.(hook.TurnFinished)
 	if last {
 		r.finished = true
 		r.result = tf.TurnResult

@@ -125,7 +125,9 @@
 //     run's handle, and a consumer that stops reading early stops nothing.
 //     Ranging Events again yields only the events not yet yielded; once the
 //     turn has finished, unread events go with the handle when the host
-//     drops it.
+//     drops it. A run started WithoutEvents holds none but TurnFinished:
+//     a host that only calls Wait starts its runs so, or the handle keeps
+//     every request, response and tool result of the turn until it ends.
 //   - On an interrupt or cancel, the model call in flight ends with a
 //     ModelCall whose Err is ctx.Err(), the tools in flight end as
 //     above, and TurnFinished carries the outcome the cause decides

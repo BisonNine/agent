@@ -666,6 +666,7 @@ section 1's example.
 | A gate naming what the model called | `Spec.Gate` reading `ToolCallFrom(ctx).Name` | from `Spec.Allow` |
 | Async tools' late results | `Spec.AsyncResult(ctx, call, info, result)`: `ctx` is the call's (what `ToolContext` set then), detached; delivered after the turn and after `Close` | synchronous |
 | The turn id it made (logs, audit, devices); none for runs that have none (MCP sub-agent and Maestro runs) | `WithTurnID(id)` per run, or `WithoutTurnID()` (no `Scope.TurnID`, no `turn_id` on engine lines) | generated |
+| A host that only calls `Wait` (reads no `Events`) | `WithoutEvents()` per run: the handle keeps none of the turn's events but `TurnFinished`; `OnEvent` still sees them all. Without it the handle holds every event (each `ModelCall` with its request and resolved media, each tool result) until the turn ends | held until read |
 | Tool timeout per batch, other limits per turn, from live config | `Spec.TurnLimits(ctx, scope)` | `Spec.Limits` |
 | Its own turn deadline, none inside | `Limits.TurnBudget: NoTurnBudget` (negative) | 15 min |
 | Content logging switched live | `Spec.LogContent func() bool` | off |

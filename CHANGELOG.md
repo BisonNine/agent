@@ -52,7 +52,9 @@ project uses [Semantic Versioning](https://semver.org/).
   `agent.SessionForgetter`. With a host session the agent sets no context
   window. The agent logs no panic or turn error it reports in `TurnFinished`.
 - `hook`: `Turn.RecallText` (what memory recalls for; the message as given
-  to `Run` by default), `WithoutTurnID`, `NoIterations` (a negative
+  to `Run` by default), `WithoutTurnID`, `WithoutEvents` (a run whose
+  handle keeps no events but `TurnFinished`, for a host that only calls
+  `Wait`), `NoIterations` (a negative
   `MaxIterations`, kept by `WithDefaults`: no model request).
 - `hook`: `Turn.Model` (the turn's chosen model), `WithTurnID` and
   `RunOptions.TurnID`, `NoTurnBudget`, and `WithToolCall`/`ToolCallFrom`

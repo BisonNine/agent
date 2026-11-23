@@ -49,6 +49,10 @@ func WithTurnID(id string) RunOption { return hook.WithTurnID(id) }
 // WithoutTurnID runs the turn with no turn id.
 func WithoutTurnID() RunOption { return hook.WithoutTurnID() }
 
+// WithoutEvents runs the turn with a handle that keeps no events but
+// TurnFinished: for a host that only calls Wait.
+func WithoutEvents() RunOption { return hook.WithoutEvents() }
+
 // AtDepth runs the turn at sub-agent depth n.
 func AtDepth(n int) RunOption { return hook.AtDepth(n) }
 

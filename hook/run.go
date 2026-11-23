@@ -78,7 +78,9 @@ type Run interface {
 	// second value is nil for every event except TurnFinished, where it is
 	// TurnResult.Err, so `for ev, err := range run.Events()` ends on the
 	// turn's error. Breaking out of the range stops nothing; a later range
-	// continues with the events not yet yielded.
+	// continues with the events not yet yielded. The handle holds every
+	// event until it is yielded, so a host that never ranges Events runs
+	// the turn WithoutEvents; such a run yields TurnFinished alone.
 	Events() iter.Seq2[Event, error]
 	// Interrupt stops this run's turn with ErrInterrupted, or drops this run
 	// from the queue. Other queued runs and the tasks it started are left.

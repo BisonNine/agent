@@ -121,7 +121,9 @@ with `Spec.Session` it holds none. Memory recalls for `hook.Turn.RecallText`:
 the message as given to `Run`, unless a `BeforeTurn` sets it (a host that
 prepends held notes and then appends attachment references sets it in
 between). `hook.WithoutTurnID()` runs a turn with no id at all;
-`hook.NoIterations` a turn with no model request.
+`hook.NoIterations` a turn with no model request. A run's handle holds its
+events until `Events` reads them; a host that only calls `Wait` runs its
+turns with `hook.WithoutEvents()`, so the handle keeps only `TurnFinished`.
 
 ## Not here
 
