@@ -233,6 +233,8 @@ func (r *recorder) kinds() []string {
 type engineModel struct {
 	name, wire string
 	client     spawnllm.LLMProvider
+	// maxTokens is the model's max_tokens; 0 means 4096.
+	maxTokens int
 }
 
 // testChain is a catalogue holding models, in priority order, under one
@@ -244,7 +246,11 @@ func testChain(t *testing.T, clk clock.Clock, ms ...engineModel) (*models.Catalo
 		t.Fatal(err)
 	}
 	for i, m := range ms {
-		if err := cat.Add(modelspec.Model{ModelName: m.name, Model: m.wire, Provider: "Alice's API", MaxTokens: 4096}, models.For(models.Chat, i+1)); err != nil {
+		maxTokens := m.maxTokens
+		if maxTokens == 0 {
+			maxTokens = 4096
+		}
+		if err := cat.Add(modelspec.Model{ModelName: m.name, Model: m.wire, Provider: "Alice's API", MaxTokens: maxTokens}, models.For(models.Chat, i+1)); err != nil {
 			t.Fatal(err)
 		}
 		if err := cat.RegisterClient(m.name, m.client); err != nil {
