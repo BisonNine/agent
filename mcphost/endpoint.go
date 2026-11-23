@@ -27,9 +27,13 @@ var errNoTools = errors.New("no tools are served to this caller")
 
 // AsyncResultFunc receives the late result of a tool that finished in the
 // background (a toolkit.AsyncExecutor), for the host to deliver. ctx is the
-// one the tool passed to its callback; the MCP request it started from may
-// be long gone. call is the call as the tool ran it.
-type AsyncResultFunc func(ctx context.Context, caller Caller, call hook.ToolCall, result *toolkit.Result)
+// context the call's tool ran on (with the scope, the caller, the Target,
+// the tool call and what CallContext and ToolContext added), without its
+// cancellation, so the values of the call's time are still on it when the
+// result comes, however late; the context the tool hands its callback is
+// not passed, since it carries none of them. info is the tool that ran;
+// call is the call as it ran.
+type AsyncResultFunc func(ctx context.Context, caller Caller, call hook.ToolCall, info toolkit.Info, result *toolkit.Result)
 
 // Config is what an Endpoint serves and how.
 type Config struct {
@@ -85,6 +89,11 @@ type Config struct {
 	// its work outlives a client that goes away. Off, it runs on the
 	// request's context like every other tool.
 	DetachBackground bool
+	// RefuseWithInternalName words the refusal of a published tool the
+	// caller's set does not hold with the tool's internal name, as a server
+	// that dispatched by internal name did. Off, it names the tool as the
+	// call did, so no other agent's internal name reaches a caller.
+	RefuseWithInternalName bool
 	// PanicAsProtocolError answers a call whose tool panicked with MCP's
 	// protocol error (-32603 "panic recovered in <name> tool handler: <value>")
 	// instead of the error result "Tool <name> failed with an internal
@@ -92,6 +101,12 @@ type Config struct {
 	// result OnToolError gave in its place is not sent. A panic in a
 	// callback is always an error result.
 	PanicAsProtocolError bool
+
+	// OnSkip, when set, is told of every catalogue tool left out (a taken
+	// name, a schema that cannot be encoded or that MCP refuses) on every
+	// read of the catalogue: at New, on each Refresh, and on each change of a
+	// followed catalogue. The endpoint logs them too.
+	OnSkip func(Skip)
 
 	// Logger is the endpoint's logger; records carry component=mcphost.
 	// Nil discards. Token values and tool arguments are never logged.
@@ -176,15 +191,15 @@ func New(cfg Config) (*Endpoint, error) {
 
 // Refresh reads the catalogue again and brings what the endpoint publishes
 // in step with it, synchronously, sending tools/list_changed only when what
-// is published changed since the last notice. It reports whether a notice
-// was sent. A host whose Catalogue has no Version calls it after each
-// change; for one that has, it is not needed.
-func (e *Endpoint) Refresh(ctx context.Context) bool {
-	changed := e.sync()
-	if changed {
-		e.logger.InfoContext(ctx, "MCP catalogue refreshed")
+// is published changed since the last notice. It reports what changed
+// (Changed: a notice was sent). A host whose Catalogue has no Version calls
+// it after each change; for one that has, it is not needed.
+func (e *Endpoint) Refresh(ctx context.Context) RefreshResult {
+	res := e.sync()
+	if res.Changed {
+		e.logger.InfoContext(ctx, "MCP catalogue refreshed", "added", res.Added, "deleted", res.Removed)
 	}
-	return changed
+	return res
 }
 
 // Close stops following the catalogue (a registry passed to Watch is

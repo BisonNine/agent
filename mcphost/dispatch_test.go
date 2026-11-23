@@ -201,7 +201,7 @@ func TestDispatch_AsyncResult(t *testing.T) {
 	got := make(chan late, 1)
 	f := newFixture(t, func(c *Config) {
 		c.DetachBackground = true
-		c.AsyncResult = func(_ context.Context, caller Caller, call hook.ToolCall, result *toolkit.Result) {
+		c.AsyncResult = func(_ context.Context, caller Caller, call hook.ToolCall, _ toolkit.Info, result *toolkit.Result) {
 			got <- late{caller, call, result}
 		}
 	})

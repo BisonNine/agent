@@ -209,7 +209,7 @@ func wireHandler(t *testing.T) http.Handler {
 	}
 	base := Config{
 		Name: "Example", Version: "0.6.6", Authenticator: auth,
-		Names: ExternalFirst, PanicAsProtocolError: true, ToolContext: onlyScoped,
+		Names: ExternalFirst, PanicAsProtocolError: true, RefuseWithInternalName: true, ToolContext: onlyScoped,
 		Plugins: []hook.Plugin{redact},
 	}
 	internalCfg := base

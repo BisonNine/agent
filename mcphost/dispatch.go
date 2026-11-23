@@ -76,6 +76,32 @@ type target struct {
 	found bool // the caller's set holds the tool
 }
 
+// Target is the tool a call names, as the endpoint resolved it. It is on
+// the context of the call's CallContext, ToolContext, Gate, callbacks,
+// events and AsyncResult (TargetOf). A name the endpoint does not publish
+// never reaches them: MCP answers it with "tool not found".
+type Target struct {
+	// Published is the name the call used.
+	Published string
+	// Internal is the internal name of the tool the call runs: Info.Name
+	// when Held, else the tool the endpoint's catalogue publishes under
+	// Published.
+	Internal string
+	// Held reports that the caller's set holds the tool (granted, enabled
+	// or not); Info is then that tool. A published tool the caller's set
+	// does not hold is refused as not enabled.
+	Held bool
+	Info toolkit.Info
+}
+
+type targetKey struct{}
+
+// TargetOf returns the tool the call on ctx names.
+func TargetOf(ctx context.Context) (Target, bool) {
+	t, ok := ctx.Value(targetKey{}).(Target)
+	return t, ok
+}
+
 // dispatch runs one call for caller: the scope, the caller and the host's
 // values on its context; the tool the published name resolves to and its
 // ToolContext; ToolCallStarted; BeforeTool; the tool through the caller's
@@ -84,25 +110,28 @@ type target struct {
 func (e *Endpoint) dispatch(ctx context.Context, caller Caller, name, internal string, args map[string]any) (res *toolkit.Result, panicked any) {
 	ctx = hook.WithScope(ctx, caller.Scope)
 	ctx = withCaller(ctx, caller)
-	if e.cfg.CallContext != nil {
-		ctx = e.cfg.CallContext(ctx, caller)
-	}
-	ctx, stop := cancelOnDone(ctx, caller.Done)
-	defer stop()
 	if caller.revoked() {
 		return revokedResult(), nil
 	}
 	var tgt target
 	tgt.info, tgt.found = e.resolve(caller, name, internal)
+	if tgt.found {
+		internal = tgt.info.Name
+	}
+	ctx = context.WithValue(ctx, targetKey{}, Target{Published: name, Internal: internal, Held: tgt.found, Info: tgt.info})
 	if !tgt.found {
-		// Refused by the internal name, as a host that dispatches by it
-		// words it; on Bearer by the called name, so that no other agent's
-		// internal name reaches the caller.
-		tgt.info.Name = internal
-		if e.cfg.Transport == Bearer {
-			tgt.info.Name = name
+		// Refused by the called name, so that no other agent's internal
+		// name reaches the caller, or by the internal one.
+		tgt.info.Name = name
+		if e.cfg.RefuseWithInternalName {
+			tgt.info.Name = internal
 		}
 	}
+	if e.cfg.CallContext != nil {
+		ctx = e.cfg.CallContext(ctx, caller)
+	}
+	ctx, stop := cancelOnDone(ctx, caller.Done)
+	defer stop()
 	if tgt.found && e.cfg.ToolContext != nil {
 		ctx = e.cfg.ToolContext(ctx, caller, tgt.info)
 	}
@@ -203,8 +232,11 @@ func (e *Endpoint) execute(ctx context.Context, caller Caller, call hook.ToolCal
 	}
 	var cb toolkit.AsyncCallback
 	if e.cfg.AsyncResult != nil {
-		ran := copyCall(call)
-		cb = func(cbCtx context.Context, r *toolkit.Result) { e.cfg.AsyncResult(cbCtx, caller, ran, r) }
+		// The late result is delivered on the call's own context, as the
+		// tool ran on it, without its cancellation: every value the host
+		// put there at call time is still there.
+		ran, callCtx, info := copyCall(call), context.WithoutCancel(ctx), tgt.info
+		cb = func(_ context.Context, r *toolkit.Result) { e.cfg.AsyncResult(callCtx, caller, ran, info, r) }
 		if _, async := tgt.info.Tool.(toolkit.AsyncExecutor); async && e.cfg.DetachBackground {
 			ctx = context.WithoutCancel(ctx)
 		}

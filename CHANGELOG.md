@@ -77,6 +77,17 @@ project uses [Semantic Versioning](https://semver.org/).
   its prompt text and MCP server entry. Logging is `Config.Logger` /
   `WithLogger`, never with token values. Adds the dependency
   `github.com/mark3labs/mcp-go` (v1.6.0), imported by `mcphost` alone.
+- `mcphost`: `AsyncResultFunc` now gets the call's own context (as its
+  tool ran on it, with what `CallContext` and `ToolContext` added, detached
+  from the request) and the `toolkit.Info` of the tool that ran, so a late
+  result is delivered with the values of the call's time. `TargetOf(ctx)`
+  gives every call's `Target` (published and internal name, and whether the
+  caller's set holds the tool), whether or not the tool runs.
+  `Config.RefuseWithInternalName` words the refusal of a tool the caller
+  lacks with its internal name; by default it names the called tool on both
+  transports. `Endpoint.Refresh` returns a `RefreshResult` (`Changed`,
+  `Added`, `Removed`), and `Config.OnSkip` is told of every tool left out
+  (`Skip`, `SkipReason`) on every read of the catalogue.
 - `mcphost`: options to reproduce an existing server's wire behaviour.
   `Config.Catalogue` is now a `Catalogue` (`FromRegistry` for a toolkit
   registry, followed automatically; `Union` for agents that each have their

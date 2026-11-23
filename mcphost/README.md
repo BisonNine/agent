@@ -44,7 +44,9 @@ mcp-go: a host that serves no CLI model never links it.
   panic in a callback or a tool fails only that call ("Tool x failed with an
   internal error."). The MCP result is the final `ForLLM` text with the
   error flag. `ToolCallFinished` carries the whole result (`ForUser`,
-  `Media`, ...) and `Config.AsyncResult` a background tool's late one; the
+  `Media`, ...) and `Config.AsyncResult` a background tool's late one, on
+  the call's own context (the values of the call's time, not cancelled)
+  with the tool that ran; the
   host delivers them, mcphost publishes nothing. The call's context ends
   with the MCP request (a background tool's too, unless
   `DetachBackground`).
@@ -70,7 +72,10 @@ exchanges recorded from one):
 | Behaviour | Default | Option |
 | --- | --- | --- |
 | One toolkit catalogue per agent | `FromRegistry(cat)` | `Catalogue: Union(func() []toolkit.Registry {...})`, agents in the order whose descriptions the `Argument` list uses |
-| Notices only where the host says | automatic for `FromRegistry` | `Union` plus `Endpoint.Refresh(ctx)` where the host refreshed before; it returns whether a notice was sent |
+| Notices only where the host says | automatic for `FromRegistry` | `Union` plus `Endpoint.Refresh(ctx)` where the host refreshed before; its `RefreshResult` says whether a notice was sent and how many tools were added and removed |
+| Tools left out | logged by mcphost | `OnSkip` is told of each (`SkipNameTaken`, `SkipSchema`, `SkipRefused`) on every read of the catalogue |
+| The internal name of what a call names | `TargetOf(ctx)` on every call's context: `Internal`, and `Held` (false: published, but not in the caller's set) | the same |
+| Refusing a published tool the caller lacks | `NotEnabledMessage` of the called name | `RefuseWithInternalName: true` (the internal name, on both transports) |
 | Published names | `PublishedNames` (toolkit's no-shadow rule) | `Names: ExternalFirst` (external name always; a later tool by internal name wanting a taken name is left out) |
 | A panicking tool | error result "Tool x failed with an internal error." | `PanicAsProtocolError: true` (-32603 "panic recovered in x tool handler: …", after the callbacks and events) |
 | Session key | on every call (`hook.WithScope`) | `ToolContext` returning `toolkit.WithSessionKey(ctx, "")` for tools that are not `SessionScoped` |

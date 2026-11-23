@@ -332,7 +332,7 @@ func TestRefresh(t *testing.T) {
 		}
 	}
 
-	if h.arg.Refresh(context.Background()) {
+	if h.arg.Refresh(context.Background()).Changed {
 		t.Error("Refresh with nothing changed reported a notice")
 	}
 	if err := alice.AddEntries(toolkit.Entry{Tool: &wireTool{name: "second", desc: "second", params: map[string]any{}, run: wireText("2")}}); err != nil {
@@ -350,7 +350,7 @@ func TestRefresh(t *testing.T) {
 		t.Fatal("notice before Refresh")
 	case <-time.After(200 * time.Millisecond):
 	}
-	if !h.arg.Refresh(context.Background()) {
+	if !h.arg.Refresh(context.Background()).Changed {
 		t.Fatal("Refresh after a change reported no notice")
 	}
 	select {
@@ -361,12 +361,12 @@ func TestRefresh(t *testing.T) {
 	if _, ok := list(t, c)["second"]; !ok {
 		t.Error("not listed after Refresh")
 	}
-	if h.arg.Refresh(context.Background()) {
+	if h.arg.Refresh(context.Background()).Changed {
 		t.Error("a second Refresh reported a notice")
 	}
 	// A versioned catalogue needs no Refresh: it reports nothing new.
 	f := newFixture(t)
-	if f.arg.Refresh(context.Background()) {
+	if f.arg.Refresh(context.Background()).Changed {
 		t.Error("Refresh of a followed catalogue reported a notice")
 	}
 }
@@ -378,7 +378,7 @@ func TestBackgroundContext(t *testing.T) {
 		got := make(chan string, 1)
 		f := newFixture(t, func(c *Config) {
 			c.DetachBackground = detach
-			c.AsyncResult = func(_ context.Context, _ Caller, _ hook.ToolCall, r *toolkit.Result) { got <- r.ForLLM }
+			c.AsyncResult = func(_ context.Context, _ Caller, _ hook.ToolCall, _ toolkit.Info, r *toolkit.Result) { got <- r.ForLLM }
 		})
 		if r := callT(t, f.mustClient("/mcp", f.aliceTok), "job", map[string]any{"job": "j"}); r.text != "started" {
 			t.Fatalf("job = %+v", r)
@@ -409,7 +409,7 @@ func TestRefusedToolIsNotPublished(t *testing.T) {
 	if err := alice.AddEntries(toolkit.Entry{Tool: &wireTool{name: "bad", desc: "bad", params: bad, run: wireText("bad")}}); err != nil {
 		t.Fatal(err)
 	}
-	if h.arg.Refresh(context.Background()) {
+	if h.arg.Refresh(context.Background()).Changed {
 		t.Error("Refresh reported a notice for a refused tool only")
 	}
 	if got := names(list(t, h.mustClient("/internal", ""))); !slices.Equal(got, []string{"good"}) {
