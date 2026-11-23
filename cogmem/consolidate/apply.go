@@ -7,16 +7,29 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"go.bison9.com/agent/cogmem/store"
 )
 
-// ApplyContext carries the metadata recorded on every applied operation.
+// ApplyContext carries the metadata recorded on every applied operation and,
+// optionally, the consolidation watermark to advance with them.
 type ApplyContext struct {
 	Actor      string // sleep_cycle, mcp_tool, ...
 	Model      string
 	PromptHash string
+	// Watermark, when set, is written in the same transaction as the
+	// operations, so the batch they came from is consolidated exactly when
+	// they are applied.
+	Watermark *Watermark
+}
+
+// Watermark is the inbox progress a consolidation run records: the last seq it
+// consolidated and the newest seq it saw (see store.SetWatermark).
+type Watermark struct {
+	ConsolidatedSeq int64
+	LastSeenSeq     int64
 }
 
 // ApplyResult reports what Apply did.
@@ -39,8 +52,8 @@ type DroppedKeyword struct {
 
 // Apply writes a *validated* Output to the store in a single transaction:
 // assigning ids to created domains, mapping tmp_ids referenced by hooks,
-// applying every op, and appending an audit event per op. Call Output.Validate
-// before Apply.
+// applying every op, appending an audit event per op, and advancing
+// ac.Watermark when it is set. Call Output.Validate before Apply.
 //
 // A domain op's keyword_triggers sets consolidation's own keyword list only.
 // Phrases already in the agent's list or blocked by the agent are left out, and
@@ -171,6 +184,12 @@ func Apply(ctx context.Context, st *store.Store, out Output, ac ApplyContext) (A
 				Model: ac.Model, PromptHash: ac.PromptHash,
 			}); err != nil {
 				return err
+			}
+		}
+
+		if wm := ac.Watermark; wm != nil {
+			if err := st.SetWatermark(ctx, tx, store.InboxStateKey, wm.ConsolidatedSeq, wm.LastSeenSeq); err != nil {
+				return fmt.Errorf("set watermark: %w", err)
 			}
 		}
 		return nil

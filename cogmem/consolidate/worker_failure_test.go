@@ -5,6 +5,7 @@ package consolidate
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -184,22 +185,54 @@ func TestRunOnceWarnsAboutCopiedPrompt(t *testing.T) {
 	}
 }
 
-// When the watermark cannot be saved after an apply, the run fails and the
-// inbox is kept, so no message is dropped without being consolidated.
-func TestRunOnceWatermarkFailureKeepsInbox(t *testing.T) {
+// Applying a batch and advancing its watermark are one transaction: when the
+// watermark cannot be saved, nothing of the batch is applied, the failure is
+// recorded on the run, and the inbox is kept. The next run then applies the
+// batch exactly once.
+func TestRunOnceWatermarkFailureAppliesNothing(t *testing.T) {
 	s := seedInbox(t, openStore(t), sampleMessages())
+	domainID, _ := seedDomain(t, s)
+	before := storeSnapshot(t, s)
 	refuse(t, s, "no_state_insert", "BEFORE INSERT ON consolidation_state")
 	refuse(t, s, "no_state_update", "BEFORE UPDATE ON consolidation_state")
+	out := fmt.Sprintf(`{"domain_ops":[],"memory_ops":[{"op":"add","domain":%q,"type":"rule","text":"Alice runs gofmt before committing.","confidence":0.95,"evidence":{"seq_start":1,"seq_end":2}}],"conflict_ledger":[]}`, domainID)
+	ctx := context.Background()
 
-	_, err := NewWorker(s, &fakeModel{raw: emptyOutput}).RunOnce(context.Background(), params())
-	if err == nil || !strings.HasPrefix(err.Error(), "consolidate: set watermark: ") {
+	res, err := NewWorker(s, &fakeModel{raw: out}).RunOnce(ctx, params())
+	if err == nil || !strings.HasPrefix(err.Error(), "consolidate: apply: set watermark: ") {
 		t.Fatalf("RunOnce err = %v, want the watermark error", err)
+	}
+	if res.Status != "error" || res.Applied != 0 {
+		t.Errorf("result = %+v, want error with nothing applied", res)
+	}
+	if after := storeSnapshot(t, s); after != before {
+		t.Errorf("store changed by a failed run:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+	if run := lastRun(t, s); run.Status != "error" || run.OpsApplied != 0 || !strings.HasPrefix(run.Error, "set watermark: ") {
+		t.Errorf("run = status %q applied %d error %q, want error, 0, the watermark error", run.Status, run.OpsApplied, run.Error)
 	}
 	if left := inboxSeqs(t, s); !slices.Equal(left, []int64{1, 2}) {
 		t.Errorf("inbox = %v, want both messages kept", left)
 	}
 	if got := watermark(t, s).ConsolidatedSeq; got != 0 {
 		t.Errorf("watermark = %d, want 0", got)
+	}
+
+	mustExec(t, s, `DROP TRIGGER no_state_insert`)
+	mustExec(t, s, `DROP TRIGGER no_state_update`)
+	res, err = NewWorker(s, &fakeModel{raw: out}).RunOnce(ctx, params())
+	if err != nil || res.Status != "ok" || res.Applied != 1 {
+		t.Fatalf("retry = %+v, %v; want ok with 1 applied", res, err)
+	}
+	var n int
+	if err := s.DB().QueryRow(`SELECT COUNT(*) FROM memories WHERE text='Alice runs gofmt before committing.'`).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("memory stored %d times, want once", n)
+	}
+	if got := watermark(t, s).ConsolidatedSeq; got != 2 {
+		t.Errorf("watermark after retry = %d, want 2", got)
 	}
 }
 

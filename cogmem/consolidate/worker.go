@@ -169,8 +169,9 @@ const leaseName = "consolidate:" + store.InboxStateKey
 // RunOnce performs one consolidation pass: it leases the store, selects the
 // next batch of inbox messages past the watermark, asks the model to propose
 // memory operations, validates them against the contract, and applies the
-// valid result in one transaction. The watermark advances only on a successful
-// apply, and only then is the covered part of the inbox deleted.
+// valid result and advances the watermark in one transaction, so the batch is
+// never applied without being marked consolidated. Only then is the covered
+// part of the inbox deleted.
 func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 	owner := w.leaseOwner(p.ID)
 	ok, err := w.st.AcquireLease(ctx, w.st.DB(), leaseName, owner, leaseTTL)
@@ -285,19 +286,19 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 		return result, nil
 	}
 
+	// The watermark advances inside Apply's transaction: either the batch is
+	// applied and marked consolidated, or neither happens and the next run
+	// retries the same batch.
 	applyRes, err := Apply(ctx, w.st, out, ApplyContext{
-		Actor: actorSleepCycle,
-		Model: model,
+		Actor:     actorSleepCycle,
+		Model:     model,
+		Watermark: &Watermark{ConsolidatedSeq: lastSeq, LastSeenSeq: maxSeq},
 	})
 	applied := applyRes.Applied
 	if err != nil {
 		w.recordRun(ctx, p, model, "error", applied, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), "", started)
 		result.Status = "error"
 		return result, fmt.Errorf("consolidate: apply: %w", err)
-	}
-
-	if err := w.st.SetWatermark(ctx, w.st.DB(), store.InboxStateKey, lastSeq, maxSeq); err != nil {
-		return result, fmt.Errorf("consolidate: set watermark: %w", err)
 	}
 
 	// The watermark is the source of truth; the inbox rows behind it are now

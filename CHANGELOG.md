@@ -480,3 +480,8 @@ project uses [Semantic Versioning](https://semver.org/).
 - `ctxengine`: a compaction attempt whose request could not be encoded was
   left out of the debug capture file without a word; it is now logged as a
   warning.
+- `cogmem/consolidate`: a run whose watermark could not be saved after its
+  operations were applied left them applied, so the next run applied the same
+  batch again. `Apply` now advances the watermark in its own transaction
+  (`ApplyContext.Watermark`), so a batch is applied and marked consolidated
+  together or not at all.
