@@ -43,7 +43,9 @@ one session are served one at a time, in order; a run on a busy session
 waits in its queue. Different sessions run concurrently. A host that keeps
 its own queue sets `Spec.Unqueued`: every run then starts at once, keeping
 runs of one session apart is the host's job, and `Interrupt(session)` stops
-every running turn of the session (dropped is 0).
+every running turn of the session (dropped is 0 but for runs waiting on a
+`ForgetSession`). It is meant with `Spec.Session`: with the agent's own
+session context a turn's deferred compaction may overlap the next run.
 
 Each turn, on the run's context with the turn's `hook.Scope`, the turn
 budget, the agent's task registrar and its callbacks:

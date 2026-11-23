@@ -238,17 +238,21 @@ func (a *Agent) runStarted(s *sessionState, r *run) {
 	a.runTurn(r.turnCtx, s, r)
 	r.cancel(nil)
 	a.mu.Lock()
-	s.running = slices.DeleteFunc(s.running, func(x *run) bool { return x == r })
 	r.ended = true
 	a.mu.Unlock()
+	// The run stays among the session's running ones until its deferred
+	// compaction is done, so ForgetSession cannot close the manager under it.
 	if a.spec.Session == nil {
 		a.compactIfDue(s)
 	}
+	a.mu.Lock()
+	s.running = slices.DeleteFunc(s.running, func(x *run) bool { return x == r })
+	a.mu.Unlock()
 }
 
 // dropIdleLocked forgets s when nothing of it is kept. a.mu is held.
 func (a *Agent) dropIdleLocked(s *sessionState) {
-	if !s.busy && len(s.running) == 0 && s.cm == nil && s.mem == nil {
+	if a.states[s.key] == s && !s.busy && len(s.running) == 0 && s.cm == nil && s.mem == nil {
 		delete(a.states, s.key)
 	}
 }
@@ -575,12 +579,15 @@ func (a *Agent) endServed(r *run) {
 // compactIfDue runs the compaction the session's adds deferred, after a
 // turn, outside any turn: its report reaches OnCompaction and OnEvent only.
 func (a *Agent) compactIfDue(s *sessionState) {
-	if s.cm == nil {
+	a.mu.Lock()
+	cm := s.cm
+	a.mu.Unlock()
+	if cm == nil {
 		return
 	}
 	scope := a.scopeOf(s.key)
 	ctx := beginTurnContext(a.life, scope, a.hooks, a.clock)
-	if _, err := s.cm.CompactIfDue(ctx); err != nil && a.life.Err() == nil {
+	if _, err := cm.CompactIfDue(ctx); err != nil && a.life.Err() == nil {
 		a.log.Warn("deferred compaction failed", "component", "agent", "agent_id", a.id,
 			"session", s.key, "error", a.redact(err.Error()))
 	}

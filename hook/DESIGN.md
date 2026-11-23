@@ -670,7 +670,7 @@ section 1's example.
 | Its own turn deadline, none inside | `Limits.TurnBudget: NoTurnBudget` (negative) | 15 min |
 | Content logging switched live | `Spec.LogContent func() bool` | off |
 | Its own recovery of an engine panic | `TurnResult.Err` is a `*loop.EnginePanicError` (`SetUp` for one before the engine): re-panic with `Value` on the host's goroutine after `Wait`; the agent logs nothing of it | recovered, reported, not logged |
-| Its own queue (merge, commands, slots), and paths that bypass it | `Spec.Unqueued` (`agent.WithUnqueued`): `Run` never queues, overlapping runs of a session are the host's to prevent, `Interrupt` stops every running turn of the session and reports dropped 0 | the agent's queue |
+| Its own queue (merge, commands, slots), and paths that bypass it | `Spec.Unqueued` (`agent.WithUnqueued`): `Run` never queues, overlapping runs of a session are the host's to prevent, `Interrupt` stops every running turn of the session and reports dropped 0 (but for runs waiting on a `ForgetSession`); meant with `Spec.Session` | the agent's queue |
 | Sessions it no longer needs | nothing kept with `Spec.Session`; else `ForgetSession(key)` through `agent.SessionForgetter` | kept until `Close` |
 | Single-shot agents | its session context and `AfterTurn` (6.2) | — |
 | Task records, supervisor, clones | `TaskStart.OnCancel`, `OnDetach` (section 9) | — |
@@ -679,4 +679,4 @@ section 1's example.
 | The context window for the turn's model | the host's, with `Spec.Session`: the agent sets none | the agent sets it on its own manager each turn |
 | An iteration limit of 0 or less (no model request) | `Limits.MaxIterations: NoIterations` (negative, kept by `WithDefaults`); the turn ends empty, finish reason `max_iterations` | 20 |
 | No line for a failed turn | the agent logs no turn error and no panic it delivers in `TurnFinished` | — |
-| `Release` after the reply is sent | `Release` runs after `TurnFinished` and its consumers return, before the session's next turn | — |
+| `Release` after the reply is sent | `Release` runs after `TurnFinished` and its consumers return, before the session's next queued turn (with `Spec.Unqueued` another run may already be running) | — |

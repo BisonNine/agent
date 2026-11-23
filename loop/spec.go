@@ -77,8 +77,12 @@ type Spec struct {
 	// itself: Run never queues, every run starts at once (two runs of one
 	// session may then overlap, and keeping them apart is the host's job),
 	// Interrupt(session) stops every running turn of the session and reports
-	// dropped 0. A run given while ForgetSession closes the session waits for
-	// it. Off by default: runs of one session queue.
+	// dropped 0, except for runs given while ForgetSession closes the session:
+	// those wait for it, one after the other, and an Interrupt drops them.
+	// With the agent's own session context (no Session), the compaction a
+	// turn deferred runs after its TurnFinished and may overlap the
+	// session's next run; the setting is meant for a host that also supplies
+	// Session. Off by default: runs of one session queue.
 	Unqueued bool
 	// Memory is the agent's optional long-term memory.
 	Memory hook.Memory

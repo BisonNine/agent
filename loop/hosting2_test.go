@@ -238,3 +238,31 @@ func TestHosting_Unqueued(t *testing.T) {
 		}
 	}
 }
+
+// Unqueued runs end without forgetting a newer run of the session, and
+// ForgetSession never closes the manager under a run's deferred compaction.
+func TestHosting_UnqueuedForget(t *testing.T) {
+	f := newAgentFixture(t)
+	f.p.Script("w1", modelstest.Reply("ok"))
+	a := f.agent(t, func(s *Spec) { s.Unqueued = true })
+	for range 20 {
+		var wg sync.WaitGroup
+		for range 3 {
+			wg.Go(func() { a.Run(context.Background(), "s1", hook.UserText("hi")).Wait() })
+		}
+		wg.Go(func() { a.ForgetSession("s1") })
+		wg.Wait()
+	}
+	hold := make(chan struct{})
+	started := make(chan struct{})
+	f.p.Script("w1", modelstest.Step{Hold: hold, Started: started, Response: &spawnllm.LLMResponse{Content: "late"}})
+	r := a.Run(context.Background(), "s1", hook.UserText("held"))
+	<-started
+	if running, _ := a.Interrupt("s1"); !running {
+		t.Fatal("Interrupt did not find the running turn")
+	}
+	close(hold)
+	if res := r.Wait(); res.Outcome != hook.OutcomeCancelled {
+		t.Fatalf("result = %+v", res)
+	}
+}

@@ -270,7 +270,8 @@ type OnEventFunc func(ctx context.Context, ev Event)
 //   - Agent.Cancel: every turn, queue and task of the agent.
 type Interrupted struct {
 	// Scope names the agent and the session (empty for Agent.Cancel);
-	// TurnID is the stopped turn's, empty when no turn was running.
+	// TurnID is the stopped turn's, empty when no turn was running or when
+	// several were (an agent that does not queue a session's runs).
 	Scope Scope
 	// Cause is the cancel cause.
 	Cause error
