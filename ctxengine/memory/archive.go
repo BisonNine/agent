@@ -529,10 +529,6 @@ func (a *ArchiveStore) legacySummariesPath() string {
 // Order is preserved. Any failure is logged and otherwise ignored so it never
 // breaks archive open.
 func (a *ArchiveStore) importLegacySummaries() {
-	if a.unavailable || a.db == nil {
-		return
-	}
-
 	// Idempotency guard: only import when the table is empty.
 	var count int
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM summaries`).Scan(&count); err != nil {
