@@ -47,6 +47,9 @@ project uses [Semantic Versioning](https://semver.org/).
   `CapToolResult` and `ToolResultCap` (the cap the engine puts on each tool
   result, for results a host delivers itself).
   `Spec.LogContent` is a function, read live.
+- `loop.ToolDefs(snapshot, revealed) Defs` (`Send`, `InContext`): the tool
+  list the engine builds for a model call, exported; the engine calls it
+  itself, so a host's listing or golden file is what the model is sent.
 - `loop`, for hosts that own their queue and sessions: `Spec.Unqueued`
   (`agent.WithUnqueued`; `agenttest.RunUnqueued`), `Session.Compaction` (the
   manager a forced compaction uses), a nil `Session.Context` for a turn a

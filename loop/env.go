@@ -58,15 +58,13 @@ func (e *agentEnv) snapshot() *toolkit.Snapshot {
 }
 
 // toolDefs is the agent's tool list for a model call, from a new snapshot:
-// every tool offered, sorted by name, the hidden ones deferred (spawnllm
-// sends a deferred tool once a tool result references it, natively where the
-// provider can), so the list stays the same while the tools do.
+// ToolDefs' Send, so the list stays the same while the tools do.
 func (e *agentEnv) toolDefs() []spawnllm.ToolDefinition {
 	snap := e.snapshot()
 	if snap == nil {
 		return nil
 	}
-	return providerDefs(discovery.ToolDefs(snap, nil, true).Send)
+	return ToolDefs(snap, nil).Send
 }
 
 // gatedRegistry is a registry that can run a call through a gate.
@@ -198,7 +196,7 @@ func (e *agentEnv) inContext(defs []spawnllm.ToolDefinition, history []spawnllm.
 	if snap == nil {
 		return defs
 	}
-	return providerDefs(discovery.ToolDefs(snap, revealedIn(history), true).InContext)
+	return ToolDefs(snap, revealedIn(history)).InContext
 }
 
 // layers are the system prompt: the instruction, the host's layers, and the
@@ -245,24 +243,6 @@ func (e *agentEnv) compressionManager() (ctxengine.ContextManager, func()) {
 
 // sessionSummary is the session's compacted summary.
 func (e *agentEnv) sessionSummary() string { return e.a.sessions.GetSummary(e.s.key) }
-
-// providerDefs copies discovery's definitions into the provider type.
-func providerDefs(in []discovery.Def) []spawnllm.ToolDefinition {
-	out := make([]spawnllm.ToolDefinition, 0, len(in))
-	for _, d := range in {
-		out = append(out, spawnllm.ToolDefinition{
-			Type: "function",
-			Function: spawnllm.ToolFunctionDefinition{
-				Name:        d.Name,
-				Description: d.Description,
-				Parameters:  d.Parameters,
-			},
-			Deferred:   d.Deferred,
-			ToolSearch: d.ToolSearch,
-		})
-	}
-	return out
-}
 
 // revealedIn is what history's tool results have revealed. It is rebuilt
 // from the messages a request carries, so it follows a restart and a

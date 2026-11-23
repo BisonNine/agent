@@ -674,7 +674,8 @@ section 1's example.
 | The deferred compaction after the reply | the host's: with `Spec.Session` the agent runs none | `CompactIfDue` after each turn |
 | Recall for the message with whispers but before media references | a `BeforeTurn` sets `Turn.RecallText` | the message text as given to `Run` |
 | The system prompt | `Spec.InstructionLayers(ctx)`; `Spec.Instruction` empty adds no layer | — |
-| The tool-schema estimate (`InContext` of the request's history) | the engine: `discovery.ToolDefs` on the dispatch's snapshot with a session rebuilt from the history | — |
+| The tool-schema estimate (`InContext` of the request's history) | the engine: `loop.ToolDefs` on the dispatch's snapshot with a session rebuilt from the history | — |
+| The tool list a model call is sent, for a host's goldens or a listing | `loop.ToolDefs(snapshot, revealed)`: the function the engine calls (`Defs.Send`, `Defs.InContext`) | — |
 | Allow checker, reply chat, chat, agent id on each call | `Spec.ToolContext(ctx, call)` | — |
 | A gate naming what the model called | `Spec.Gate` reading `ToolCallFrom(ctx).Name` | from `Spec.Allow` |
 | Async tools' late results | `Spec.AsyncResult(ctx, call, info, result)`: `ctx` is the call's (what `ToolContext` set then), detached; delivered after the turn and after `Close` | synchronous |

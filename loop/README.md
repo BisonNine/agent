@@ -58,7 +58,7 @@ budget, the agent's task registrar and its callbacks:
   reports to `OnCompaction`) and memory session are used for every store,
   assembly and recall;
 - the tool list of each model call is a new snapshot of `Tools` through
-  `discovery.ToolDefs` (hidden tools deferred, so the list is stable);
+  `ToolDefs` (hidden tools deferred, so the list is stable);
   execution runs against the registry's current contents through `Gate` (or
   one made from `Allow`), so a tool removed mid-turn is gone from the next
   call and refused if called;
@@ -134,6 +134,10 @@ events until `Events` reads them; a host that only calls `Wait` runs its
 turns with `hook.WithoutEvents()`, so the handle keeps only `TurnFinished`.
 `CapToolResult` caps a tool result a host delivers itself as the engine
 caps those it stores (`ToolResultCap` is the cap for a context window).
+`ToolDefs(snapshot, revealed)` is the tool list the engine builds for a
+model call (`Defs.Send`, what the provider is sent; `Defs.InContext`, what
+the schemas cost): the engine calls it itself, so a host that shows or
+tests the tool list uses it rather than a copy.
 
 ## Not here
 
