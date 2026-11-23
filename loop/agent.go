@@ -280,7 +280,7 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 			a.log.Error("panic in turn", "component", "agent", "agent_id", a.id,
 				"session", s.key, "panic", fmt.Sprintf("%v", p), "stack", string(debug.Stack()))
 			if !engineRan {
-				a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: &EnginePanicError{Value: p, Stack: debug.Stack()}})
+				a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: &EnginePanicError{Value: p, Stack: debug.Stack(), SetUp: true}})
 			}
 		}
 	}()
@@ -446,32 +446,50 @@ func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Sco
 // ForgetSession drops what the agent keeps of an idle session: its own
 // context manager and memory session (closed) and its entry. It reports
 // false, and drops nothing, while the session has a turn running or runs
-// queued. The session store is not touched. With Spec.Session the agent
-// keeps nothing of an idle session, and this only reports.
+// queued. A run given meanwhile waits until they are closed, then starts on
+// new ones. The session store is not touched. With Spec.Session the agent
+// keeps nothing of an idle session, and this only reports. After Close it
+// does nothing.
 func (a *Agent) ForgetSession(key string) bool {
 	a.mu.Lock()
 	s := a.states[key]
-	if s != nil && s.busy {
+	if a.closed || s == nil {
+		a.mu.Unlock()
+		return true
+	}
+	if s.busy {
 		a.mu.Unlock()
 		return false
 	}
-	delete(a.states, key)
+	// Held as busy while it closes, so a Run queues behind it and Close
+	// waits for it.
+	s.busy = true
+	a.wg.Add(1)
+	cm, mem := s.cm, s.mem
 	a.mu.Unlock()
-	if s == nil {
-		return true
-	}
-	if s.cm != nil {
-		if err := s.cm.Close(context.WithoutCancel(a.life)); err != nil {
+	if cm != nil {
+		if err := cm.Close(context.WithoutCancel(a.life)); err != nil {
 			a.log.Warn("session close failed", "component", "agent", "agent_id", a.id,
 				"session", key, "error", a.redact(err.Error()))
 		}
 	}
-	if s.mem != nil {
-		if err := s.mem.Close(); err != nil {
+	if mem != nil {
+		if err := mem.Close(); err != nil {
 			a.log.Warn("memory close failed", "component", "agent", "agent_id", a.id,
 				"session", key, "error", a.redact(err.Error()))
 		}
 	}
+	a.mu.Lock()
+	s.cm, s.mem = nil, nil
+	if len(s.queue) > 0 {
+		a.mu.Unlock()
+		go a.serve(s)
+		return true
+	}
+	s.busy = false
+	delete(a.states, key)
+	a.mu.Unlock()
+	a.wg.Done()
 	return true
 }
 
@@ -695,6 +713,7 @@ func (a *Agent) Close(ctx context.Context) error {
 
 	a.mu.Lock()
 	states := a.states
+	a.states = nil // Close owns them now; ForgetSession leaves them alone
 	a.mu.Unlock()
 	for _, s := range states {
 		if s.cm != nil {

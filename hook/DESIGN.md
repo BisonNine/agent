@@ -647,7 +647,7 @@ section 1's example.
 | --- | --- | --- |
 | The agent's id in logs and the prompt cache key | `Spec.ID`, used as given (never normalised or rejected but for empty) | — |
 | Who calls are billed to; the scope's agent; task owner (a clone bills its source) | `Spec.Identity` (`accounting.Identity`, fixed for the instance) | `{ID, Name, Project}` |
-| The turn's chain: the live set, an isolated chain, the session's `/model` scope | `Spec.TurnModels(ctx, scope) TurnModels{Chain}` | `Models.Begin(Chat, Scope(session))` |
+| The turn's chain: the live set, an isolated chain, the session's `/model` scope | `Spec.TurnModels(ctx, scope) TurnModels{Chain}` | `Models.Begin(Chat, Scope(session))` ; without `Spec.Models` the agent's own managers have no summary model |
 | The agent's own max tokens, context window, no-tools | `TurnModels.Limits` | the chain's first model's |
 | An agent with no chat model (a human agent) | `Spec.TurnModels` set, `Spec.Models` nil; a model-less turn fails matching `ErrNoModelAvailable` | `New` refuses it |
 | The pinned model, for per-turn callbacks | `Turn.Model` (BeforeTurn, AfterTurn, `Loop.Turn`) | — |

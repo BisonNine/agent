@@ -76,7 +76,9 @@ type gatedRegistry interface {
 func (e *agentEnv) executeTool(ctx context.Context, call hook.ToolCall) *toolkit.Result {
 	ctx = hook.WithToolCall(ctx, call)
 	if fn := e.a.spec.ToolContext; fn != nil {
-		ctx = fn(ctx, call)
+		if c := fn(ctx, call); c != nil {
+			ctx = c
+		}
 	}
 	tools := e.a.spec.Tools
 	if tools == nil {

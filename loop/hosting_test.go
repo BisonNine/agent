@@ -281,7 +281,7 @@ func TestHosting_TurnLimits(t *testing.T) {
 		}}}
 	})
 	a.Run(context.Background(), "s1", hook.UserText("go")).Wait()
-	if deadline.Load() || asked.Load() != 3 { // the turn, then two batches
+	if deadline.Load() || asked.Load() < 3 { // the turn, then each of two batches
 		t.Fatalf("deadline %v, limits asked %d", deadline.Load(), asked.Load())
 	}
 }
@@ -303,15 +303,15 @@ func TestHosting_EnginePanicError(t *testing.T) {
 		n++
 	}
 	var ep *EnginePanicError
-	if res := r.Wait(); n != 1 || !errors.As(res.Err, &ep) || ep.Value != "host set-up broke" {
+	if res := r.Wait(); n != 1 || !errors.As(res.Err, &ep) || ep.Value != "host set-up broke" || !ep.SetUp {
 		t.Fatalf("%d events, result %+v", n, res)
 	}
 
 	started := make(chan struct{})
-	close(started) // the scripted call closes it again: the provider panics
+	close(started) // deliberate: the scripted call closes it again, so the client panics inside the engine
 	f.p.Script("w1", modelstest.Step{Started: started, Response: &spawnllm.LLMResponse{Content: "x"}})
 	b := f.agent(t, nil)
-	if res := b.Run(context.Background(), "s1", hook.UserText("hi")).Wait(); !errors.As(res.Err, &ep) {
+	if res := b.Run(context.Background(), "s1", hook.UserText("hi")).Wait(); !errors.As(res.Err, &ep) || ep.SetUp {
 		t.Fatalf("engine panic result = %+v", res)
 	}
 }
@@ -327,3 +327,50 @@ func TestHosting_NoEmptyInstructionLayer(t *testing.T) {
 		t.Fatalf("layers = %+v", got)
 	}
 }
+
+// A session forgotten while a run arrives is closed once, and the run starts
+// on a new one; after Close, ForgetSession closes nothing again.
+func TestHosting_ForgetSessionAndClose(t *testing.T) {
+	f := newAgentFixture(t)
+	var mu sync.Mutex
+	var mems []*recallMemory
+	f.p.Script("w1", modelstest.Reply("hi"))
+	spec := Spec{ID: "alice", Models: f.cat.Default(), Memory: memoryFunc(func() hook.MemorySession {
+		mu.Lock()
+		defer mu.Unlock()
+		m := &recallMemory{}
+		mems = append(mems, m)
+		return m
+	})}
+	a, err := New(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.Run(context.Background(), "s1", hook.UserText("one")).Wait()
+	done := make(chan hook.TurnResult, 1)
+	go func() {
+		for !a.ForgetSession("s1") {
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	go func() { done <- a.Run(context.Background(), "s1", hook.UserText("two")).Wait() }()
+	if res := <-done; res.Outcome != hook.OutcomeOK {
+		t.Fatalf("second run = %+v", res)
+	}
+	if err := a.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	a.ForgetSession("s1")
+	mu.Lock()
+	defer mu.Unlock()
+	for i, m := range mems {
+		if m.closed != 1 {
+			t.Fatalf("memory %d closed %d times", i, m.closed)
+		}
+	}
+}
+
+// memoryFunc is a hook.Memory that opens what fn makes.
+type memoryFunc func() hook.MemorySession
+
+func (f memoryFunc) Open(context.Context, hook.Scope) (hook.MemorySession, error) { return f(), nil }

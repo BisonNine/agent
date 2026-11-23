@@ -44,7 +44,9 @@ type Spec struct {
 
 	// Models are the agent's models: its turns use purpose models.Chat, its
 	// compaction summaries models.Summarize. Required unless TurnModels is
-	// set.
+	// set; without it the agent's own context managers have no summary model
+	// (compaction then summarises nothing; a host that supplies Session
+	// builds its managers with its own).
 	Models *models.Set
 	// TurnModels, when set, chooses each turn's models: called once per
 	// turn, before BeforeTurn, with the turn's scope. Nil means the chat
@@ -95,8 +97,8 @@ type Spec struct {
 	// ToolContext, when set, gives each tool call the host's own values: it
 	// receives the call's context (the turn's, with the tool timeout and the
 	// call on it, hook.ToolCallFrom) and the call as BeforeTool left it, and
-	// returns the context the gate and the tool run on. The callbacks see the
-	// turn's context.
+	// returns the context the gate and the tool run on (nil keeps the one it
+	// was given). The callbacks see the turn's context.
 	ToolContext func(ctx context.Context, call hook.ToolCall) context.Context
 	// AsyncResult, when set, receives the late result of a tool that
 	// finishes in the background (toolkit.AsyncExecutor), with the call's

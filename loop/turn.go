@@ -1110,6 +1110,14 @@ type EnginePanicError struct {
 	Value any
 	// Stack is the panicking goroutine's stack, for the log.
 	Stack []byte
+	// SetUp reports a panic before the engine started: in the agent's set-up
+	// of the turn or the host's Spec.TurnModels or Spec.Session.
+	SetUp bool
 }
 
-func (p *EnginePanicError) Error() string { return fmt.Sprintf("turn engine: panic: %v", p.Value) }
+func (p *EnginePanicError) Error() string {
+	if p.SetUp {
+		return fmt.Sprintf("turn set-up: panic: %v", p.Value)
+	}
+	return fmt.Sprintf("turn engine: panic: %v", p.Value)
+}
