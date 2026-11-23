@@ -470,3 +470,6 @@ project uses [Semantic Versioning](https://semver.org/).
 - `spawnllm/anthropic_messages`: streamed tool call arguments that did not
   decode became `{}`; they are now kept under `"raw"` with a warning, as on
   the OpenAI-compatible path.
+- `spawnllm/openai_responses`: a response whose body was not JSON (a proxy's
+  HTML error page) was left out of `response_log_file`; it is now logged as
+  a string, as `openai_compat` does.

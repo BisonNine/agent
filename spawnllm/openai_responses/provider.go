@@ -850,13 +850,18 @@ func defaultSupportsResponseFormatJSON(protocol string) bool {
 	}
 }
 
-// appendLog appends one JSONL diagnostic record (request or response).
+// appendLog appends one JSONL diagnostic record (request or response). A body
+// that is not JSON (an HTML error page, plain text) is recorded as a string.
 func (p *Provider) appendLog(dir, model string, status int, durationMs int64, body []byte) {
+	var logged any = json.RawMessage(body)
+	if !json.Valid(body) {
+		logged = string(body)
+	}
 	rec := map[string]any{
 		"ts":     time.Now().Format(time.RFC3339Nano),
 		"dir":    dir,
 		"model":  model,
-		"body":   json.RawMessage(body),
+		"body":   logged,
 		"status": status,
 	}
 	if durationMs > 0 {
