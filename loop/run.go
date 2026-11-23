@@ -59,6 +59,11 @@ func (r *run) add(_ context.Context, ev hook.Event) {
 	r.wake = make(chan struct{})
 	r.mu.Unlock()
 	if last {
+		// Once its TurnFinished is out the run is no longer running: an
+		// Interrupt from now on stops nothing of it.
+		r.a.mu.Lock()
+		r.ended = true
+		r.a.mu.Unlock()
 		close(r.done)
 	}
 }

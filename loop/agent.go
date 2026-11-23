@@ -446,7 +446,7 @@ func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Sco
 // ForgetSession drops what the agent keeps of an idle session: its own
 // context manager and memory session (closed) and its entry. It reports
 // false, and drops nothing, while the session has a turn running or runs
-// queued. A run given meanwhile waits until they are closed, then starts on
+// queued, or is being forgotten by another call. A run given meanwhile waits until they are closed, then starts on
 // new ones. The session store is not touched. With Spec.Session the agent
 // keeps nothing of an idle session, and this only reports. After Close it
 // does nothing.
@@ -467,18 +467,27 @@ func (a *Agent) ForgetSession(key string) bool {
 	a.wg.Add(1)
 	cm, mem := s.cm, s.mem
 	a.mu.Unlock()
-	if cm != nil {
-		if err := cm.Close(context.WithoutCancel(a.life)); err != nil {
-			a.log.Warn("session close failed", "component", "agent", "agent_id", a.id,
-				"session", key, "error", a.redact(err.Error()))
+	func() {
+		// A panic while closing must not leave the session busy for good.
+		defer func() {
+			if p := recover(); p != nil {
+				a.log.Error("panic closing a session", "component", "agent", "agent_id", a.id,
+					"session", key, "panic", fmt.Sprintf("%v", p), "stack", string(debug.Stack()))
+			}
+		}()
+		if cm != nil {
+			if err := cm.Close(context.WithoutCancel(a.life)); err != nil {
+				a.log.Warn("session close failed", "component", "agent", "agent_id", a.id,
+					"session", key, "error", a.redact(err.Error()))
+			}
 		}
-	}
-	if mem != nil {
-		if err := mem.Close(); err != nil {
-			a.log.Warn("memory close failed", "component", "agent", "agent_id", a.id,
-				"session", key, "error", a.redact(err.Error()))
+		if mem != nil {
+			if err := mem.Close(); err != nil {
+				a.log.Warn("memory close failed", "component", "agent", "agent_id", a.id,
+					"session", key, "error", a.redact(err.Error()))
+			}
 		}
-	}
+	}()
 	a.mu.Lock()
 	s.cm, s.mem = nil, nil
 	if len(s.queue) > 0 {
