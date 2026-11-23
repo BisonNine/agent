@@ -194,3 +194,102 @@ func TestRealClockBasics(t *testing.T) {
 		t.Fatal("Real.WithTimeout has no deadline")
 	}
 }
+
+func TestFakeSinceAndUntil(t *testing.T) {
+	f := NewFake(epoch)
+	f.Advance(90 * time.Second)
+	if got := f.Since(epoch); got != 90*time.Second {
+		t.Fatalf("Since = %v, want 90s", got)
+	}
+	if got := f.Until(epoch.Add(2 * time.Minute)); got != 30*time.Second {
+		t.Fatalf("Until = %v, want 30s", got)
+	}
+}
+
+func TestFakeSetNeverMovesBack(t *testing.T) {
+	f := NewFake(epoch)
+	f.Set(epoch.Add(-time.Hour))
+	if got := f.Now(); !got.Equal(epoch) {
+		t.Fatalf("now = %v after Set to the past, want %v", got, epoch)
+	}
+}
+
+func TestFakeTickerRejectsNonPositiveInterval(t *testing.T) {
+	f := NewFake(epoch)
+	mustPanic(t, "NewTicker(0)", func() { f.NewTicker(0) })
+	tk := f.NewTicker(time.Second)
+	defer tk.Stop()
+	mustPanic(t, "Reset(-1s)", func() { tk.Reset(-time.Second) })
+	// The rejected Reset leaves the ticker on its old period.
+	f.Advance(time.Second)
+	select {
+	case <-tk.C():
+	default:
+		t.Fatal("ticker stopped ticking after a rejected Reset")
+	}
+}
+
+func TestFakeTickerStop(t *testing.T) {
+	f := NewFake(epoch)
+	tk := f.NewTicker(time.Second)
+	tk.Stop()
+	if f.Waiters() != 0 {
+		t.Fatalf("waiters = %d after Stop", f.Waiters())
+	}
+	f.Advance(time.Minute)
+	select {
+	case <-tk.C():
+		t.Fatal("stopped ticker ticked")
+	default:
+	}
+}
+
+func mustPanic(t *testing.T, what string, fn func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatalf("%s did not panic", what)
+		}
+	}()
+	fn()
+}
+
+func TestRealClockTimers(t *testing.T) {
+	past := time.Now().Add(-time.Hour)
+	if Real.Since(past) < time.Hour {
+		t.Fatal("Real.Since is short")
+	}
+	if Real.Until(past) > -time.Hour {
+		t.Fatal("Real.Until is not negative for the past")
+	}
+	Real.Sleep(0)
+	<-Real.After(0)
+
+	ran := make(chan struct{})
+	Real.AfterFunc(0, func() { close(ran) })
+	<-ran
+
+	tm := Real.NewTimer(0)
+	<-tm.C()
+	if tm.Reset(time.Hour) {
+		t.Fatal("Reset of a fired timer reported it active")
+	}
+	if !tm.Stop() {
+		t.Fatal("Stop of a re-armed timer reported false")
+	}
+
+	tk := Real.NewTicker(time.Hour)
+	defer tk.Stop()
+	select {
+	case <-tk.C():
+		t.Fatal("hourly ticker ticked at once")
+	default:
+	}
+
+	deadline := time.Now().Add(time.Hour)
+	ctx, cancel := Real.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	if got, ok := ctx.Deadline(); !ok || !got.Equal(deadline) {
+		t.Fatalf("Real.WithDeadline deadline = %v, %v", got, ok)
+	}
+}
