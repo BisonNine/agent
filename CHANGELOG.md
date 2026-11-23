@@ -473,3 +473,5 @@ project uses [Semantic Versioning](https://semver.org/).
 - `spawnllm/openai_responses`: a response whose body was not JSON (a proxy's
   HTML error page) was left out of `response_log_file`; it is now logged as
   a string, as `openai_compat` does.
+- `ctxengine/session`: `MigrateJSONL` reported a failure to write a
+  session's state as a failure to write its window.

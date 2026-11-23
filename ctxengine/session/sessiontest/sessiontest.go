@@ -61,6 +61,7 @@ func Run(t *testing.T, newStore func(t *testing.T) Store) {
 		{"SetHistoryWithSeqsPreserves", check.testSetHistoryWithSeqsPreserves},
 		{"SetHistoryWithSeqsMonotonic", check.testSetHistoryWithSeqsMonotonic},
 		{"SetHistoryWithSeqsOrdersBySeq", check.testSetHistoryWithSeqsOrdersBySeq},
+		{"UnencodableMessageRejected", check.testUnencodableMessageRejected},
 		{"MeaningfulCount", check.testMeaningfulCount},
 		{"NoiseKey", check.testNoiseKey},
 		{"ForgetSession", check.testForgetSession},
@@ -510,6 +511,63 @@ func (c check) testSetHistoryWithSeqsOrdersBySeq() {
 	}
 	if seq := mustAdd(t, s, "order", user("x")); seq != 8 {
 		t.Errorf("next seq = %d, want 8", seq)
+	}
+}
+
+// testUnencodableMessageRejected checks that a message that cannot be encoded
+// fails each write with an error and leaves the session as it was.
+func (c check) testUnencodableMessageRejected() {
+	t, s := c.t, c.s
+	const key = "bad"
+	mustAdd(t, s, key, user("hello"))
+	summary := "kept"
+	noErr(t, s.SetSummary(key, summary))
+	before, beforeErr := s.GetCompactionState(key)
+	noErr(t, beforeErr)
+
+	// A raw reasoning item that is not JSON cannot be marshalled.
+	bad := spawnllm.Message{Role: "assistant", Content: "x", ResponsesReasoning: []json.RawMessage{json.RawMessage("{not json")}}
+	newSummary := "replaced"
+	writes := map[string]func() error{
+		"AddFullMessage": func() error {
+			seq, err := s.AddFullMessage(key, bad)
+			if err == nil && seq != 0 {
+				t.Errorf("AddFullMessage seq = %d, want 0", seq)
+			}
+			return err
+		},
+		"SetHistory": func() error { return s.SetHistory(key, []spawnllm.Message{user("ok"), bad}) },
+		"SetHistoryWithSeqs": func() error {
+			return s.SetHistoryWithSeqs(key, []memory.StoredMessage{memory.NewStoredMessage(5, bad)})
+		},
+		"CommitCompaction": func() error {
+			return s.CommitCompaction(key, session.CompactionCommit{
+				History:    []memory.StoredMessage{memory.NewStoredMessage(5, bad)},
+				Summary:    &newSummary,
+				Compaction: func(st *memory.CompactionState) { st.Cooling = true },
+			})
+		},
+	}
+	for name, write := range writes {
+		if err := write(); err == nil {
+			t.Errorf("%s accepted a message that cannot be encoded", name)
+		}
+	}
+
+	stored := s.GetHistoryWithSeqs(key)
+	if len(stored) != 1 || stored[0].Seq != 1 || stored[0].Content != "hello" {
+		t.Errorf("window = %+v, want only seq 1 hello", stored)
+	}
+	if got := s.GetSummary(key); got != summary {
+		t.Errorf("summary = %q, want %q", got, summary)
+	}
+	after, err := s.GetCompactionState(key)
+	noErr(t, err)
+	if after != before {
+		t.Errorf("compaction state = %+v, want unchanged %+v", after, before)
+	}
+	if seq := mustAdd(t, s, key, user("next")); seq != 2 {
+		t.Errorf("next seq = %d, want 2", seq)
 	}
 }
 

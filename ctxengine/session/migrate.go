@@ -199,7 +199,7 @@ func migrateSession(dir, base string, hasWindow bool, logger *slog.Logger) (key 
 			return fmt.Errorf("write window: %w", wErr)
 		}
 		if sErr := tx.SetState(st); sErr != nil {
-			return fmt.Errorf("write window: %w", sErr)
+			return fmt.Errorf("write state: %w", sErr)
 		}
 		return nil
 	})
