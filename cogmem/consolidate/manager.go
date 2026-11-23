@@ -151,13 +151,7 @@ func NewManager(factory WorkerFactory, opts ...ManagerOption) *Manager {
 		idlePoll:    defaultIdlePoll,
 	}
 	for _, fn := range opts {
-		fn(&o)
-	}
-	if o.concurrency <= 0 {
-		o.concurrency = 1
-	}
-	if o.idlePoll <= 0 {
-		o.idlePoll = defaultIdlePoll
+		fn(&o) // WithConcurrency and WithIdlePollInterval keep the defaults for values <= 0
 	}
 	m := &Manager{
 		factory:  factory,

@@ -71,9 +71,6 @@ func SelectBatch(msgs []Message, opt BatchOptions) (batch []Message, lastSeq int
 		lastSeq = m.Seq
 		budget -= tok
 	}
-	if !more && len(batch) < len(msgs) {
-		more = true
-	}
 	return batch, lastSeq, more
 }
 
