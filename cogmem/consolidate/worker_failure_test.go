@@ -236,6 +236,51 @@ func TestRunOnceWatermarkFailureAppliesNothing(t *testing.T) {
 	}
 }
 
+// When the current state cannot be read the run fails before asking the
+// model: an empty state would let the model recreate what is already stored.
+// Nothing is applied, the watermark stays, and the failure is recorded.
+func TestRunOnceCurrentStateFailure(t *testing.T) {
+	cases := []struct {
+		name  string
+		fault string
+	}{
+		{"domains unreadable", `UPDATE domains SET state_json='{'`},
+		{"memories unreadable", `UPDATE memories SET created_at='not a time'`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := seedInbox(t, openStore(t), sampleMessages())
+			seedDomain(t, s)
+			mustExec(t, s, tc.fault)
+			before := storeSnapshot(t, s)
+			m := &fakeModel{raw: emptyOutput}
+
+			res, err := NewWorker(s, m).RunOnce(context.Background(), params())
+			if err == nil || !strings.HasPrefix(err.Error(), "consolidate: current state: ") {
+				t.Fatalf("RunOnce err = %v, want the current state error", err)
+			}
+			if res.Status != "error" || res.Applied != 0 {
+				t.Errorf("result = %+v, want error with nothing applied", res)
+			}
+			if m.calls() != 0 {
+				t.Errorf("model called %d times, want 0", m.calls())
+			}
+			if after := storeSnapshot(t, s); after != before {
+				t.Errorf("store changed by a failed run")
+			}
+			if run := lastRun(t, s); run.Status != "error" || !strings.HasPrefix(run.Error, "consolidate: current state: ") {
+				t.Errorf("run = status %q error %q, want the current state error", run.Status, run.Error)
+			}
+			if got := watermark(t, s).ConsolidatedSeq; got != 0 {
+				t.Errorf("watermark = %d, want 0", got)
+			}
+			if left := inboxSeqs(t, s); !slices.Equal(left, []int64{1, 2}) {
+				t.Errorf("inbox = %v, want both messages kept", left)
+			}
+		})
+	}
+}
+
 // When the covered inbox rows cannot be deleted the run still stands: the
 // watermark advances and the failure is recorded as the run's error.
 func TestRunOnceDrainFailureIsRecorded(t *testing.T) {

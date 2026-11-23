@@ -485,3 +485,7 @@ project uses [Semantic Versioning](https://semver.org/).
   batch again. `Apply` now advances the watermark in its own transaction
   (`ApplyContext.Watermark`), so a batch is applied and marked consolidated
   together or not at all.
+- `cogmem/consolidate`: a run that could not read the current domains or
+  memories sent the model an empty current state, without a log line, and the
+  model could recreate them. The run now fails with "consolidate: current
+  state: …", applies nothing, keeps the watermark, and records the error.

@@ -284,7 +284,10 @@ func TestApplyReadsBlockedListAtApplyTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := NewWorker(s, nil)
-	view := w.currentState(ctx)
+	view, err := w.currentState(ctx)
+	if err != nil {
+		t.Fatalf("current state: %v", err)
+	}
 	if dv := domainView(t, Input{CurrentState: view}, d.ID); dv.KeywordTriggers != "vendor bills" || dv.BlockedKeywords != "" {
 		t.Fatalf("view = %+v", dv)
 	}

@@ -231,9 +231,17 @@ func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
 
 	w.applyRetention(ctx, p.ID)
 
+	// Without the current state the model would see an empty store and could
+	// recreate every domain and memory, so a failed read fails the run.
+	current, err := w.currentState(ctx)
+	if err != nil {
+		err = fmt.Errorf("consolidate: current state: %w", err)
+		w.recordRun(ctx, p, w.modelName, "error", 0, consolidated+1, lastSeq, 0, 0, err.Error(), "", time.Now())
+		return RunResult{Status: "error", More: more, SeqStart: consolidated + 1, SeqEnd: lastSeq}, err
+	}
 	in := Input{
 		Curated:      ReadCurated(p.Workspace),
-		CurrentState: w.currentState(ctx),
+		CurrentState: current,
 		NewMessages:  batch,
 	}
 
@@ -416,12 +424,13 @@ func (w *Worker) modelLabel(name string) string {
 }
 
 // currentState projects the active domains and their active memories into the
-// compact view the model sees.
-func (w *Worker) currentState(ctx context.Context) CurrentState {
+// compact view the model sees. A read error is returned, never an empty or
+// partial view.
+func (w *Worker) currentState(ctx context.Context) (CurrentState, error) {
 	cs := CurrentState{}
 	domains, err := w.st.ListDomains(ctx, w.st.DB(), store.StatusActive)
 	if err != nil {
-		return cs
+		return CurrentState{}, fmt.Errorf("list domains: %w", err)
 	}
 	for _, d := range domains {
 		// Consolidation's own list goes in keyword_triggers, the field its ops
@@ -443,20 +452,21 @@ func (w *Worker) currentState(ctx context.Context) CurrentState {
 		// a domain holding hundreds of event memories would crowd out everything
 		// else in the state view.
 		hooks, err := w.st.ListPromptMemories(ctx, w.st.DB(), d.ID)
-		if err == nil {
-			for _, h := range hooks {
-				dv.Memories = append(dv.Memories, MemoryView{
-					ID:         h.ID,
-					Type:       string(h.Type),
-					Text:       h.Text,
-					Confidence: h.Confidence,
-					AgeDays:    int(time.Since(h.CreatedAt).Hours() / 24),
-				})
-			}
+		if err != nil {
+			return CurrentState{}, fmt.Errorf("memories of domain %s: %w", d.ID, err)
+		}
+		for _, h := range hooks {
+			dv.Memories = append(dv.Memories, MemoryView{
+				ID:         h.ID,
+				Type:       string(h.Type),
+				Text:       h.Text,
+				Confidence: h.Confidence,
+				AgeDays:    int(time.Since(h.CreatedAt).Hours() / 24),
+			})
 		}
 		cs.Domains = append(cs.Domains, dv)
 	}
-	return cs
+	return cs, nil
 }
 
 // applyRetention deletes memories that have aged out.
