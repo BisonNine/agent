@@ -72,7 +72,8 @@ func (c *fakeDeadlineCtx) Err() error {
 }
 
 // end records err as the context's error and cause as its cause, and
-// closes it, once.
+// closes it, once. Its timer is stopped before done closes, so a goroutine
+// woken by Done never sees the deadline still waiting on the clock.
 func (c *fakeDeadlineCtx) end(err, cause error) {
 	c.once.Do(func() {
 		c.cancelInner(cause) // before done closes: a waiter woken by it sees the cause
@@ -80,12 +81,12 @@ func (c *fakeDeadlineCtx) end(err, cause error) {
 		c.err = err
 		timer, stopParent := c.timer, c.stopParent
 		c.mu.Unlock()
-		close(c.done)
 		if timer != nil {
 			timer.Stop()
 		}
 		if stopParent != nil {
 			stopParent()
 		}
+		close(c.done)
 	})
 }
