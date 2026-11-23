@@ -30,6 +30,10 @@ type Turn struct {
 	Message Message
 	// Options are the run's options. Read only.
 	Options RunOptions
+	// Model is the model the turn chose: the first of the models pinned for
+	// it (ModelInfo.Model of every dispatch); zero when it has none. Read
+	// only.
+	Model ModelRef
 }
 
 // ModelInfo is one dispatch of a turn: the request the engine is about to

@@ -578,6 +578,25 @@ func testClose(t *testing.T, factory Factory) {
 	}
 }
 
+func testTurnIDAndModel(t *testing.T, factory Factory) {
+	var model hook.ModelRef
+	f := newFixture(t, hook.Plugin{Name: "watch", BeforeTurn: func(_ context.Context, turn *hook.Turn) (*hook.TurnResult, error) {
+		model = turn.Model
+		return nil, nil //nolint:nilnil // (nil, nil): the turn goes on
+	}})
+	f.Provider.Script(PrimaryWire, modelstest.Reply("Hello"))
+	a := build(t, factory, f)
+	evs := collect(t, a.Run(context.Background(), "s1", agent.UserText("Hello"), agent.WithTurnID("turn-42")))
+	for _, ev := range evs {
+		if id := ev.Header().Scope.TurnID; id != "turn-42" {
+			t.Fatalf("%T has turn id %q, want the run's", ev, id)
+		}
+	}
+	if model.Name != Primary || model.Model != PrimaryWire {
+		t.Fatalf("BeforeTurn's Turn.Model = %+v", model)
+	}
+}
+
 // kinds names the events, for failure messages.
 func kinds(evs []hook.Event) []string {
 	out := make([]string, 0, len(evs))

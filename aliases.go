@@ -43,6 +43,9 @@ func ResetSession() RunOption { return hook.ResetSession() }
 // TurnBudget gives the turn its own budget.
 func TurnBudget(d time.Duration) RunOption { return hook.TurnBudget(d) }
 
+// WithTurnID gives the turn the id the host made for it.
+func WithTurnID(id string) RunOption { return hook.WithTurnID(id) }
+
 // AtDepth runs the turn at sub-agent depth n.
 func AtDepth(n int) RunOption { return hook.AtDepth(n) }
 
@@ -116,10 +119,11 @@ var (
 	ErrClosed           = loop.ErrClosed
 )
 
-// SessionStoreError and PanicError are the typed errors a turn ends with.
+// SessionStoreError, PanicError and EnginePanicError are the typed errors a turn ends with.
 type (
 	SessionStoreError = hook.SessionStoreError
 	PanicError        = hook.PanicError
+	EnginePanicError  = loop.EnginePanicError
 )
 
 // Refusal marks err as an expected refusal (a tool declining a call), which

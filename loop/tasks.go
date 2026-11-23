@@ -91,7 +91,7 @@ func (r *taskRegistry) header(t *task) hook.EventHeader {
 func (r *taskRegistry) StartTask(ctx context.Context, start hook.TaskStart) (context.Context, hook.TaskHandle, error) {
 	from, _ := hook.ScopeOf(ctx)
 	info := start.Info
-	info.Owner = r.a.id
+	info.Owner = r.a.identity.Agent
 	info.State = hook.TaskRunning
 	info.Ended = time.Time{}
 	info.Cause = nil

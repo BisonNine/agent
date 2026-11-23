@@ -20,9 +20,15 @@ type agentEnv struct {
 	a     *Agent
 	s     *sessionState
 	scope hook.Scope
-	// text is the turn's message, what memory recalls for.
+	// text is the turn's message as BeforeTurn left it, what memory recalls
+	// for.
 	text    string
 	noTools bool
+	// cm and mem are the turn's session context; amend the host's change to
+	// each request (Session.Assemble).
+	cm    ctxengine.ContextManager
+	mem   hook.MemorySession
+	amend func(ctx context.Context, req *ctxengine.AssembleRequest)
 	// served is the served-tools prompt of a CLI model's turn.
 	served string
 
@@ -63,33 +69,55 @@ type gatedRegistry interface {
 }
 
 // executeTool runs a call through the agent's gate, against the registry's
-// current contents (a tool removed since the model call is not found).
-func (e *agentEnv) executeTool(ctx context.Context, name string, args map[string]any) *toolkit.Result {
+// current contents (a tool removed since the model call is not found), on
+// the call's context with the call on it (hook.WithToolCall) and the host's
+// values (Spec.ToolContext). With Spec.AsyncResult a background tool's late
+// result goes there.
+func (e *agentEnv) executeTool(ctx context.Context, call hook.ToolCall) *toolkit.Result {
+	ctx = hook.WithToolCall(ctx, call)
+	if fn := e.a.spec.ToolContext; fn != nil {
+		ctx = fn(ctx, call)
+	}
 	tools := e.a.spec.Tools
 	if tools == nil {
-		return toolkit.ErrorResult("tool not found: " + name).WithError(toolkit.ErrToolNotFound)
+		return toolkit.ErrorResult("tool not found: " + call.Name).WithError(toolkit.ErrToolNotFound)
+	}
+	var cb toolkit.AsyncCallback
+	if sink := e.a.spec.AsyncResult; sink != nil {
+		cb = func(cbCtx context.Context, result *toolkit.Result) { sink(cbCtx, call, result) }
 	}
 	gate := e.a.spec.Gate
 	if gate == nil {
-		return tools.Execute(ctx, name, args, nil)
+		return tools.Execute(ctx, call.Name, call.Arguments, cb)
 	}
 	if g, ok := tools.(gatedRegistry); ok {
-		return g.ExecuteGated(ctx, name, args, nil, gate)
+		return g.ExecuteGated(ctx, call.Name, call.Arguments, cb, gate)
 	}
-	if refused := gate(ctx, toolkit.Info{Name: name, Published: name}); refused != nil {
+	if refused := gate(ctx, toolkit.Info{Name: call.Name, Published: call.Name}); refused != nil {
 		return refused
 	}
-	return tools.Execute(ctx, name, args, nil)
+	return tools.Execute(ctx, call.Name, call.Arguments, cb)
+}
+
+// turnMessage is the agent's last BeforeTurn: it keeps the message as the
+// host's BeforeTurn callbacks left it, for memory to recall for.
+func (e *agentEnv) turnMessage(_ context.Context, turn *hook.Turn) (*hook.TurnResult, error) {
+	e.text = turn.Message.Text
+	return nil, nil //nolint:nilnil // (nil, nil): the turn goes on
 }
 
 // assembleRequest is the request for a dispatch that sends defs over
 // history.
 func (e *agentEnv) assembleRequest(ctx context.Context, defs []spawnllm.ToolDefinition, history []spawnllm.Message) ctxengine.AssembleRequest {
-	return ctxengine.AssembleRequest{
+	req := ctxengine.AssembleRequest{
 		ToolDefinitionTokens: ctxengine.EstimateToolDefinitionTokens(e.inContext(defs, history)),
 		Layers:               e.layers(ctx),
 		Injections:           e.recall(ctx),
 	}
+	if e.amend != nil {
+		e.amend(ctx, &req)
+	}
+	return req
 }
 
 // firstRequest is the request for the turn's first assembly: the agent's
@@ -125,7 +153,10 @@ func (e *agentEnv) inContext(defs []spawnllm.ToolDefinition, history []spawnllm.
 // layers are the system prompt: the instruction, the host's layers, and the
 // served-tools prompt of a CLI model's turn after the summary.
 func (e *agentEnv) layers(ctx context.Context) []ctxengine.Layer {
-	layers := []ctxengine.Layer{{Name: "instruction", Text: e.a.spec.Instruction}}
+	var layers []ctxengine.Layer
+	if e.a.spec.Instruction != "" {
+		layers = append(layers, ctxengine.Layer{Name: "instruction", Text: e.a.spec.Instruction})
+	}
 	if fn := e.a.spec.InstructionLayers; fn != nil {
 		layers = append(layers, fn(ctx)...)
 	}
@@ -137,10 +168,10 @@ func (e *agentEnv) layers(ctx context.Context) []ctxengine.Layer {
 
 // recall is what the session's memory places in the request for the turn.
 func (e *agentEnv) recall(ctx context.Context) []ctxengine.Injection {
-	if e.s.mem == nil {
+	if e.mem == nil {
 		return nil
 	}
-	rec := e.s.mem.Recall(ctx, e.text)
+	rec := e.mem.Recall(ctx, e.text)
 	out := make([]ctxengine.Injection, 0, len(rec))
 	for _, r := range rec {
 		p := ctxengine.PlaceSystemStable
@@ -155,7 +186,7 @@ func (e *agentEnv) recall(ctx context.Context) []ctxengine.Injection {
 // compressionManager is the session's context manager; there is nothing to
 // release.
 func (e *agentEnv) compressionManager() (ctxengine.ContextManager, func()) {
-	return e.s.cm, func() {}
+	return e.cm, func() {}
 }
 
 // sessionSummary is the session's compacted summary.

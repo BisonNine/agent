@@ -12,6 +12,9 @@ const (
 	DefaultRetryBackoff  = 5 * time.Second
 )
 
+// NoTurnBudget, as Limits.TurnBudget, gives a turn no budget of the loop's.
+const NoTurnBudget time.Duration = -1
+
 // Limits are the loop's limits for one agent. A request's own limits (its
 // max_tokens, context window, thinking level, timeout) are the model's,
 // modelspec.Limits. A zero field takes its default.
@@ -23,7 +26,8 @@ type Limits struct {
 	ToolTimeout time.Duration
 	// TurnBudget is the whole turn's budget, the backstop for a model or
 	// tool that never returns; when it runs out the turn ends with
-	// ErrDeadline.
+	// ErrDeadline. A negative value (NoTurnBudget) means none: a host that
+	// times its turns itself, on the context it gives Run.
 	TurnBudget time.Duration
 	// CancelGrace is how long an interrupted turn waits for its tools to
 	// return before abandoning them (InterruptedResult).
@@ -38,8 +42,8 @@ type Limits struct {
 }
 
 // WithDefaults returns l with each zero (or negative) field set to its
-// default, except Retries: only a zero Retries takes the default, and a
-// negative one is kept (none). Applying it twice gives the same limits.
+// default, except Retries and TurnBudget: only a zero one takes the default,
+// and a negative one is kept (none). Applying it twice gives the same limits.
 func (l Limits) WithDefaults() Limits {
 	if l.MaxIterations <= 0 {
 		l.MaxIterations = DefaultMaxIterations
@@ -47,7 +51,7 @@ func (l Limits) WithDefaults() Limits {
 	if l.ToolTimeout <= 0 {
 		l.ToolTimeout = DefaultToolTimeout
 	}
-	if l.TurnBudget <= 0 {
+	if l.TurnBudget == 0 {
 		l.TurnBudget = DefaultTurnBudget
 	}
 	if l.CancelGrace <= 0 {

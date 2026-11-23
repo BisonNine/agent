@@ -55,7 +55,7 @@ func TestNew_Options(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if a.ID() != "alice" || a.Name() != "Alice" {
+		if a.ID() != "Alice" || a.Name() != "Alice" {
 			t.Fatalf("ID, Name = %q, %q", a.ID(), a.Name())
 		}
 		if res := a.Run(context.Background(), "s1", agent.UserText("hello")).Wait(); res.Outcome != agent.OutcomeOK {

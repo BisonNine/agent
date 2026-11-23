@@ -317,7 +317,18 @@ func (e *engineTurn) modelCallDone(ctx context.Context, d *llmDispatch, model ho
 
 // errNoModelConfigured ends a turn whose agent has no model to call. Its
 // text is the one a configuration without models has always answered with.
-var errNoModelConfigured = errors.New("no model configured — enable a model and add your API key in the configuration")
+// It matches hook.ErrNoModelAvailable (errors.Is), so a host can tell it and
+// render its own text.
+var errNoModelConfigured error = noModelError{}
+
+// noModelError is errNoModelConfigured's type.
+type noModelError struct{}
+
+func (noModelError) Error() string {
+	return "no model configured — enable a model and add your API key in the configuration"
+}
+
+func (noModelError) Unwrap() error { return hook.ErrNoModelAvailable }
 
 // callModel makes one call for the dispatch through the turn's pinned chain:
 // each model in turn, skipping parked ones, until one answers. Every provider

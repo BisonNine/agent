@@ -38,6 +38,10 @@ type RunOptions struct {
 	TurnBudget time.Duration
 	// Depth is the sub-agent depth the turn runs at (Scope.Depth).
 	Depth int
+	// TurnID is the turn's id (Scope.TurnID) when the host made one before
+	// the run (for its own logs and records); empty means the agent makes
+	// one.
+	TurnID string
 }
 
 // RunOption sets one of the RunOptions.
@@ -54,6 +58,9 @@ func TurnBudget(d time.Duration) RunOption { return func(o *RunOptions) { o.Turn
 
 // AtDepth runs the turn at sub-agent depth n.
 func AtDepth(n int) RunOption { return func(o *RunOptions) { o.Depth = n } }
+
+// WithTurnID gives the turn the id the host made for it.
+func WithTurnID(id string) RunOption { return func(o *RunOptions) { o.TurnID = id } }
 
 // ApplyRunOptions returns the RunOptions opts set, in order. A nil option is
 // skipped.

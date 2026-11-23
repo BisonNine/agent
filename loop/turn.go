@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"runtime"
+	"runtime/debug"
 	"slices"
 	"sort"
 	"strings"
@@ -76,8 +77,9 @@ type turnEnv interface {
 type turnTools interface {
 	// toolDefs is the agent's tool list for a dispatch.
 	toolDefs() []spawnllm.ToolDefinition
-	// executeTool runs one tool call on ctx (the call's context).
-	executeTool(ctx context.Context, name string, args map[string]any) *toolkit.Result
+	// executeTool runs one tool call on ctx (the call's context): call is as
+	// BeforeTool left it, its Name the one the model called.
+	executeTool(ctx context.Context, call hook.ToolCall) *toolkit.Result
 }
 
 // turnSession is the session's context and store.
@@ -345,7 +347,7 @@ func (e *engineTurn) run(ctx context.Context) (res engineResult, err error) {
 	}
 
 	e.hooks.emit(ctx, hook.TurnStarted{EventHeader: e.header(), Message: e.spec.message, Options: e.spec.options})
-	turn := &hook.Turn{Message: e.spec.message, Options: e.spec.options}
+	turn := &hook.Turn{Message: e.spec.message, Options: e.spec.options, Model: e.turnModelRef()}
 	var tr hook.TurnResult
 	stage := stageBeforeTurn
 	defer func() {
@@ -357,7 +359,7 @@ func (e *engineTurn) run(ctx context.Context) (res engineResult, err error) {
 		if stage < stageFinished {
 			// The turn still ends as any turn does: AfterTurn sees the
 			// failure, nothing is stored, the marker is cleared.
-			tr = e.turnResult(ctx, fmt.Errorf("turn engine: panic: %v", r))
+			tr = e.turnResult(ctx, &EnginePanicError{Value: r, Stack: debug.Stack()})
 			tr.Outcome = hook.OutcomeError
 			if stage >= stageStored && stage < stageAfterTurn {
 				e.hooks.callAfterTurn(context.WithoutCancel(ctx), turn, &tr)
@@ -1098,3 +1100,16 @@ func withImageNotes(content string, lines []string) string {
 	}
 	return content + "\n\n" + joined
 }
+
+// EnginePanicError is the error a turn ends with when the engine itself (not a
+// callback, which is a *hook.PanicError) panicked: TurnResult.Err of its one
+// TurnFinished. The panic is recovered on the agent's goroutine, where
+// re-raising it would end the process; a host that wants its own recovery to
+// see it panics with Value on its own goroutine once Run.Wait returns.
+type EnginePanicError struct {
+	Value any
+	// Stack is the panicking goroutine's stack, for the log.
+	Stack []byte
+}
+
+func (p *EnginePanicError) Error() string { return fmt.Sprintf("turn engine: panic: %v", p.Value) }

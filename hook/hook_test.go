@@ -228,11 +228,27 @@ func TestLimitsWithDefaults(t *testing.T) {
 	if got := (hook.Limits{ToolTimeout: -time.Second}).WithDefaults().ToolTimeout; got != hook.DefaultToolTimeout {
 		t.Fatalf("negative ToolTimeout = %v, want the default", got)
 	}
-	for _, l := range []hook.Limits{{}, {Retries: -1}, set, {CancelGrace: -1}} {
+	if got := (hook.Limits{TurnBudget: hook.NoTurnBudget}).WithDefaults().TurnBudget; got != hook.NoTurnBudget {
+		t.Fatalf("NoTurnBudget = %v, want it kept (none)", got)
+	}
+	for _, l := range []hook.Limits{{}, {Retries: -1}, set, {CancelGrace: -1}, {TurnBudget: hook.NoTurnBudget}} {
 		once := l.WithDefaults()
 		if twice := once.WithDefaults(); twice != once {
 			t.Errorf("WithDefaults not idempotent for %+v: %+v then %+v", l, once, twice)
 		}
+	}
+}
+
+func TestToolCallOnContext(t *testing.T) {
+	if _, ok := hook.ToolCallFrom(context.Background()); ok {
+		t.Fatal("a tool call on an empty context")
+	}
+	ctx := hook.WithToolCall(context.Background(), hook.ToolCall{ID: "c1", Name: "lookup"})
+	if c, ok := hook.ToolCallFrom(ctx); !ok || c.Name != "lookup" || c.ID != "c1" {
+		t.Fatalf("ToolCallFrom = %+v, %v", c, ok)
+	}
+	if got := hook.ApplyRunOptions(hook.WithTurnID("t-42")).TurnID; got != "t-42" {
+		t.Fatalf("TurnID = %q", got)
 	}
 }
 

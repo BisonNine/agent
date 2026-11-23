@@ -131,12 +131,12 @@ type fakeEnv struct {
 
 func (e *fakeEnv) toolDefs() []spawnllm.ToolDefinition { return e.defs }
 
-func (e *fakeEnv) executeTool(ctx context.Context, name string, args map[string]any) *toolkit.Result {
-	fn, ok := e.tools[name]
+func (e *fakeEnv) executeTool(ctx context.Context, call hook.ToolCall) *toolkit.Result {
+	fn, ok := e.tools[call.Name]
 	if !ok {
-		return toolkit.ErrorResult("no tool " + name)
+		return toolkit.ErrorResult("no tool " + call.Name)
 	}
-	return fn(ctx, args)
+	return fn(ctx, call.Arguments)
 }
 
 func (e *fakeEnv) assembleRequest(context.Context, []spawnllm.ToolDefinition, []spawnllm.Message) ctxengine.AssembleRequest {

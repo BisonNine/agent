@@ -718,7 +718,7 @@ func TestEngine_NoEventAfterTurnFinished(t *testing.T) {
 	if _, err := newEngineTurn(f.spec, nil).run(ctx); err != nil {
 		t.Fatal(err)
 	}
-	engineCompactionStart(ctx, ctxengine.CompactionStart{SessionKey: "s", Blocking: true})
+	CompactionStart(ctx, ctxengine.CompactionStart{SessionKey: "s", Blocking: true})
 	kinds := f.rec.kinds()
 	if len(kinds) == 0 || kinds[len(kinds)-1] != "TurnFinished" || notices != 1 {
 		t.Fatalf("events = %v, notices = %d", kinds, notices)

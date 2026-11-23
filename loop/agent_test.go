@@ -111,7 +111,7 @@ func TestAgent_RunAnswersAndStores(t *testing.T) {
 	f := newAgentFixture(t)
 	f.p.Script("w1", modelstest.Reply("hi Bob"))
 	a := f.agent(t, nil)
-	if a.ID() != "alice" || a.Name() != "Alice" {
+	if a.ID() != "Alice" || a.Name() != "Alice" {
 		t.Fatalf("ID, Name = %q, %q", a.ID(), a.Name())
 	}
 	res := a.Run(context.Background(), "s1", hook.UserText("hello")).Wait()
@@ -275,7 +275,7 @@ func TestAgent_Tasks(t *testing.T) {
 	a.Run(context.Background(), "s1", hook.UserText("go")).Wait()
 
 	tasks := a.Tasks()
-	if len(tasks) != 2 || tasks[1].Parent != "p" || tasks[0].Owner != "alice" || tasks[0].Session != "s1" {
+	if len(tasks) != 2 || tasks[1].Parent != "p" || tasks[0].Owner != "Alice" || tasks[0].Session != "s1" {
 		t.Fatalf("Tasks = %+v", tasks)
 	}
 	a.Interrupt("s1")

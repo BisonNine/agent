@@ -12,12 +12,13 @@ import (
 	"sync"
 	"time"
 
+	"go.bison9.com/agent/accounting"
 	"go.bison9.com/agent/clock"
 	"go.bison9.com/agent/ctxengine"
 	"go.bison9.com/agent/ctxengine/session"
 	"go.bison9.com/agent/hook"
-	"go.bison9.com/agent/ident"
 	"go.bison9.com/agent/models"
+	"go.bison9.com/agent/modelspec"
 	"go.bison9.com/agent/toolkit"
 )
 
@@ -31,10 +32,12 @@ import (
 // concurrently. Each session keeps its context manager (over the session
 // store) and its memory session from its first run until Close.
 type Agent struct {
-	spec  Spec
-	id    string
-	clock clock.Clock
-	log   *slog.Logger
+	spec Spec
+	id   string
+	// identity is who the agent's calls are accounted to, and its scope.
+	identity accounting.Identity
+	clock    clock.Clock
+	log      *slog.Logger
 	// hooks are the agent's callbacks and consumers; each turn runs on a copy
 	// that also feeds its run's events.
 	hooks *turnHooks
@@ -62,21 +65,22 @@ type sessionState struct {
 	running *run
 	busy    bool
 
-	// cm and mem are made on the session's first turn and closed at Close.
+	// cm and mem are made on the session's first turn and closed at Close or
+	// ForgetSession; never when the host supplies the session (Spec.Session).
 	cm  ctxengine.ContextManager
 	mem hook.MemorySession
 }
 
 // New builds the agent spec describes. It fails, wrapping ErrInvalidSpec, on
-// an invalid id, a missing model set, a chat purpose without models, or two
-// tools offered under one name.
+// an empty id; without Spec.TurnModels, on a missing model set or a chat
+// purpose without models; and on two tools offered under one name.
 func New(spec Spec) (*Agent, error) {
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
 	a := &Agent{
 		spec:      spec,
-		id:        ident.NormalizeID(spec.ID),
+		id:        spec.ID,
 		clock:     clock.Or(spec.Clock),
 		log:       spec.Logger,
 		sessions:  spec.Sessions,
@@ -103,12 +107,16 @@ func New(spec Spec) (*Agent, error) {
 	for _, p := range spec.Plugins {
 		a.hooks.add(p)
 	}
+	a.identity = spec.Identity
+	if a.identity == (accounting.Identity{}) {
+		a.identity = accounting.Identity{Agent: spec.ID, Name: spec.Name, Project: spec.Project}
+	}
 	a.tasks = newTaskRegistry(a)
 	a.life, a.endLife = context.WithCancel(context.Background())
 	return a, nil
 }
 
-// ID is the agent's id, normalised.
+// ID is the agent's id, as given.
 func (a *Agent) ID() string { return a.id }
 
 // Name is the agent's friendly name.
@@ -178,6 +186,9 @@ func (a *Agent) serve(s *sessionState) {
 		a.mu.Lock()
 		if len(s.queue) == 0 {
 			s.busy = false
+			if s.cm == nil && s.mem == nil {
+				delete(a.states, s.key) // nothing of the session is kept
+			}
 			a.mu.Unlock()
 			return
 		}
@@ -185,7 +196,10 @@ func (a *Agent) serve(s *sessionState) {
 		s.queue = s.queue[1:]
 		s.running = r
 		r.started = true
-		r.turnID = newTurnID()
+		r.turnID = r.opts.TurnID
+		if r.turnID == "" {
+			r.turnID = newTurnID()
+		}
 		ctx, cancel := context.WithCancelCause(r.ctx)
 		r.cancel = cancel
 		a.mu.Unlock()
@@ -197,7 +211,9 @@ func (a *Agent) serve(s *sessionState) {
 		s.running = nil
 		r.ended = true
 		a.mu.Unlock()
-		a.compactIfDue(s)
+		if a.spec.Session == nil {
+			a.compactIfDue(s)
+		}
 	}
 }
 
@@ -208,50 +224,63 @@ func newTurnID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// forRun is the agent's hooks with r's event buffer as the last consumer.
-func (a *Agent) forRun(r *run) *turnHooks {
+// forRun is the agent's hooks with r's event buffer as the last consumer
+// and, with env, a last BeforeTurn that hands env the message as the
+// BeforeTurn callbacks left it (what memory recalls for).
+func (a *Agent) forRun(r *run, env *agentEnv) *turnHooks {
 	h := *a.hooks
 	h.onEvent = append(slices.Clip(a.hooks.onEvent), named[hook.OnEventFunc]{plugin: "run", fn: r.add})
+	if env != nil {
+		h.beforeTurn = append(slices.Clip(a.hooks.beforeTurn), named[hook.BeforeTurnFunc]{plugin: "loop", fn: env.turnMessage})
+	}
 	return &h
+}
+
+// scopeOf is the agent's scope for session: who it is accounted as.
+func (a *Agent) scopeOf(session string) hook.Scope {
+	return hook.Scope{AgentID: a.identity.Agent, AgentName: a.identity.Name, Session: session, Project: a.identity.Project}
 }
 
 // finishUnstarted ends a run that never started: TurnFinished alone, to the
 // agent's consumers and the run.
 // Its consumers get ctx, without its cancellation.
 func (a *Agent) finishUnstarted(ctx context.Context, r *run, tr hook.TurnResult) {
-	scope := hook.Scope{AgentID: a.id, AgentName: a.spec.Name, Session: r.session, Project: a.spec.Project}
+	scope := a.scopeOf(r.session)
 	ev := hook.TurnFinished{TurnResult: tr}
 	ev.Scope, ev.At = scope, a.clock.Now()
-	a.forRun(r).emit(hook.WithScope(context.WithoutCancel(ctx), scope), ev)
+	a.forRun(r, nil).emit(hook.WithScope(context.WithoutCancel(ctx), scope), ev)
 }
 
 // runTurn runs r's turn on ctx through the engine.
 func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
-	scope := hook.Scope{
-		AgentID: a.id, AgentName: a.spec.Name, Session: s.key, TurnID: r.turnID,
-		Depth: r.opts.Depth, Project: a.spec.Project,
-	}
+	scope := a.scopeOf(s.key)
+	scope.TurnID, scope.Depth = r.turnID, r.opts.Depth
 	if from, ok := hook.ScopeOf(ctx); ok {
 		scope.Task = from.Task
 	}
-	limits := a.spec.Limits.WithDefaults()
+	limits := a.limits(ctx, scope)
 	budget := limits.TurnBudget
 	if r.opts.TurnBudget > 0 {
 		budget = r.opts.TurnBudget
 	}
-	ctx, stopBudget := a.clock.WithTimeout(ctx, budget)
-	defer stopBudget()
-	hooks := a.forRun(r)
+	if budget > 0 {
+		var stopBudget context.CancelFunc
+		ctx, stopBudget = a.clock.WithTimeout(ctx, budget)
+		defer stopBudget()
+	}
+	env := &agentEnv{a: a, s: s, scope: scope, text: r.msg.Text}
+	hooks := a.forRun(r, env)
 	engineRan := false
 	defer func() {
 		// A panic in the engine itself (not in a callback) has already ended
-		// the turn with OutcomeError; one before the engine started ends it
-		// here. Either stops here rather than in the host.
+		// the turn with OutcomeError and an *EnginePanicError; one before the engine
+		// started ends it here. Either stops here: re-raised on this goroutine
+		// it would end the process.
 		if p := recover(); p != nil {
 			a.log.Error("panic in turn", "component", "agent", "agent_id", a.id,
 				"session", s.key, "panic", fmt.Sprintf("%v", p), "stack", string(debug.Stack()))
 			if !engineRan {
-				a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: fmt.Errorf("turn set-up panicked: %v", p)})
+				a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: &EnginePanicError{Value: p, Stack: debug.Stack()}})
 			}
 		}
 	}()
@@ -262,17 +291,29 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 		ctx = hook.WithTaskRegistrar(ctx, a.tasks)
 	}
 
-	chain := a.spec.Models.Begin(models.Chat, models.Scope(s.key))
-	candidates := chain.Candidates()
-	lim := chain.Limits()
-	a.openSession(ctx, s, scope)
+	tm := a.turnModels(ctx, s.key, scope)
+	var candidates []models.Candidate
+	lim := modelspec.Limits{}
+	if tm.Chain != nil {
+		candidates = tm.Chain.Candidates()
+		lim = tm.Chain.Limits()
+	}
+	if tm.Limits != nil {
+		lim = *tm.Limits
+	}
+	env.noTools = lim.NoTools
+	cm, mem, release, err := a.sessionOf(ctx, s, scope, env)
+	if err != nil {
+		engineRan = true
+		a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: err})
+		return
+	}
+	defer release()
 	if lim.ContextWindow > 0 {
-		if err := s.cm.SetContextWindow(lim.ContextWindow); err != nil {
+		if err := cm.SetContextWindow(lim.ContextWindow); err != nil {
 			a.log.Warn("context window not set", "component", "agent", "error", err.Error())
 		}
 	}
-
-	env := &agentEnv{a: a, s: s, scope: scope, text: r.msg.Text, noTools: lim.NoTools}
 	if a.spec.Served != nil && len(candidates) > 0 && isCLIProtocol(candidates[0].Protocol) {
 		env.served = a.serveTurn(ctx, r, scope)
 	}
@@ -286,7 +327,7 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 
 		maxIterations: limits.MaxIterations,
 		cancelGrace:   limits.CancelGrace,
-		toolTimeout:   func() time.Duration { return limits.ToolTimeout },
+		toolTimeout:   a.toolTimeout(ctx, scope, limits),
 		retries:       max(limits.Retries, 0),
 		retryBackoff:  limits.RetryBackoff,
 		temperature:   a.spec.Temperature,
@@ -294,20 +335,20 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 
 		clock:      a.clock,
 		log:        a.log,
-		logContent: func() bool { return a.spec.LogContent },
+		logContent: a.spec.LogContent,
 		redact:     a.spec.Redactor,
 		truncate:   a.spec.Truncator,
 
-		chain:          chain,
+		chain:          tm.Chain,
 		candidates:     candidates,
 		model:          lim0Name(candidates),
 		modelMaxTokens: lim.MaxTokens,
 		contextWindow:  lim.ContextWindow,
 		noTools:        lim.NoTools,
 
-		cm:    s.cm,
+		cm:    cm,
 		store: a.sessions,
-		mem:   turnMemoryOf(ctx, s.mem),
+		mem:   turnMemoryOf(ctx, mem),
 		env:   env,
 		hooks: hooks,
 	}
@@ -319,6 +360,32 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	}
 }
 
+// limits are the turn's limits, with their defaults.
+func (a *Agent) limits(ctx context.Context, scope hook.Scope) hook.Limits {
+	if a.spec.TurnLimits != nil {
+		return a.spec.TurnLimits(ctx, scope).WithDefaults()
+	}
+	return a.spec.Limits.WithDefaults()
+}
+
+// toolTimeout is the engine's per-batch tool budget: asked again for each
+// batch when the limits are the host's.
+func (a *Agent) toolTimeout(ctx context.Context, scope hook.Scope, limits hook.Limits) func() time.Duration {
+	if a.spec.TurnLimits == nil {
+		return func() time.Duration { return limits.ToolTimeout }
+	}
+	return func() time.Duration { return a.limits(ctx, scope).ToolTimeout }
+}
+
+// turnModels are the turn's models: the host's, or the chat models of
+// Spec.Models in the session's scope.
+func (a *Agent) turnModels(ctx context.Context, session string, scope hook.Scope) TurnModels {
+	if a.spec.TurnModels != nil {
+		return a.spec.TurnModels(ctx, scope)
+	}
+	return TurnModels{Chain: a.spec.Models.Begin(models.Chat, models.Scope(session))}
+}
+
 // lim0Name is the name of the turn's first model; "" without one.
 func lim0Name(c []models.Candidate) string {
 	if len(c) == 0 {
@@ -327,18 +394,41 @@ func lim0Name(c []models.Candidate) string {
 	return c[0].Name
 }
 
+// sessionOf is the turn's session context: the host's (Spec.Session), held
+// until release, or the agent's own, made on the session's first turn.
+func (a *Agent) sessionOf(ctx context.Context, s *sessionState, scope hook.Scope, env *agentEnv) (ctxengine.ContextManager, hook.MemorySession, func(), error) {
+	if a.spec.Session == nil {
+		a.openSession(ctx, s, scope)
+		env.cm, env.mem = s.cm, s.mem
+		return s.cm, s.mem, func() {}, nil
+	}
+	sess, err := a.spec.Session(ctx, scope)
+	if err == nil && sess.Context == nil {
+		err = errors.New("no context manager")
+	}
+	if err != nil {
+		if sess.Release != nil {
+			sess.Release()
+		}
+		return nil, nil, nil, fmt.Errorf("session %q: %w", s.key, err)
+	}
+	env.cm, env.mem, env.amend = sess.Context, sess.Memory, sess.Assemble
+	release := sess.Release
+	if release == nil {
+		release = func() {}
+	}
+	return sess.Context, sess.Memory, release, nil
+}
+
 // openSession makes the session's context manager and memory session on its
 // first turn.
 func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Scope) {
 	if s.cm == nil {
-		id := scope.Identity()
-		id.Agent = a.id
 		opts := make([]ctxengine.Option, 0, 3+len(a.spec.Context))
-		opts = append(opts,
-			ctxengine.WithLogger(a.log),
-			ctxengine.WithModelCaller(a.spec.Models.Caller(models.Summarize, id, "")),
-			ctxengine.WithCompactionStartFunc(engineCompactionStart),
-		)
+		opts = append(opts, ctxengine.WithLogger(a.log), ctxengine.WithCompactionStartFunc(CompactionStart))
+		if a.spec.Models != nil {
+			opts = append(opts, ctxengine.WithModelCaller(a.spec.Models.Caller(models.Summarize, a.identity, "")))
+		}
 		s.cm = ctxengine.New(s.key, a.sessions, append(opts, a.spec.Context...)...)
 	}
 	if s.mem == nil && a.spec.Memory != nil {
@@ -351,6 +441,38 @@ func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Sco
 		}
 		s.mem = ms
 	}
+}
+
+// ForgetSession drops what the agent keeps of an idle session: its own
+// context manager and memory session (closed) and its entry. It reports
+// false, and drops nothing, while the session has a turn running or runs
+// queued. The session store is not touched. With Spec.Session the agent
+// keeps nothing of an idle session, and this only reports.
+func (a *Agent) ForgetSession(key string) bool {
+	a.mu.Lock()
+	s := a.states[key]
+	if s != nil && s.busy {
+		a.mu.Unlock()
+		return false
+	}
+	delete(a.states, key)
+	a.mu.Unlock()
+	if s == nil {
+		return true
+	}
+	if s.cm != nil {
+		if err := s.cm.Close(context.WithoutCancel(a.life)); err != nil {
+			a.log.Warn("session close failed", "component", "agent", "agent_id", a.id,
+				"session", key, "error", a.redact(err.Error()))
+		}
+	}
+	if s.mem != nil {
+		if err := s.mem.Close(); err != nil {
+			a.log.Warn("memory close failed", "component", "agent", "agent_id", a.id,
+				"session", key, "error", a.redact(err.Error()))
+		}
+	}
+	return true
 }
 
 // redact is the agent's redactor applied to s.
@@ -392,7 +514,7 @@ func (a *Agent) compactIfDue(s *sessionState) {
 	if s.cm == nil {
 		return
 	}
-	scope := hook.Scope{AgentID: a.id, AgentName: a.spec.Name, Session: s.key, Project: a.spec.Project}
+	scope := a.scopeOf(s.key)
 	ctx := beginTurnContext(a.life, scope, a.hooks, a.clock)
 	if _, err := s.cm.CompactIfDue(ctx); err != nil && a.life.Err() == nil {
 		a.log.Warn("deferred compaction failed", "component", "agent", "agent_id", a.id,
@@ -416,7 +538,7 @@ func (a *Agent) stopRun(r *run, cause error, withTasks bool) {
 	cancel, turnID := r.cancel, r.turnID
 	a.mu.Unlock()
 
-	scope := hook.Scope{AgentID: a.id, AgentName: a.spec.Name, Session: r.session, Project: a.spec.Project}
+	scope := a.scopeOf(r.session)
 	ev := hook.Interrupted{Scope: scope, Cause: cause, Running: running}
 	if dropped {
 		ev.Dropped = 1
@@ -472,7 +594,8 @@ func (a *Agent) interrupt(ctx context.Context, sessionKey string, cause error) (
 		cancel(cause)
 		a.endServed(cur)
 	}
-	scope := hook.Scope{AgentID: a.id, AgentName: a.spec.Name, Session: sessionKey, TurnID: turnID, Project: a.spec.Project}
+	scope := a.scopeOf(sessionKey)
+	scope.TurnID = turnID
 	ev := hook.Interrupted{Scope: scope, Cause: cause, Running: cancel != nil, Dropped: len(queued)}
 	if !ev.Running && ev.Dropped == 0 {
 		return false, 0 // nothing was stopped: no one is told
@@ -518,7 +641,7 @@ func (a *Agent) Cancel(cause error) {
 		a.endServed(r)
 	}
 	ev := hook.Interrupted{
-		Scope: hook.Scope{AgentID: a.id, AgentName: a.spec.Name, Project: a.spec.Project},
+		Scope: a.scopeOf(""),
 		Cause: cause, Running: len(stopped) > 0, Dropped: len(dropped),
 	}
 	if !shutdown {

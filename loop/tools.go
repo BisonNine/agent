@@ -196,7 +196,7 @@ func (e *engineTurn) runToolCall(ctx context.Context, b *toolBatch, i int, toolT
 	}
 	answered = result != nil
 	if !answered {
-		result = e.execute(execCtx, tc.Name, call.Arguments)
+		result = e.execute(execCtx, call)
 	}
 	slot.result = result
 	if b.abandoned(i) {
@@ -228,7 +228,9 @@ func (e *engineTurn) toolCallbackFailed(name string, perr *hook.PanicError) *too
 
 // execute runs the tool. A panicking tool is logged and becomes an error
 // result.
-func (e *engineTurn) execute(ctx context.Context, name string, args map[string]any) (result *toolkit.Result) {
+// call is the call as BeforeTool left it (its name the one the model called).
+func (e *engineTurn) execute(ctx context.Context, call hook.ToolCall) (result *toolkit.Result) {
+	name := call.Name
 	defer func() {
 		if r := recover(); r != nil {
 			e.logAt(slog.LevelError, "panic in tool call",
@@ -243,7 +245,7 @@ func (e *engineTurn) execute(ctx context.Context, name string, args map[string]a
 			}
 		}
 	}()
-	return e.spec.env.executeTool(ctx, name, args)
+	return e.spec.env.executeTool(ctx, call)
 }
 
 // beforeTool runs the BeforeTool callbacks; a non-nil result answers the

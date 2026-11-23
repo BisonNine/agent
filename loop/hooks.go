@@ -287,12 +287,15 @@ func turnOf(ctx context.Context) (*turnOnContext, bool) {
 	return t, true
 }
 
-// engineCompactionStart is the context engine's compaction-start hook
+// CompactionStart is the context engine's compaction-start hook. A host that
+// builds its own session context managers (Spec.Session) gives them this
+// one, so their blocking passes reach the turn as OnCompaction and a
+// Compaction event, as the agent's own managers do
 // (ctxengine.WithCompactionStartFunc): it reports the pass to the turn the
 // context belongs to, as OnCompaction and a Compaction event (phase started),
 // before the summary model is called. A pass with no turn on its context (a
 // background pass) reaches no turn.
-func engineCompactionStart(ctx context.Context, info ctxengine.CompactionStart) {
+func CompactionStart(ctx context.Context, info ctxengine.CompactionStart) {
 	t, ok := turnOf(ctx)
 	if !ok {
 		return

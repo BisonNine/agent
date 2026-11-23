@@ -83,7 +83,9 @@ func WithLogger(l *slog.Logger) Option { return func(s *loop.Spec) { s.Logger = 
 
 // WithLogContent lets the agent log the full request (at debug). Off by
 // default.
-func WithLogContent(on bool) Option { return func(s *loop.Spec) { s.LogContent = on } }
+func WithLogContent(on bool) Option {
+	return func(s *loop.Spec) { s.LogContent = func() bool { return on } }
+}
 
 // WithRedactor sets what the agent applies to the error text and content it
 // logs.

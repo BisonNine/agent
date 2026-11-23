@@ -950,8 +950,8 @@ func TestEngine_CompactionReachesTheTurnsHooks(t *testing.T) {
 	})
 	ctx := beginTurnContext(context.Background(), hook.Scope{AgentID: "alice", Session: "s"}, h, newFake())
 	start := ctxengine.CompactionStart{SessionKey: "s", Blocking: true}
-	engineCompactionStart(ctx, start)
-	engineCompactionStart(context.Background(), start) // no turn: reaches none
+	CompactionStart(ctx, start)
+	CompactionStart(context.Background(), start) // no turn: reaches none
 	if !slices.Equal(seen, []string{"callback", "event"}) {
 		t.Fatalf("reached %v", seen)
 	}

@@ -16,7 +16,7 @@ import (
 // context), accounting, clock, spawnllm (the message and response types, and
 // the helpers the engine uses on them: tool-call normalisation and error
 // classification; never a provider client of its own) and the standard
-// library, and ident (the agent id rule). It never imports cogmem, mcphost, mcp-go, the root agent package
+// library. It never imports cogmem, mcphost, mcp-go, the root agent package
 // or a host. Test files may also use models/modelstest, and toolspec to
 // build tools.
 func TestImportsRespectLayering(t *testing.T) {
@@ -31,7 +31,6 @@ func TestImportsRespectLayering(t *testing.T) {
 		"go.bison9.com/agent/accounting",
 		"go.bison9.com/agent/clock",
 		"go.bison9.com/agent/spawnllm",
-		"go.bison9.com/agent/ident",
 		"go.bison9.com/agent/toolspec",
 	}
 	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {

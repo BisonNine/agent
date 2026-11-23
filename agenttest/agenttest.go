@@ -154,6 +154,7 @@ func Run(t *testing.T, factory Factory) {
 		{"CallbackPanic", testCallbackPanic},
 		{"ObserverPanic", testObserverPanic},
 		{"SessionsRunConcurrently", testSessionsConcurrent},
+		{"TurnIDAndModel", testTurnIDAndModel},
 		{"Close", testClose},
 	}
 	for _, tt := range tests {
