@@ -283,6 +283,9 @@ project uses [Semantic Versioning](https://semver.org/).
   a letter or digit; identity is the lower-case id). An input of which
   nothing survives the repair normalizes to `""`, and two such inputs are
   never the same agent.
+- `hook.ToolPanicError{Tool, Value}`: the error on the result of a tool
+  call whose tool panicked, so a host can tell a panic from an ordinary
+  failure with `errors.As`. `mcphost` sets it.
 - `hook.ModelInfo.Rebuilt`: true when a step's request was built from the
   session store for that dispatch (the first request, or one after a
   compaction, eviction or overflow retry), so a `BeforeModel` callback knows

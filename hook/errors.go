@@ -81,6 +81,19 @@ func (e *SessionStoreError) Error() string {
 // Unwrap returns ErrSessionStore and the store's error.
 func (e *SessionStoreError) Unwrap() []error { return []error{ErrSessionStore, e.Err} }
 
+// ToolPanicError is the error on the result of a tool call whose tool
+// panicked: the call fails with an internal-error result and this as its
+// error, so a host can tell a panic from an ordinary tool failure with
+// errors.As. Tool is the name the tool was called by.
+type ToolPanicError struct {
+	Tool  string
+	Value any
+}
+
+func (e *ToolPanicError) Error() string {
+	return fmt.Sprintf("tool %s panicked: %v", e.Tool, e.Value)
+}
+
 // PanicError is a panic the engine recovered from a callback. Callback names
 // the callback's kind ("AfterModel", "BeforeTool", …) and Plugin the plugin
 // that registered it ("" for one registered on its own). See the package

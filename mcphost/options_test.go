@@ -186,12 +186,14 @@ func TestNameRules_GateSeesTheToolThatRuns(t *testing.T) {
 func TestPanicAsProtocolError(t *testing.T) {
 	rec := &recorder{}
 	var onError string
+	var panicErr *hook.ToolPanicError
 	f := newFixture(t, func(c *Config) {
 		c.PanicAsProtocolError = true
 		c.Plugins = []hook.Plugin{rec.plugin(), {
 			Name: "host",
 			OnToolError: func(_ context.Context, _ *hook.ToolCall, r *toolkit.Result) *toolkit.Result {
 				onError = r.ForLLM
+				errors.As(r.Err, &panicErr)
 				return nil
 			},
 		}}
@@ -202,6 +204,9 @@ func TestPanicAsProtocolError(t *testing.T) {
 	}
 	if onError != "Tool panicky failed with an internal error." {
 		t.Errorf("OnToolError saw %q", onError)
+	}
+	if panicErr == nil || panicErr.Tool != "panicky" || panicErr.Error() != "tool panicky panicked: tool exploded" {
+		t.Errorf("result error = %+v, want a *hook.ToolPanicError for panicky", panicErr)
 	}
 	if fin := rec.finished(); len(fin) != 1 || fin[0].Result.ForLLM != "Tool panicky failed with an internal error." {
 		t.Errorf("finished = %+v", fin)

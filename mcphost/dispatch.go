@@ -211,7 +211,7 @@ func (e *Endpoint) execute(ctx context.Context, caller Caller, call hook.ToolCal
 		if v := recover(); v != nil {
 			e.logger.ErrorContext(ctx, "MCP tool panicked", "agent", caller.Scope.AgentID, "tool", call.Name,
 				"panic", fmt.Sprint(v), "stack", string(debug.Stack()))
-			res = internalErrorResult(call.Name).WithError(fmt.Errorf("tool %s panicked: %v", call.Name, v))
+			res = internalErrorResult(call.Name).WithError(&hook.ToolPanicError{Tool: call.Name, Value: v})
 			panicked = v
 		}
 	}()
