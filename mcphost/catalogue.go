@@ -439,11 +439,12 @@ func (e *Endpoint) afterList(ctx context.Context, _ any, _ *mcp.ListToolsRequest
 // internal is the internal name the catalogue publishes under that name
 // (bound to the name's handler, so it always matches mcp-go's routing).
 //
-// On a Bearer endpoint it is the tool the caller is listed under the name.
-// Otherwise, and for a disabled tool a Bearer caller is not listed, it is
-// the tool of that internal name in the caller's set, enabled or not, so
-// that toolkit refuses a disabled one as it does. ok is false when the
-// caller has no such tool to run: it is refused as one not granted.
+// On a Bearer endpoint it is the tool the caller is listed under the name,
+// or the disabled tool the caller's own naming gives it (for toolkit to
+// refuse as disabled). Otherwise it is the tool of that internal name in
+// the caller's set, enabled or not, so that toolkit refuses a disabled one
+// as it does. ok is false when the caller has no such tool to run: it is
+// refused as one not granted.
 func (e *Endpoint) resolve(caller Caller, name, internal string) (toolkit.Info, bool) {
 	if e.cfg.Transport == Bearer {
 		for _, p := range e.publish(caller.Set.Snapshot().List(), nil) {
