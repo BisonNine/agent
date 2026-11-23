@@ -795,28 +795,23 @@ func bumpStableRev(ctx context.Context, q DBTX) error {
 }
 
 // genID returns a candidate id: prefix + idRandomLen Crockford base32 chars.
-func genID(prefix string) (string, error) {
+func genID(prefix string) string {
 	buf := make([]byte, idRandomLen)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
+	_, _ = rand.Read(buf) // never fails: crypto/rand.Read crashes the program instead (Go 1.24+)
 	out := make([]byte, idRandomLen)
 	for i, b := range buf {
 		out[i] = crockfordAlphabet[int(b)%32] // 256%32==0 → unbiased
 	}
-	return prefix + string(out), nil
+	return prefix + string(out)
 }
 
 // freshID generates a unique id for the given table (an internal constant, never
 // user input), retrying on the rare collision.
 func freshID(ctx context.Context, q DBTX, prefix, table string) (string, error) {
 	for range idMaxAttempts {
-		id, err := genID(prefix)
-		if err != nil {
-			return "", err
-		}
+		id := genID(prefix)
 		var x int
-		err = q.QueryRowContext(ctx, "SELECT 1 FROM "+table+" WHERE id=?", id).Scan(&x)
+		err := q.QueryRowContext(ctx, "SELECT 1 FROM "+table+" WHERE id=?", id).Scan(&x)
 		if errors.Is(err, sql.ErrNoRows) {
 			return id, nil
 		}
