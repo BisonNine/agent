@@ -108,7 +108,9 @@ const (
 	SkipNameTaken SkipReason = iota + 1
 	// SkipSchema: its schema cannot be encoded.
 	SkipSchema
-	// SkipRefused: MCP refused to register it (an invalid annotation).
+	// SkipRefused: MCP refused to register it (an invalid annotation). A
+	// changed tool MCP refuses keeps its previous registration, if it had
+	// one.
 	SkipRefused
 )
 
@@ -126,7 +128,8 @@ func (r SkipReason) String() string {
 	}
 }
 
-// Skip is one tool of the catalogue an endpoint does not publish.
+// Skip is one tool of the catalogue an endpoint does not publish as it is
+// now (see SkipRefused).
 type Skip struct {
 	// Internal is the tool's internal name; Published the name it would be
 	// published under.
@@ -235,8 +238,19 @@ func (e *Endpoint) autoSync() {
 // catalogue. A versioned catalogue whose version was already synced is not
 // read again.
 func (e *Endpoint) sync() RefreshResult {
+	res, skips := e.syncOnce()
+	// Reported once the new state is in place and the lock released, so a
+	// callback that calls back into the endpoint finds it consistent.
+	for _, s := range skips {
+		e.skipped(s)
+	}
+	return res
+}
+
+// syncOnce is sync's work under syncMu; it returns the tools it left out.
+func (e *Endpoint) syncOnce() (RefreshResult, []Skip) {
 	if e.versioned != nil && e.synced.Load() && e.versioned.Version() == e.seen.Load() {
-		return RefreshResult{}
+		return RefreshResult{}, nil
 	}
 	e.syncMu.Lock()
 	defer e.syncMu.Unlock()
@@ -244,16 +258,18 @@ func (e *Endpoint) sync() RefreshResult {
 	if e.versioned != nil {
 		version = e.versioned.Version()
 		if e.synced.Load() && version <= e.version {
-			return RefreshResult{} // a later sync got here first
+			return RefreshResult{}, nil // a later sync got here first
 		}
 	}
+	var skips []Skip
+	skip := func(s Skip) { skips = append(skips, s) }
 	cur := e.state.Load()
 	want := make(map[string]registered, len(cur.byName))
 	var add []server.ServerTool
-	for _, p := range e.publish(e.cfg.Catalogue.Tools(), e.skipped) {
+	for _, p := range e.publish(e.cfg.Catalogue.Tools(), skip) {
 		reg, err := e.describe(p)
 		if err != nil {
-			e.skipped(Skip{Internal: p.info.Name, Published: p.name, Reason: SkipSchema, Err: err})
+			skip(Skip{Internal: p.info.Name, Published: p.name, Reason: SkipSchema, Err: err})
 			continue
 		}
 		want[p.name] = reg
@@ -278,7 +294,7 @@ func (e *Endpoint) sync() RefreshResult {
 		added = len(add) - len(refused)
 		var gone []string
 		for _, name := range refused {
-			e.skipped(Skip{Internal: want[name].internal, Published: name, Reason: SkipRefused})
+			skip(Skip{Internal: want[name].internal, Published: name, Reason: SkipRefused})
 			// A refused replacement of the same tool leaves the registration
 			// mcp-go holds, which stays published (its old schema, until the
 			// catalogue changes again); a name now meant for another tool,
@@ -310,7 +326,7 @@ func (e *Endpoint) sync() RefreshResult {
 	if res.Changed {
 		e.logger.Info("MCP catalogue updated", "added", added, "deleted", len(del), "tools", len(want))
 	}
-	return res
+	return res, skips
 }
 
 // skipped logs a tool left out and reports it to Config.OnSkip.
@@ -324,8 +340,18 @@ func (e *Endpoint) skipped(s Skip) {
 	}
 	e.logger.Warn("Skipping tool", args...)
 	if e.cfg.OnSkip != nil {
-		e.cfg.OnSkip(s)
+		e.report(s)
 	}
+}
+
+// report calls OnSkip; a panic in it is logged and changes nothing.
+func (e *Endpoint) report(s Skip) {
+	defer func() {
+		if v := recover(); v != nil {
+			e.logger.Error("MCP OnSkip callback panicked", "tool", s.Internal, "panic", fmt.Sprint(v))
+		}
+	}()
+	e.cfg.OnSkip(s)
 }
 
 // addTools registers tools in one batch (one tools/list_changed). mcp-go
@@ -425,10 +451,13 @@ func (e *Endpoint) resolve(caller Caller, name, internal string) (toolkit.Info, 
 				return p.info, true
 			}
 		}
-		// Not listed to the caller: only a disabled tool is resolved, to be
-		// refused as disabled; never one listed under another name.
-		if info, ok := caller.Set.Get(internal); ok && !info.Enabled {
-			return info, true
+		// Not listed to the caller: only a disabled tool its own naming gives
+		// the name is resolved, to be refused as disabled; never one listed
+		// under another name.
+		for _, p := range e.publish(caller.Set.List(), nil) {
+			if p.name == name && !p.info.Enabled {
+				return p.info, true
+			}
 		}
 		return toolkit.Info{}, false
 	}

@@ -236,3 +236,63 @@ func TestRefresh_CountsAndSkips(t *testing.T) {
 		t.Errorf("Refresh after a remove and a change = %+v", res)
 	}
 }
+
+// OnSkip runs after a sync is complete: it may call back into the endpoint,
+// and a panic in it changes nothing.
+func TestOnSkip_MayCallBack(t *testing.T) {
+	alice := catalogOf(t,
+		&wireTool{name: "srv_write", desc: "Native write", params: map[string]any{}, run: wireText("native")},
+		&wireExternal{wireTool{name: "mcp_srv_write", desc: "Upstream write", params: map[string]any{}, run: wireText("upstream")}, "srv_write"})
+	var ep atomic.Pointer[Endpoint]
+	var calls atomic.Int64
+	h := newPerAgent(t, map[string]*toolkit.Catalog{"alice": alice}, func(c *Config) {
+		c.Names = ExternalFirst
+		c.OnSkip = func(Skip) {
+			if calls.Add(1) > 2 {
+				if e := ep.Load(); e != nil {
+					e.InFlight()
+					_ = e.state.Load()
+				}
+				panic("host callback exploded")
+			}
+		}
+	})
+	ep.Store(h.arg)
+	done := make(chan RefreshResult, 1)
+	go func() { done <- h.arg.Refresh(context.Background()) }()
+	select {
+	case res := <-done:
+		if res.Changed {
+			t.Errorf("Refresh = %+v", res)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Refresh blocked in OnSkip")
+	}
+	if r := callT(t, h.mustClient("/mcp", h.aliceTok), "srv_write", nil); r.text != "upstream" {
+		t.Errorf("srv_write after a panicking OnSkip = %+v", r)
+	}
+}
+
+// On Bearer a name the caller's own naming gives a disabled tool resolves
+// to that tool, refused as disabled, with its internal name on the Target.
+func TestTarget_BearerDisabledOwnTool(t *testing.T) {
+	alice := catalogOf(t, &wireTool{name: "lookup", desc: "Alice", params: map[string]any{}, run: wireText("alice")})
+	bob := catalogOf(t, &wireExternal{wireTool{name: "mcp_lookup", desc: "Bob", params: map[string]any{}, run: wireText("bob")}, "lookup"})
+	var seen Target
+	h := newPerAgent(t, map[string]*toolkit.Catalog{"alice": alice, "bob": bob}, func(c *Config) {
+		c.Names = ExternalFirst
+		c.Plugins = []hook.Plugin{{Name: "probe", BeforeTool: func(ctx context.Context, _ *hook.ToolCall) (*toolkit.Result, error) {
+			seen, _ = TargetOf(ctx)
+			return nil, nil //nolint:nilnil // (nil, nil): run the tool
+		}}}
+	})
+	if err := h.sets["bob"].Disable("mcp_lookup"); err != nil {
+		t.Fatal(err)
+	}
+	if r := callT(t, h.mustClient("/mcp", h.bobTok), "lookup", nil); !r.isError || r.text != `tool "mcp_lookup" is disabled` {
+		t.Errorf("Bob's lookup = %+v", r)
+	}
+	if seen.Internal != "mcp_lookup" || !seen.Held {
+		t.Errorf("target = %+v", seen)
+	}
+}

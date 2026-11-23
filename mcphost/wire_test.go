@@ -209,12 +209,16 @@ func wireHandler(t *testing.T) http.Handler {
 	}
 	base := Config{
 		Name: "Example", Version: "0.6.6", Authenticator: auth,
-		Names: ExternalFirst, PanicAsProtocolError: true, RefuseWithInternalName: true, ToolContext: onlyScoped,
+		Names: ExternalFirst, PanicAsProtocolError: true, ToolContext: onlyScoped,
 		Plugins: []hook.Plugin{redact},
 	}
 	internalCfg := base
 	internalCfg.Transport = Argument
 	internalCfg.TokenDescription = wireTokenArg
+	// The recorded server named the internal tool in its refusals; its
+	// recorded Bearer refusals name tools whose two names are the same, and
+	// stay on the default.
+	internalCfg.RefuseWithInternalName = true
 	internalCfg.Catalogue = Union(func() []toolkit.Registry { return []toolkit.Registry{alice, bob} })
 	bearerCfg := base
 	bearerCfg.Transport = Bearer

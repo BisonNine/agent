@@ -31,7 +31,8 @@ var errNoTools = errors.New("no tools are served to this caller")
 // the tool call and what CallContext and ToolContext added), without its
 // cancellation, so the values of the call's time are still on it when the
 // result comes, however late; the context the tool hands its callback is
-// not passed, since it carries none of them. info is the tool that ran;
+// not passed, since it carries none of them. The context keeps those values
+// alive until the callback returns. info is the tool that ran;
 // call is the call as it ran.
 type AsyncResultFunc func(ctx context.Context, caller Caller, call hook.ToolCall, info toolkit.Info, result *toolkit.Result)
 
