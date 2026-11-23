@@ -253,6 +253,9 @@ func TestEndToEnd_Gate(t *testing.T) {
 	f := newFixture(t, func(c *Config) {
 		c.Gate = func(ctx context.Context, info toolkit.Info) *toolkit.Result {
 			s, _ := hook.ScopeOf(ctx)
+			if call, ok := hook.ToolCallFrom(ctx); !ok || call.Name != info.Name {
+				t.Errorf("the gate's tool call = %+v, %v", call, ok)
+			}
 			mu.Lock()
 			seen = append(seen, s.AgentID+":"+info.Name)
 			mu.Unlock()

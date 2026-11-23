@@ -65,7 +65,7 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   Nothing in the SDK imports it except `agenttest` and `examples`.
 - `loop` (the agent and its turn engine: `loop.Spec`, `loop.Agent`) imports
   only `hook`, `models`, `modelspec`, `toolkit`, `discovery`, `ctxengine`
-  (with `ctxengine/session`), `accounting`, `clock`, `ident`, `spawnllm`
+  (with `ctxengine/session`), `accounting`, `clock`, `spawnllm`
   (message types and its pure helpers; never a client of its own) and the
   standard library; its tests also `models/modelstest` and `toolspec`. It
   never imports `cogmem`, `mcphost` or the root package: memory arrives as a

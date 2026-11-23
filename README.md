@@ -89,7 +89,7 @@ enforces that:
 - `cogmem` imports `toolspec`, `fsmode` and `hook`, never `spawnllm`,
   `models` or `ctxengine`.
 - `loop` imports `hook`, `models`, `modelspec`, `toolkit`, `discovery`,
-  `ctxengine`, `accounting`, `clock`, `ident` and `spawnllm`; never `cogmem`
+  `ctxengine`, `accounting`, `clock` and `spawnllm`; never `cogmem`
   or `mcphost`.
 - The root `agent` imports `loop`, `hook`, `models`, `toolkit`, `clock` and
   `ctxengine`; it holds no loop and starts no goroutine.

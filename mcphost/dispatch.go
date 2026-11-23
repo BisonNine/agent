@@ -108,6 +108,8 @@ func (e *Endpoint) dispatch(ctx context.Context, caller Caller, name, internal s
 	}
 
 	call := hook.ToolCall{ID: newCallID(), Name: name, Arguments: args}
+	// The gate and the tool can name what was called, as in the turn engine.
+	ctx = hook.WithToolCall(ctx, call)
 	e.logger.InfoContext(ctx, "MCP tool call", "agent", caller.Scope.AgentID, "session", caller.Scope.Session, "tool", name)
 	e.emit(ctx, hook.ToolCallStarted{EventHeader: header(caller), Call: copyCall(call)})
 

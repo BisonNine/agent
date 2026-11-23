@@ -28,7 +28,22 @@ project uses [Semantic Versioning](https://semver.org/).
   concurrently. It is the `hook.TaskRegistrar` on every tool call's context
   and its `TaskController`. `New` refuses an invalid id, missing models, a
   chat purpose with no model, or two tools offered under one name. An
-  agent without a session store keeps sessions in memory.
+  agent without a session store keeps sessions in memory. The agent id is
+  used as given: it is not normalised.
+- `loop`: hosting seams, each optional with the simple path as its default:
+  `Spec.Identity` (who calls are billed to, separate from the id logged),
+  `Spec.TurnModels` (the turn's chain and limits; an agent with no chat model
+  is then accepted and its turn fails matching `hook.ErrNoModelAvailable`),
+  `Spec.Session` (the host's context manager, memory, release and request
+  amend per turn; the agent then keeps no session and runs no compaction of
+  its own), `Spec.TurnLimits` (read per turn, the tool timeout per batch),
+  `Spec.ToolContext` (each call's context), `Spec.AsyncResult` (late results
+  of background tools), `Agent.ForgetSession`, `EnginePanicError` (an engine
+  panic in the run's result), `CompactionStart` for a host's own managers.
+  `Spec.LogContent` is a function, read live.
+- `hook`: `Turn.Model` (the turn's chosen model), `WithTurnID` and
+  `RunOptions.TurnID`, `NoTurnBudget`, and `WithToolCall`/`ToolCallFrom`
+  (the call on a gate's and tool's context, in the engine and `mcphost`).
 - `agenttest` package: the conformance suite of `agent.Agent`
   (`agenttest.Run(t, factory)`, the factory given a `Fixture`), on a
   scripted model. The SDK's agent passes it in the gate.

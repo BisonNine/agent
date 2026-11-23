@@ -102,7 +102,11 @@ The module root is `go.bison9.com/agent`, the root package `agent` (plan
 - 1.3.15 **`AfterTurn` decides; the engine stores; the host replies on
   `TurnFinished`**, so the reply is stored before it is sent.
 - 1.3.16 **Tool calls cannot change their context.** Per-turn host values
-  go on the context passed to `Run`.
+  go on the context passed to `Run`; per-call ones (an allow checker, the
+  reply chat) through the agent's `loop.Spec.ToolContext`, which the gate
+  and the tool see (the callbacks see the turn's context). The call itself
+  is on that context (`WithToolCall`, `ToolCallFrom`), in the engine and in
+  `mcphost` alike, so a gate can name what the model called.
 
 ## 2. The turn, in order
 
@@ -314,15 +318,21 @@ of `agent/` imports 37 module packages and three third-party modules.
   command, a required reply; a slot taken when the turn starts).
   *Resolution:* the host keeps its queue, merging and slot through 5b and
   calls `Run` when the session is idle (8.2).
-- 6.2 **Single-shot agents.** *Resolution:* an agent setting in
-  `loop.Spec`; the engine resets before and discards after.
+- 6.2 **Single-shot agents.** *Resolution:* the host's. A host that runs
+  them supplies the session context (`loop.Spec.Session`) and resets before
+  (or runs with `ResetSession`) and discards after in its own session
+  context and `AfterTurn`; `loop` has no setting for it.
 - 6.3 **The `file_edit` repeat hint.** The 5a engine takes it as
   `engineSpec.repeatHint`. *Resolution:* an agent option in `loop.Spec`
   (a function of the repeated tool names); not a hook.
-- 6.4 **Async tools and late results.** *Resolution:* the tool starts its
-  late part as a `TaskCallback` task through the `TaskRegistrar` (section
-  9); its `Finish` emits `TaskFinished` with the result, which the host
-  routes into a new `Run`.
+- 6.4 **Async tools and late results.** *Resolution:* two ways. A tool
+  that should be listed and cancellable starts its late part as a
+  `TaskCallback` task through the `TaskRegistrar` (section 9); its `Finish`
+  emits `TaskFinished` with the result, which the host routes into a new
+  `Run`. A `toolkit.AsyncExecutor` tool, as the first host has them, reports
+  its late result to `loop.Spec.AsyncResult` (with the call's context and
+  the call, possibly after the turn ended); without one it runs
+  synchronously.
 
 ## 7. Where the 5a engine departs from `hook`, and what changes
 
@@ -624,3 +634,38 @@ the SDK's will live in `agent/loop`.
   tasks after a restart (and `cancelRecord` for a task a restart left
   unrelaunched), clones and their release, and the wording of results
   (`detachedText`, the cancelled result).
+
+## 10. Hosting an existing application
+
+What a host that already has its own session cache, model selection,
+identity and timing supplies to `loop.Spec` (through its own
+`func(*loop.Spec)` options; the root package's options cover the simple
+path). Every field is optional; without it the agent does what it does for
+section 1's example.
+
+| Host duty | Carried by | Default |
+| --- | --- | --- |
+| The agent's id in logs and the prompt cache key | `Spec.ID`, used as given (never normalised or rejected but for empty) | — |
+| Who calls are billed to; the scope's agent; task owner (a clone bills its source) | `Spec.Identity` (`accounting.Identity`, fixed for the instance) | `{ID, Name, Project}` |
+| The turn's chain: the live set, an isolated chain, the session's `/model` scope | `Spec.TurnModels(ctx, scope) TurnModels{Chain}` | `Models.Begin(Chat, Scope(session))` |
+| The agent's own max tokens, context window, no-tools | `TurnModels.Limits` | the chain's first model's |
+| An agent with no chat model (a human agent) | `Spec.TurnModels` set, `Spec.Models` nil; a model-less turn fails matching `ErrNoModelAvailable` | `New` refuses it |
+| The pinned model, for per-turn callbacks | `Turn.Model` (BeforeTurn, AfterTurn, `Loop.Turn`) | — |
+| Its session cache: manager, memory, references, idle eviction, token | `Spec.Session(ctx, scope) Session{Context, Memory, Release, Assemble}`; build managers with `ctxengine.WithCompactionStartFunc(loop.CompactionStart)` | the agent's own manager per session |
+| Channel and chat (and any other field) of every request | `Session.Assemble` | — |
+| The deferred compaction after the reply | the host's: with `Spec.Session` the agent runs none | `CompactIfDue` after each turn |
+| Recall for the message as `BeforeTurn` left it (whispers) | the engine (the agent's last BeforeTurn records it) | — |
+| The system prompt | `Spec.InstructionLayers(ctx)`; `Spec.Instruction` empty adds no layer | — |
+| The tool-schema estimate (`InContext` of the request's history) | the engine: `discovery.ToolDefs` on the dispatch's snapshot with a session rebuilt from the history | — |
+| Allow checker, reply chat, chat, agent id on each call | `Spec.ToolContext(ctx, call)` | — |
+| A gate naming what the model called | `Spec.Gate` reading `ToolCallFrom(ctx).Name` | from `Spec.Allow` |
+| Async tools' late results | `Spec.AsyncResult(ctx, call, result)` | synchronous |
+| The turn id it made (logs, audit, devices) | `WithTurnID(id)` per run; `Scope.TurnID` everywhere | generated |
+| Tool timeout per batch, other limits per turn, from live config | `Spec.TurnLimits(ctx, scope)` | `Spec.Limits` |
+| Its own turn deadline, none inside | `Limits.TurnBudget: NoTurnBudget` (negative) | 15 min |
+| Content logging switched live | `Spec.LogContent func() bool` | off |
+| Its own recovery of an engine panic | `TurnResult.Err` is a `*loop.EnginePanicError`: re-panic with `Value` on the host's goroutine after `Wait` | recovered and logged |
+| Its own queue (merge, commands, slots) | call `Run` only when the session is idle | the agent's queue |
+| Sessions it no longer needs | nothing kept with `Spec.Session`; else `Agent.ForgetSession(key)` | kept until `Close` |
+| Single-shot agents | its session context and `AfterTurn` (6.2) | — |
+| Task records, supervisor, clones | `TaskStart.OnCancel`, `OnDetach` (section 9) | — |

@@ -18,17 +18,21 @@ offered under one name.
 
 | Field | What it is | Default |
 | --- | --- | --- |
-| `ID`, `Name`, `Description` | who the agent is; the id is normalised | — |
+| `ID`, `Name`, `Description` | who the agent is; the id is used as given | — |
+| `Identity` | who calls are billed to, the scope's agent, the tasks' owner | `{ID, Name, Project}` |
 | `Instruction`, `InstructionLayers` | the system prompt: the instruction, then the host's layers per dispatch | none |
-| `Models` | the agent's `*models.Set`: `Chat` for turns, `Summarize` for compaction | required |
+| `Models` | the agent's `*models.Set`: `Chat` for turns, `Summarize` for compaction | required without `TurnModels` |
+| `TurnModels` | the turn's chain (and limits), chosen by the host per turn | `Models.Begin(Chat, session scope)` |
+| `Session` | the turn's session context from the host (manager, memory, release, request amend) | the agent's own per session |
 | `Tools`, `Allow`, `Gate` | a `toolkit.Registry`, read per model call; a grant check or gate run again at execution | no tools |
 | `Sessions` | ctxengine's `session.SessionStore` | `session.NewMemory()` |
 | `Memory` | `hook.Memory` (`cogmem.Memory` adapts cogmem) | none |
 | `Context` | `ctxengine` options for every session's manager, after the agent's own | none |
-| `Limits` | `hook.Limits`: iterations, tool timeout, turn budget, cancel grace, retries | `hook.Default…` |
+| `Limits`, `TurnLimits` | `hook.Limits`: iterations, tool timeout, turn budget (`NoTurnBudget` for none), cancel grace, retries; or the host's per turn | `hook.Default…` |
+| `ToolContext`, `AsyncResult` | each call's context from the host; background tools' late results | none; synchronous |
 | `Temperature`, `RepeatHint` | sent to non-CLI models; extra steering for a repeated tool batch | none |
 | `Served` | `hook.ServedTools`: a CLI model's tools for its turn (`mcphost.Served`) | none |
-| `Project`, `Clock`, `Logger`, `Redactor`, `Truncator`, `LogContent` | accounting project, time, logging | default project, real clock, discard |
+| `Project`, `Clock`, `Logger`, `Redactor`, `Truncator`, `LogContent` (a func, read live) | accounting project, time, logging | default project, real clock, discard |
 | `Plugins` | the callbacks and consumers, each kind in order | none |
 
 ## What a turn does
@@ -41,9 +45,9 @@ its own queue and calls `Run` only on an idle session gets the same turn.
 Each turn, on the run's context with the turn's `hook.Scope`, the turn
 budget, the agent's task registrar and its callbacks:
 
-- the chain is begun from `Models` for purpose `Chat` in the session's
-  scope (so a per-session selection applies), and the session's context
-  window set to its first model's;
+- the chain is the host's (`TurnModels`) or begun from `Models` for purpose
+  `Chat` in the session's scope (so a per-session selection applies), and
+  the session's context window set to its first model's;
 - the session's ctxengine manager (made on its first turn, with the agent's
   logger, a summary caller from `Models` for `Summarize`, and compaction
   reports to `OnCompaction`) and memory session are used for every store,
@@ -98,9 +102,18 @@ it starts are that task's children there and a cancel of it reaches them.
 The registry remembers the last 256 ended
 tasks for `AlreadyEnded`.
 
+## Hosting an existing application
+
+A host with its own session cache, model selection, identity and timing
+supplies them through the optional `Spec` fields above; `hook/DESIGN.md`
+section 10 is the checklist. A panic in the engine (or in the host's
+`TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
+`TurnFinished`: a host that wants its own recovery re-panics with its
+`Value` on its own goroutine. `ForgetSession(key)` drops an idle session the
+agent holds; with `Spec.Session` it holds none.
+
 ## Not here
 
 The host's queue rules (merging, commands, slots), its task records and
-supervisor, single-shot agents, idle session pruning and async tools' late
-results (they are dropped; start a `TaskCallback` task instead) are not part
-of this package.
+supervisor, and single-shot agents (the host's session context does the
+reset and discard) are not part of this package.
