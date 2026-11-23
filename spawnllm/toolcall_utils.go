@@ -13,9 +13,14 @@ import (
 // NormalizeToolCall normalizes a ToolCall to ensure all fields are properly populated.
 // It handles cases where Name/Arguments might be in different locations (top-level vs Function)
 // and ensures both are populated consistently. Arguments that cannot be encoded
-// are logged at debug level on log (nil discards).
+// are logged at debug level on log (nil discards). It returns a copy: tc and
+// its Function are not changed.
 func NormalizeToolCall(tc ToolCall, log *slog.Logger) ToolCall {
 	normalized := tc
+	if tc.Function != nil {
+		fn := *tc.Function
+		normalized.Function = &fn
+	}
 
 	// Ensure Name is populated from Function if not set
 	if normalized.Name == "" && normalized.Function != nil {
@@ -52,9 +57,6 @@ func NormalizeToolCall(tc ToolCall, log *slog.Logger) ToolCall {
 	} else {
 		if normalized.Function.Name == "" {
 			normalized.Function.Name = normalized.Name
-		}
-		if normalized.Name == "" {
-			normalized.Name = normalized.Function.Name
 		}
 		if normalized.Function.Arguments == "" {
 			normalized.Function.Arguments = string(argsJSON)

@@ -490,3 +490,4 @@ project uses [Semantic Versioning](https://semver.org/).
   model could recreate them. The run now fails with "consolidate: current
   state: …", applies nothing, keeps the watermark, and records the error.
 - `ctxengine/memory`: `ListSessions` silently skipped an archive it could not read; it now returns the readable keys with an error naming each unreadable archive.
+- `spawnllm`: `NormalizeToolCall` filled in the caller's `ToolCall.Function`, so the agent loop changed the response's tool calls; it now returns a copy and leaves its argument unchanged.

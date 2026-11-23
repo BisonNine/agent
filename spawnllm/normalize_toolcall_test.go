@@ -160,3 +160,32 @@ func TestNormalizeToolCall_FillsEmptyFunctionFields(t *testing.T) {
 		t.Errorf("Function = %+v, want name lookup and the encoded arguments", result.Function)
 	}
 }
+
+func TestNormalizeToolCall_LeavesInputUnchanged(t *testing.T) {
+	tests := []struct {
+		name string
+		tc   ToolCall
+	}{
+		{"empty function name and arguments", ToolCall{
+			ID: "call_1", Name: "lookup", Arguments: map[string]any{"q": "alice"}, Function: &FunctionCall{},
+		}},
+		{"name only in function", ToolCall{
+			ID: "call_2", Function: &FunctionCall{Name: "lookup", Arguments: `{"q":"bob"}`},
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fn := *tt.tc.Function
+			result := NormalizeToolCall(tt.tc, nil)
+			if *tt.tc.Function != fn {
+				t.Errorf("input Function = %+v, want it unchanged (%+v)", *tt.tc.Function, fn)
+			}
+			if result.Function == tt.tc.Function {
+				t.Error("result shares the input's Function")
+			}
+			if result.Name != "lookup" || result.Function.Name != "lookup" || result.Function.Arguments == "" {
+				t.Errorf("result = %+v (Function %+v), want name lookup and arguments filled", result, *result.Function)
+			}
+		})
+	}
+}
