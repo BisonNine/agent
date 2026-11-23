@@ -221,6 +221,10 @@ func TestRefresh_CountsAndSkips(t *testing.T) {
 	if len(got) != 3 {
 		t.Errorf("an unchanged Refresh reported %d skips, want each of the 3 again", len(got))
 	}
+	// One read reports its skips in order of internal name, whatever the reason.
+	if len(got) == 3 && (got[0].Internal != "bad_schema" || got[1].Internal != "refused" || got[2].Internal != "srv_write") {
+		t.Errorf("skips reported as %s, %s, %s; want bad_schema, refused, srv_write", got[0].Internal, got[1].Internal, got[2].Internal)
+	}
 
 	if err := alice.AddEntries(toolkit.Entry{Tool: textTool("added_one", "a")}, toolkit.Entry{Tool: textTool("added_two", "b")}); err != nil {
 		t.Fatal(err)

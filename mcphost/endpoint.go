@@ -106,7 +106,8 @@ type Config struct {
 	// OnSkip, when set, is told of every catalogue tool left out (a taken
 	// name, a schema that cannot be encoded or that MCP refuses) on every
 	// read of the catalogue: at New, on each Refresh, and on each change of a
-	// followed catalogue. The endpoint logs them too.
+	// followed catalogue, in order of the tools' internal names. The
+	// endpoint logs them too.
 	OnSkip func(Skip)
 
 	// Logger is the endpoint's logger; records carry component=mcphost.

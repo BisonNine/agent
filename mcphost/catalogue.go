@@ -240,7 +240,10 @@ func (e *Endpoint) autoSync() {
 func (e *Endpoint) sync() RefreshResult {
 	res, skips := e.syncOnce()
 	// Reported once the new state is in place and the lock released, so a
-	// callback that calls back into the endpoint finds it consistent.
+	// callback that calls back into the endpoint finds it consistent. In
+	// order of the tools' internal names, whatever the reason, so a host
+	// that logs them gets one stable order per read.
+	slices.SortStableFunc(skips, func(a, b Skip) int { return cmp.Compare(a.Internal, b.Internal) })
 	for _, s := range skips {
 		e.skipped(s)
 	}
