@@ -3,10 +3,18 @@
  * Please see LICENSE file for details.                                       *
  ******************************************************************************/
 
-// Package kb reads, searches and writes knowledge bases stored as Open
-// Knowledge Format (OKF) v0.3 bundles: directories of Markdown concepts with
-// YAML frontmatter. A host maps knowledge-base names to bundle directories
-// with a Resolver; the Store does the rest: exact reads with declared
+// Package kb reads, searches and writes knowledge bases.
+//
+// Knowledge bases are stored as Open Knowledge Format (OKF) v0.3 bundles
+// and are OKF compatible: a bundle written by these tools can be read by
+// any OKF tool, and an OKF bundle can be served by these tools. The README
+// states what that covers, where the package is stricter than OKF, and its
+// one extension (x-tenebris-include). OKF v0.3:
+// https://github.com/open-knowledge-format/open-knowledge-format/blob/527e81aff55992be21507e97004286789126f88c/SPEC.md
+//
+// A bundle is a directory of Markdown concepts with YAML frontmatter. A
+// host maps knowledge-base names to bundle directories with a Resolver;
+// the Store does the rest: exact reads with declared
 // inclusions, ranked full-text search, validated atomic writes, and a check
 // of a whole bundle.
 //
@@ -39,6 +47,10 @@ type Limits struct {
 	QueryRunes    int // search query characters (256)
 	PassageRunes  int // characters of a hit's passage (about 240)
 	GetResult     int // bytes of a get tool result; the Store does not use it (512 KiB)
+	// IndexedBundles is how many bundles the search index keeps; past it
+	// the least recently searched or written one is dropped, and rebuilt
+	// when it is next searched (32).
+	IndexedBundles int
 }
 
 // DefaultLimits are the limits a zero Limits field takes.
@@ -53,6 +65,8 @@ var DefaultLimits = Limits{
 	QueryRunes:    256,
 	PassageRunes:  240,
 	GetResult:     512 << 10,
+
+	IndexedBundles: 32,
 }
 
 // withDefaults returns l with each zero field taken from DefaultLimits, or
@@ -73,6 +87,7 @@ func (l Limits) withDefaults() (Limits, error) {
 		{"QueryRunes", &l.QueryRunes, DefaultLimits.QueryRunes},
 		{"PassageRunes", &l.PassageRunes, DefaultLimits.PassageRunes},
 		{"GetResult", &l.GetResult, DefaultLimits.GetResult},
+		{"IndexedBundles", &l.IndexedBundles, DefaultLimits.IndexedBundles},
 	}
 	for _, f := range fields {
 		if *f.v < 0 {
@@ -127,7 +142,7 @@ func New(opts Options) (*Store, error) {
 		log = slog.New(slog.DiscardHandler)
 	}
 	log = log.With("component", "kb")
-	idx, err := openIndex(log)
+	idx, err := openIndex(log, limits.IndexedBundles)
 	if err != nil {
 		return nil, fmt.Errorf("kb: open search index: %w", err)
 	}

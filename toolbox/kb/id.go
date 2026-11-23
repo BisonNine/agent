@@ -28,10 +28,10 @@ func idProblem(id string, l Limits) string {
 	switch {
 	case id == "":
 		return "is empty"
-	case !utf8.ValidString(id):
-		return "is not valid UTF-8"
 	case len(id) > l.IDBytes:
 		return fmt.Sprintf("is %d bytes; the limit is %d", len(id), l.IDBytes)
+	case !utf8.ValidString(id):
+		return "is not valid UTF-8"
 	case strings.HasPrefix(id, "/"):
 		return `must not start with "/"`
 	case strings.HasSuffix(id, "/"):
@@ -46,6 +46,9 @@ func idProblem(id string, l Limits) string {
 		if unicode.IsControl(r) {
 			return "must not contain control characters"
 		}
+		if unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			return fmt.Sprintf("must not contain the invisible or separator character %U", r)
+		}
 	}
 	segments := strings.Split(id, "/")
 	for _, seg := range segments {
@@ -56,6 +59,8 @@ func idProblem(id string, l Limits) string {
 			return `must not contain a segment that starts with "."`
 		case strings.TrimSpace(seg) == "":
 			return "must not contain a blank segment"
+		case strings.TrimSpace(seg) != seg:
+			return "must not have a segment that starts or ends with a space"
 		case len(seg) > l.SegmentBytes:
 			return fmt.Sprintf("has a segment of %d bytes; the limit is %d", len(seg), l.SegmentBytes)
 		}

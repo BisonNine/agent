@@ -8,8 +8,11 @@ package kb
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -73,8 +76,8 @@ func newFixture(t *testing.T) *fixture {
 	f.ref = filepath.Join(dir, "ref")
 	mkdir(t, f.ref)
 	f.r = mapResolver{
-		"notes": {Root: f.notes, Confine: filepath.Join(dir, "okf"), Writable: true, Create: true},
-		"ref":   {Name: "shared/ref", Root: f.ref},
+		"notes":      {Root: f.notes, Confine: filepath.Join(dir, "okf"), Writable: true, Create: true},
+		"shared/ref": {Root: f.ref},
 	}
 	return f
 }
@@ -146,4 +149,29 @@ func hasField(fields []FieldError, field string) bool {
 		}
 	}
 	return false
+}
+
+// removeFile removes a file of the notes bundle.
+func removeFile(f *fixture, rel string) error {
+	return os.Remove(filepath.Join(f.notes, filepath.FromSlash(rel)))
+}
+
+// noHostPath fails the test when an error's text holds a path under dir.
+func noHostPath(t *testing.T, err error, dir string) {
+	t.Helper()
+	if err != nil && strings.Contains(err.Error(), dir) {
+		t.Errorf("error holds a host path: %v", err)
+	}
+}
+
+// lockedWriter serialises writes for a log handler shared by goroutines.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

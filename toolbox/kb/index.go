@@ -29,12 +29,30 @@ const indexSchema = `CREATE VIRTUAL TABLE sections USING fts5(bundle UNINDEXED, 
 const searchQuery = `SELECT id, title, heading, snippet(sections, 4, '', '', '…', 48), bm25(sections, 0.0, 10.0, 5.0, 3.0, 1.0) AS score
  FROM sections WHERE sections MATCH ? AND bundle = ? ORDER BY score LIMIT ?`
 
-// index is the in-memory FTS5 index of every bundle searched.
+// index is the in-memory FTS5 index of the bundles searched or written
+// recently. Each bundle has its own lock, so work on one does not wait for
+// another (the single database connection is held only per statement or
+// short transaction). At most max bundles are kept: when another is added,
+// the least recently used one is dropped, and rebuilt on its next search.
 type index struct {
-	mu      sync.Mutex // held for every use of db and bundles
-	db      *sql.DB
-	log     *slog.Logger
-	bundles map[string]map[string]indexed // bundle key → concept ID → state
+	db  *sql.DB
+	log *slog.Logger
+	max int
+
+	mu      sync.Mutex // guards bundles and tick
+	bundles map[string]*bundleIndex
+	tick    uint64
+}
+
+// bundleIndex is the index state of one bundle. Its mu is held while the
+// bundle's files are compared with the index and its rows are used.
+type bundleIndex struct {
+	mu      sync.Mutex
+	x       *index
+	key     string
+	files   map[string]indexed // concept ID → state
+	used    uint64             // index.tick at the last acquire; under index.mu
+	dropped bool               // evicted: acquire again
 }
 
 // indexed is what the index holds for one file.
@@ -47,7 +65,7 @@ type indexed struct {
 // section is one Markdown section of a body.
 type section struct{ heading, text string }
 
-func openIndex(log *slog.Logger) (*index, error) {
+func openIndex(log *slog.Logger, maxBundles int) (*index, error) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		return nil, err
@@ -61,40 +79,71 @@ func openIndex(log *slog.Logger) (*index, error) {
 		closeQuietly(log, db)
 		return nil, err
 	}
-	return &index{db: db, log: log, bundles: make(map[string]map[string]indexed)}, nil
+	return &index{db: db, log: log, max: maxBundles, bundles: make(map[string]*bundleIndex)}, nil
 }
 
-func (x *index) close() error {
-	x.mu.Lock()
-	defer x.mu.Unlock()
-	return x.db.Close()
-}
+func (x *index) close() error { return x.db.Close() }
 
-// state returns the bundle's file states, creating the map. x.mu is held.
-func (x *index) state(key string) map[string]indexed {
-	m := x.bundles[key]
-	if m == nil {
-		m = make(map[string]indexed)
-		x.bundles[key] = m
+// acquire returns the bundle's index state, locked; the caller unlocks it.
+// It may drop the least recently used bundle to stay within x.max.
+func (x *index) acquire(ctx context.Context, key string) *bundleIndex {
+	for {
+		x.mu.Lock()
+		bi := x.bundles[key]
+		if bi == nil {
+			bi = &bundleIndex{x: x, key: key, files: make(map[string]indexed)}
+			x.bundles[key] = bi
+		}
+		x.tick++
+		bi.used = x.tick
+		var victim *bundleIndex
+		if len(x.bundles) > x.max {
+			for _, other := range x.bundles {
+				if other != bi && (victim == nil || other.used < victim.used) {
+					victim = other
+				}
+			}
+			delete(x.bundles, victim.key)
+		}
+		x.mu.Unlock()
+		if victim != nil {
+			victim.drop(context.WithoutCancel(ctx))
+		}
+		bi.mu.Lock()
+		if !bi.dropped {
+			return bi
+		}
+		bi.mu.Unlock() // evicted meanwhile: start again
 	}
-	return m
+}
+
+// drop deletes an evicted bundle's rows.
+func (bi *bundleIndex) drop(ctx context.Context) {
+	bi.mu.Lock()
+	defer bi.mu.Unlock()
+	bi.dropped = true
+	for id := range bi.files {
+		if err := bi.remove(ctx, id); err != nil {
+			bi.x.log.Warn("search index rows not dropped", "error", err.Error())
+			return
+		}
+	}
 }
 
 // replace sets a concept's rows. sections nil removes the concept from
 // the search (a file that is not a concept keeps its state, with no rows).
-// x.mu is held.
-func (x *index) replace(ctx context.Context, key, id string, st indexed, title string, sections []section) error {
-	m := x.state(key)
-	tx, err := x.db.BeginTx(ctx, nil)
+// bi.mu is held.
+func (bi *bundleIndex) replace(ctx context.Context, id string, st indexed, title string, sections []section) error {
+	tx, err := bi.x.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-			x.log.Warn("search index rollback failed", "error", rbErr.Error())
+			bi.x.log.Warn("search index rollback failed", "error", rbErr.Error())
 		}
 	}()
-	for _, row := range m[id].rows {
+	for _, row := range bi.files[id].rows {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM sections WHERE rowid = ?`, row); err != nil {
 			return err
 		}
@@ -102,7 +151,7 @@ func (x *index) replace(ctx context.Context, key, id string, st indexed, title s
 	st.rows = nil
 	for _, sec := range sections {
 		res, err := tx.ExecContext(ctx, `INSERT INTO sections (bundle, id, title, heading, text) VALUES (?, ?, ?, ?, ?)`,
-			key, id, title, sec.heading, sec.text)
+			bi.key, id, title, sec.heading, sec.text)
 		if err != nil {
 			return err
 		}
@@ -115,41 +164,38 @@ func (x *index) replace(ctx context.Context, key, id string, st indexed, title s
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	m[id] = st
+	bi.files[id] = st
 	return nil
 }
 
-// remove drops a concept. x.mu is held.
-func (x *index) remove(ctx context.Context, key, id string) error {
-	m := x.state(key)
-	for _, row := range m[id].rows {
-		if _, err := x.db.ExecContext(ctx, `DELETE FROM sections WHERE rowid = ?`, row); err != nil {
+// remove drops a concept. bi.mu is held.
+func (bi *bundleIndex) remove(ctx context.Context, id string) error {
+	for _, row := range bi.files[id].rows {
+		if _, err := bi.x.db.ExecContext(ctx, `DELETE FROM sections WHERE rowid = ?`, row); err != nil {
 			return err
 		}
 	}
-	delete(m, id)
+	delete(bi.files, id)
 	return nil
 }
 
-// forget drops what the index knows of a concept's file, so the next
-// search reads it again. x.mu is held.
-func (x *index) forget(key, id string) {
-	m := x.state(key)
-	if st, ok := m[id]; ok {
+// forget makes the next search read a concept's file again. bi.mu is held.
+func (bi *bundleIndex) forget(id string) {
+	if st, ok := bi.files[id]; ok {
 		st.size = -1
-		m[id] = st
+		bi.files[id] = st
 	}
 }
 
-// query runs a match expression over one bundle. x.mu is held.
-func (x *index) query(ctx context.Context, key, match string, limit, passage int) ([]Hit, error) {
-	rows, err := x.db.QueryContext(ctx, searchQuery, match, key, limit)
+// query runs a match expression over the bundle. bi.mu is held.
+func (bi *bundleIndex) query(ctx context.Context, match string, limit, passage int) ([]Hit, error) {
+	rows, err := bi.x.db.QueryContext(ctx, searchQuery, match, bi.key, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
-			x.log.Debug("close failed", "error", closeErr.Error())
+			bi.x.log.Debug("close failed", "error", closeErr.Error())
 		}
 	}()
 	hits := []Hit{}

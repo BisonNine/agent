@@ -205,6 +205,7 @@ func (t *Tools) getHandler(call *toolspec.ToolCall) (*toolspec.Result, error) {
 	for _, inc := range rec.Includes {
 		res.Omitted = append(res.Omitted, inc.ID)
 	}
+	res.Omitted = append(res.Omitted, rec.Omitted...) // beyond Limits.Includes: not loaded
 	base, err := encode(res)
 	if err != nil {
 		return nil, err
@@ -228,6 +229,7 @@ func (t *Tools) getHandler(call *toolspec.ToolCall) (*toolspec.Result, error) {
 		used += len(data) + 1
 		res.Includes = append(res.Includes, c)
 	}
+	res.Omitted = append(res.Omitted, rec.Omitted...)
 	return success(res)
 }
 

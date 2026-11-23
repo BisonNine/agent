@@ -41,6 +41,14 @@ func TestValidateID(t *testing.T) {
 		{"index", `reserved name "index"`},
 		{"dir/Index", `reserved name "Index"`},
 		{"dir/LOG", `reserved name "LOG"`},
+		{"a\u202eb", "U+202E"},
+		{"a\u200bb", "U+200B"},
+		{"a\u2028b", "U+2028"},
+		{"a\u2029b", "U+2029"},
+		{"x.md ", "starts or ends with a space"},
+		{" lead", "starts or ends with a space"},
+		{"dir /x", "starts or ends with a space"},
+		{"dir/x\u00a0", "starts or ends with a space"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.id, func(t *testing.T) {

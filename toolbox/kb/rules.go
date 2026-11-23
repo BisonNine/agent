@@ -178,9 +178,12 @@ func (s *Store) ruleFields(r *os.Root, key string, b Bundle, id string, fm Front
 		if !rule.applies(id, fm.Type()) {
 			continue
 		}
+		if r == nil {
+			return nil, fmt.Errorf("kb: bundle %q: rule schema %q: the bundle has no directory yet", b.name, rule.Schema)
+		}
 		sch, err := s.schemas.get(r, key, rule.Schema)
 		if err != nil {
-			return nil, fmt.Errorf("kb: bundle %q: rule schema %q: %w", b.Name, rule.Schema, err)
+			return nil, fmt.Errorf("kb: bundle %q: rule schema %q: %w", b.name, rule.Schema, err)
 		}
 		out = append(out, schemaFields(sch, fm, " (schema "+rule.Schema+")")...)
 	}

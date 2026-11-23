@@ -91,11 +91,11 @@ func TestGetPutRoundTripKeepsExtensions(t *testing.T) {
 func TestAccess(t *testing.T) {
 	f := newFixture(t)
 	writeFile(t, filepath.Join(f.ref, "a.md"), "---\ntype: Note\n---\nshared\n")
-	_, err := f.s.Put(f.ctx, f.r, "ref", "a", Frontmatter{"type": "Note"}, "")
+	_, err := f.s.Put(f.ctx, f.r, "shared/ref", "a", Frontmatter{"type": "Note"}, "")
 	if !errors.Is(err, ErrReadOnly) || !strings.Contains(err.Error(), `"shared/ref"`) {
 		t.Fatalf("Put on a read-only bundle = %v", err)
 	}
-	if rec, err := f.s.Get(f.ctx, f.r, "ref", "a"); err != nil || rec.KB != "shared/ref" {
+	if rec, err := f.s.Get(f.ctx, f.r, "shared/ref", "a"); err != nil || rec.KB != "shared/ref" {
 		t.Fatalf("Get on a read-only bundle = %+v, %v", rec, err)
 	}
 	for _, r := range []Resolver{f.r, nil} {
@@ -293,8 +293,10 @@ func TestConfinement(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.r["escape"] = Bundle{Root: filepath.Join(okf, "escape"), Confine: okf, Writable: true, Create: true}
-	if _, err := f.s.Get(f.ctx, f.r, "escape", "secret"); err == nil {
-		t.Fatal("Get read through a bundle link out of Confine")
+	if _, err := f.s.Get(f.ctx, f.r, "escape", "secret"); !errors.Is(err, ErrUnknownKB) {
+		t.Fatalf("Get through a bundle link out of Confine = %v", err)
+	} else {
+		noHostPath(t, err, f.dir)
 	}
 	if _, err := f.s.Put(f.ctx, f.r, "escape", "planted", Frontmatter{"type": "Note"}, ""); err == nil {
 		t.Fatal("Put wrote through a bundle link out of Confine")

@@ -249,6 +249,8 @@ func TestRoundTripProperty(t *testing.T) {
 		"line\nline", "trailing\n", "\nleading", "crlf\r\nline", "tab\there", "ünïcødé ελληνικά", "'quote'", `"dq"`, "[x]", "{y}",
 		"*alias", "&anchor", "!tag", "%dir", "@at", "`tick`", "  spaced  ", "2026-06-30", "2026-06-20T14:00:00Z", "0x1F",
 		strings.Repeat("long words ", 20), "---\nbody-like\n---",
+		"<<", "=", "!", "&", "*", "|", ">", "%", "@", "?", "-", ":", ",", "~", "Null", "y", "off", ".inf", "-.Inf", "0o17", "0b101",
+		"+1", "1_000", "1:20", "? x", ": x", "<<x", "!!str", "\\", "\u00a0",
 	}
 	pick := func() string { return atoms[rng.IntN(len(atoms))] }
 	// Keys with control characters are refused by Put (textFields).
@@ -491,4 +493,17 @@ func cloneFM(fm Frontmatter) Frontmatter {
 	out := make(Frontmatter, len(fm))
 	maps.Copy(out, fm)
 	return out
+}
+
+// TestYAMLSpecialTokensRoundTrip writes each YAML-special token as a key,
+// a value and a list item.
+func TestYAMLSpecialTokensRoundTrip(t *testing.T) {
+	toks := []string{"<<", "=", "!", "&", "*", "|", ">", "%", "@", "`", "?", "-", ":", "#", ",", "[", "]", "{", "}", "'", "\"", "~", "null", "Null", "NULL", "true", "y", "n", "on", "off", ".inf", ".nan", "-.Inf", "0o17", "0b101", "+1", "1_000", "1:20", "---", "...", "- ", "? x", ": x", "<<x", "*a", "&a", "!!str", "x: y", "a #b", " ", "", "\\", "\u0085", "\u00a0", "\ufeff"}
+	for _, k := range toks {
+		for _, fm := range []Frontmatter{{"type": "a", k: "v"}, {"type": "a", "v": k}, {"type": "a", "l": []any{k}}} {
+			if _, err := renderFrontmatter(mustCanonical(t, fm), nil); err != nil {
+				t.Errorf("%q: %v", k, err)
+			}
+		}
+	}
 }

@@ -45,7 +45,7 @@ func (w workspaceResolver) Resolve(_ context.Context, name string) (kb.Bundle, e
 	if rest, ok := strings.CutPrefix(name, sharedPrefix); ok {
 		for _, s := range w.shared {
 			if s.name == rest {
-				return kb.Bundle{Name: name, Root: s.root, Writable: s.writable}, nil
+				return kb.Bundle{Root: s.root, Writable: s.writable}, nil
 			}
 		}
 		return kb.Bundle{}, kb.ErrUnknownKB
@@ -54,7 +54,7 @@ func (w workspaceResolver) Resolve(_ context.Context, name string) (kb.Bundle, e
 		return kb.Bundle{}, kb.ErrUnknownKB
 	}
 	return kb.Bundle{
-		Name: name, Root: filepath.Join(w.folder, name), Confine: w.folder,
+		Root: filepath.Join(w.folder, name), Confine: w.folder,
 		Writable: true, Create: true,
 	}, nil
 }

@@ -373,3 +373,20 @@ func TestUnexpectedFailuresAreGoErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestIncludesBeyondTheLimitAreOmitted(t *testing.T) {
+	h := newHarness(t, kb.Limits{Includes: 1})
+	for _, id := range []string{"b", "c"} {
+		h.ok("put", map[string]any{"kb": "notes", "concept_id": id, "frontmatter": map[string]any{"type": "Note"}, "body": ""})
+	}
+	if err := os.WriteFile(filepath.Join(h.r.notes, "a.md"), []byte("---\ntype: Note\nx-tenebris-include: [b, c]\n---\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var res getResult
+	if err := json.Unmarshal([]byte(h.ok("get", map[string]any{"kb": "notes", "concept_id": "a"})), &res); err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Includes) != 1 || res.Includes[0].ID != "b" || !reflect.DeepEqual(res.Omitted, []string{"c"}) {
+		t.Fatalf("get = %+v", res)
+	}
+}

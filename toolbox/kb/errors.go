@@ -7,6 +7,7 @@ package kb
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -72,14 +73,37 @@ func (e *ValidationError) Error() string {
 // Is reports whether target is ErrInvalid.
 func (e *ValidationError) Is(target error) bool { return target == ErrInvalid }
 
-// invalid returns a *ValidationError for the fields, with ID set on each.
+// maxReason bounds the bytes of one problem's reason.
+const maxReason = 300
+
+// invalid returns a *ValidationError for the fields, with ID set on each,
+// bounded as boundFields does.
 func invalid(kb, id string, fields ...FieldError) *ValidationError {
+	id = clip(id, maxFieldPath) // an ID refused for its length is long
+	fields = boundFields(fields)
 	for i := range fields {
 		if fields[i].ID == "" {
 			fields[i].ID = id
 		}
 	}
 	return &ValidationError{KB: kb, ID: id, Fields: fields}
+}
+
+// boundFields keeps at most maxProblems problems for one concept (the last
+// saying how many more there were) and clips each path and reason, so no
+// input makes an error text long.
+func boundFields(fields []FieldError) []FieldError {
+	if len(fields) > maxProblems {
+		more := len(fields) - (maxProblems - 1)
+		fields = append(fields[:maxProblems-1:maxProblems-1], FieldError{
+			ID: fields[0].ID, Field: "frontmatter", Reason: fmt.Sprintf("has %d more problems", more),
+		})
+	}
+	for i := range fields {
+		fields[i].Field = clip(fields[i].Field, maxFieldPath)
+		fields[i].Reason = clip(fields[i].Reason, maxReason)
+	}
+	return fields
 }
 
 // quote returns s quoted, for messages.

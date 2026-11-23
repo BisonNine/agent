@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,9 +72,11 @@ func TestUnreadableDirectoryIsAFailure(t *testing.T) {
 		"verify": func() error { _, err := f.s.Verify(f.ctx, f.r, "notes"); return err },
 	}
 	for name, op := range checks {
-		if err := op(); err == nil || sentinel(err) {
+		err := op()
+		if err == nil || sentinel(err) {
 			t.Errorf("%s over an unreadable directory = %v, want a failure", name, err)
 		}
+		noHostPath(t, err, f.dir)
 	}
 }
 
@@ -83,6 +87,8 @@ func TestUnreadableFileIsAFailure(t *testing.T) {
 	chmod(t, filepath.Join(f.notes, "x.md"), 0o000)
 	if _, err := f.s.Get(f.ctx, f.r, "notes", "x"); err == nil || sentinel(err) {
 		t.Fatalf("Get of an unreadable file = %v", err)
+	} else {
+		noHostPath(t, err, f.dir)
 	}
 	// A store that has not indexed it yet must read it.
 	if _, err := newStore(t, Options{}).Search(f.ctx, f.r, "notes", "x", 0); err == nil || sentinel(err) {
@@ -116,40 +122,91 @@ func TestUnwritableBundleLeavesNoTrace(t *testing.T) {
 	}
 }
 
-func TestDirectoryCreationFailures(t *testing.T) {
+// TestUnusableBundleRoots: a root that cannot be opened or created is an
+// unknown knowledge base named as the caller asked, whose error holds no
+// host path (it is logged instead), and a put leaves nothing behind.
+func TestUnusableBundleRoots(t *testing.T) {
 	skipAsRoot(t)
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "file"), "x")
 	locked := filepath.Join(dir, "locked")
 	mkdir(t, locked)
 	chmod(t, locked, 0o500)
-	s := newStore(t, Options{})
+	mkdir(t, filepath.Join(dir, "okf", "bob", "notes"))
+	if err := os.Symlink(filepath.Join("..", "bob", "notes"), filepath.Join(dir, "okf", "alice")); err != nil {
+		t.Fatal(err)
+	}
+	mkdir(t, filepath.Join(dir, "okf", "carol"))
+	if err := os.Symlink(filepath.Join("..", "bob", "notes"), filepath.Join(dir, "okf", "carol", "notes")); err != nil {
+		t.Fatal(err)
+	}
+	var logs strings.Builder
+	s := newStore(t, Options{Logger: slog.New(slog.NewTextHandler(&lockedWriter{w: &logs}, nil))})
+	okf := filepath.Join(dir, "okf")
 	for name, b := range map[string]Bundle{
-		"under a file":                  {Root: filepath.Join(dir, "file", "x", "y")},
-		"in a locked directory":         {Root: filepath.Join(locked, "x", "y")},
-		"confined under a file":         {Root: filepath.Join(dir, "file", "x"), Confine: dir},
-		"confined in a locked folder":   {Root: filepath.Join(locked, "x"), Confine: locked},
-		"confine is a file, no create":  {Root: filepath.Join(dir, "file", "x"), Confine: filepath.Join(dir, "file")},
-		"relative root":                 {Root: "relative"},
-		"relative confine":              {Root: dir, Confine: "relative"},
-		"root outside confine":          {Root: dir, Confine: locked},
-		"confine is a file, and create": {Root: filepath.Join(dir, "file", "x"), Confine: filepath.Join(dir, "file")},
+		"under a file":                   {Root: filepath.Join(dir, "file", "x", "y")},
+		"in a locked directory":          {Root: filepath.Join(locked, "x", "y")},
+		"confined under a file":          {Root: filepath.Join(dir, "file", "x"), Confine: dir},
+		"confined in a locked folder":    {Root: filepath.Join(locked, "x"), Confine: locked},
+		"confine is a file, no create":   {Root: filepath.Join(dir, "file", "x"), Confine: filepath.Join(dir, "file")},
+		"root is a file, no create":      {Root: filepath.Join(dir, "file"), Confine: dir},
+		"root is a file, unconfined":     {Root: filepath.Join(dir, "file")},
+		"relative root":                  {Root: "relative"},
+		"relative confine":               {Root: dir, Confine: "relative"},
+		"root outside confine":           {Root: dir, Confine: locked},
+		"confine is a file, and create":  {Root: filepath.Join(dir, "file", "x"), Confine: filepath.Join(dir, "file")},
+		"linked to a sibling":            {Root: filepath.Join(okf, "alice"), Confine: okf},
+		"linked to a sibling, no create": {Root: filepath.Join(okf, "alice"), Confine: okf},
+		"under a linked parent":          {Root: filepath.Join(okf, "alice", "x"), Confine: okf},
+		"linked root below":              {Root: filepath.Join(okf, "carol", "notes"), Confine: okf},
 	} {
 		t.Run(name, func(t *testing.T) {
 			b.Writable = true
 			b.Create = !strings.Contains(name, "no create")
 			r := mapResolver{"b": b}
-			_, err := s.Put(context.Background(), r, "b", "a", Frontmatter{"type": "Note"}, "")
-			if err == nil || sentinel(err) || !strings.Contains(err.Error(), "bundle") {
-				t.Fatalf("Put = %v, want a bundle failure", err)
+			before := tree(t, dir)
+			_, err := s.Put(context.Background(), r, "b", "sub/a", Frontmatter{"type": "Note"}, "")
+			if !errors.Is(err, ErrUnknownKB) || !strings.Contains(err.Error(), `"b"`) {
+				t.Fatalf("Put = %v, want an unusable bundle", err)
 			}
-			if !b.Create {
-				if _, err := s.Get(context.Background(), r, "b", "a"); err == nil || sentinel(err) {
-					t.Fatalf("Get = %v, want a bundle failure", err)
+			noHostPath(t, err, dir)
+			if after := tree(t, dir); after != before {
+				t.Fatalf("a refused put changed the tree:\n%s\nwas\n%s", after, before)
+			}
+			ops := map[string]func() error{
+				"get":    func() error { _, err := s.Get(context.Background(), r, "b", "a"); return err },
+				"search": func() error { _, err := s.Search(context.Background(), r, "b", "a", 0); return err },
+				"verify": func() error { _, err := s.Verify(context.Background(), r, "b"); return err },
+			}
+			for op, run := range ops {
+				err := run()
+				if !b.Create && !errors.Is(err, ErrUnknownKB) {
+					t.Errorf("%s = %v, want an unusable bundle", op, err)
 				}
+				noHostPath(t, err, dir)
 			}
 		})
 	}
+	if !strings.Contains(logs.String(), dir) {
+		t.Fatalf("the detail was not logged: %s", logs.String())
+	}
+}
+
+// tree lists the entries under dir, for comparing before and after.
+func tree(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil //nolint:nilerr // an unreadable directory is listed as it is
+		}
+		b.WriteString(p + "\n")
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
 }
 
 func TestIndexFailures(t *testing.T) {
@@ -198,14 +255,15 @@ func TestOddValues(t *testing.T) {
 	if _, ok := jsonNumber(json.Number("1e999")); ok {
 		t.Error("jsonNumber accepted an out-of-range number")
 	}
-	if got := numbers(json.Number("1e999")); got != "1e999" {
-		t.Errorf("numbers = %#v", got)
+	_, err := canonicalize(Frontmatter{"type": "a", "deep": []any{map[string]any{"n": json.Number("1e400")}}})
+	if !hasField(fieldsOf(t, err), "frontmatter.deep[0].n") {
+		t.Errorf("an out-of-range number was accepted: %v", err)
 	}
 	if got := canonicalJSON(map[string]any{"f": func() {}}); !strings.HasPrefix(got, "\x00") {
 		t.Errorf("canonicalJSON of a func = %q", got)
 	}
 	// A value that is not JSON-shaped cannot read back the same.
-	if _, err := renderFrontmatter(Frontmatter{"type": "a", "x": struct{}{}}, nil); err == nil {
+	if _, renderErr := renderFrontmatter(Frontmatter{"type": "a", "x": struct{}{}}, nil); renderErr == nil {
 		t.Error("renderFrontmatter accepted a value that does not read back")
 	}
 	text, err := renderFrontmatter(Frontmatter{"type": "a", "x": " lead\nnext", "y": "tab\tand\nline", "l": []any{"a\nb", "c"}}, nil)

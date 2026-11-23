@@ -16,10 +16,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
 	"unicode/utf8"
-
-	"go.bison9.com/agent/fsmode"
 )
 
 // PutResult reports a successful Put.
@@ -50,47 +50,51 @@ func (s *Store) Put(ctx context.Context, r Resolver, kb, id string, fm Frontmatt
 		return PutResult{}, err
 	}
 	if reason := idProblem(id, s.limits); reason != "" {
-		return PutResult{}, invalid(b.Name, id, FieldError{Field: "concept_id", Reason: reason})
+		return PutResult{}, invalid(b.name, id, FieldError{Field: "concept_id", Reason: reason})
 	}
 	if !b.Writable {
-		return PutResult{}, fmt.Errorf("%w: %s", ErrReadOnly, quote(b.Name))
+		return PutResult{}, fmt.Errorf("%w: %s", ErrReadOnly, quote(b.name))
 	}
-	record, err := s.checkRecord(b.Name, id, fm, body)
+	record, err := s.checkRecord(b.name, id, fm, body)
 	if err != nil {
 		return PutResult{}, err
 	}
-	modes := b.Modes.Or(s.modes)
-	root, err := s.openRoot(b, b.Create, modes.Dir)
-	if errors.Is(err, errNoRoot) {
-		return PutResult{}, fmt.Errorf("%w: %s has no directory", ErrUnknownKB, quote(b.Name))
-	}
-	if err != nil {
-		return PutResult{}, err
-	}
-	defer closeQuietly(s.log, root)
+	// Nothing is created until the record has passed every check: a
+	// bundle that may be created but is missing is checked as empty.
 	key := bundleKey(b)
-	fields, err := s.bundleFields(root, key, b, id, record)
+	fields, err := s.bundleChecks(b, key, id, record)
 	if err != nil {
 		return PutResult{}, err
 	}
 	if fields != nil {
-		return PutResult{}, invalid(b.Name, id, fields...)
+		return PutResult{}, invalid(b.name, id, fields...)
 	}
 	unlock := s.locks.lock(key + "\x00" + strings.ToLower(id))
 	defer unlock()
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return PutResult{}, ctxErr
 	}
-	created, err := s.publish(ctx, root, key, b.Name, id, record, body, modes)
+	created, err := s.publish(ctx, b, key, id, record, body)
 	if err != nil {
 		return PutResult{}, err
 	}
-	return PutResult{KB: b.Name, ID: id, Created: created}, nil
+	return PutResult{KB: b.name, ID: id, Created: created}, nil
 }
 
 // checkRecord checks what needs no bundle and returns the frontmatter as
 // it will be stored.
 func (s *Store) checkRecord(kb, id string, fm Frontmatter, body string) (Frontmatter, error) {
+	// Sizes first, on the arguments as given, before any work in
+	// proportion to them.
+	if len(body) > s.limits.Body {
+		return nil, fmt.Errorf("%w: the body is %d bytes; the limit is %d", ErrTooLarge, len(body), s.limits.Body)
+	}
+	if n := countItems(fm[IncludeKey]); n > s.limits.Includes {
+		return nil, fmt.Errorf("%w: %s has %d entries; the limit is %d", ErrTooLarge, IncludeKey, n, s.limits.Includes)
+	}
+	if minBytes(map[string]any(fm), s.limits.Frontmatter) > s.limits.Frontmatter {
+		return nil, fmt.Errorf("%w: the frontmatter is over the %d-byte limit", ErrTooLarge, s.limits.Frontmatter)
+	}
 	fields := textFields(map[string]any(fm), "frontmatter")
 	if !utf8.ValidString(body) {
 		fields = append(fields, FieldError{Field: "body", Reason: "is not valid UTF-8"})
@@ -98,15 +102,12 @@ func (s *Store) checkRecord(kb, id string, fm Frontmatter, body string) (Frontma
 	if fields != nil {
 		return nil, invalid(kb, id, fields...)
 	}
-	if len(body) > s.limits.Body {
-		return nil, fmt.Errorf("%w: the body is %d bytes; the limit is %d", ErrTooLarge, len(body), s.limits.Body)
-	}
 	record, err := canonicalize(fm)
+	if ve, ok := errors.AsType[*ValidationError](err); ok {
+		return nil, invalid(kb, id, ve.Fields...)
+	}
 	if err != nil {
 		return nil, invalid(kb, id, FieldError{Field: "frontmatter", Reason: "cannot be stored: " + err.Error()})
-	}
-	if n := len(asList(record[IncludeKey])); n > s.limits.Includes {
-		return nil, fmt.Errorf("%w: %s has %d entries; the limit is %d", ErrTooLarge, IncludeKey, n, s.limits.Includes)
 	}
 	if fields := s.recordFields(id, record); fields != nil {
 		return nil, invalid(kb, id, fields...)
@@ -116,6 +117,20 @@ func (s *Store) checkRecord(kb, id string, fm Frontmatter, body string) (Frontma
 
 // bundleFields applies the checks that need the bundle: its rules, and
 // that every include is a concept in it.
+func (s *Store) bundleChecks(b Bundle, key, id string, fm Frontmatter) ([]FieldError, error) {
+	root, err := s.openForRead(b)
+	if errors.Is(err, errNoRoot) {
+		return s.bundleFields(nil, key, b, id, fm)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer closeQuietly(s.log, root)
+	return s.bundleFields(root, key, b, id, fm)
+}
+
+// bundleFields applies the checks that need the bundle; root nil is a
+// bundle that does not exist yet.
 func (s *Store) bundleFields(root *os.Root, key string, b Bundle, id string, fm Frontmatter) ([]FieldError, error) {
 	fields, err := s.ruleFields(root, key, b, id, fm)
 	if err != nil {
@@ -132,7 +147,7 @@ func (s *Store) bundleFields(root *os.Root, key string, b Bundle, id string, fm 
 		if !ok {
 			fields = append(fields, FieldError{
 				Field:  fmt.Sprintf("frontmatter.%s[%d]", IncludeKey, i),
-				Reason: fmt.Sprintf("names %s, which is not a concept in %s", quote(inc), quote(b.Name)),
+				Reason: fmt.Sprintf("names %s, which is not a concept in %s", quote(inc), quote(b.name)),
 			})
 		}
 	}
@@ -141,15 +156,25 @@ func (s *Store) bundleFields(root *os.Root, key string, b Bundle, id string, fm 
 
 // publish writes the concept atomically and updates the index. The
 // concept's lock is held. created reports that no file was there.
-func (s *Store) publish(ctx context.Context, root *os.Root, key, kb, id string, fm Frontmatter, body string, modes fsmode.Modes) (created bool, err error) {
+func (s *Store) publish(ctx context.Context, b Bundle, key, id string, fm Frontmatter, body string) (created bool, err error) {
+	kb := b.name
+	modes := b.Modes.Or(s.modes)
 	file := fileName(id)
 	mode := modes.File
-	exact, conflict, err := s.lookup(root, file)
-	if err != nil {
+	root, err := s.openForRead(b)
+	if err != nil && !errors.Is(err, errNoRoot) {
 		return false, err
 	}
-	if conflict != "" {
-		return false, invalid(kb, id, FieldError{Field: "concept_id", Reason: conflict})
+	exact := false
+	if root != nil {
+		defer closeQuietly(s.log, root)
+		var conflict string
+		if exact, conflict, err = s.lookup(root, file); err != nil {
+			return false, err
+		}
+		if conflict != "" {
+			return false, invalid(kb, id, FieldError{Field: "concept_id", Reason: conflict})
+		}
 	}
 	var old *concept
 	created = !exact
@@ -173,9 +198,29 @@ func (s *Store) publish(ctx context.Context, root *os.Root, key, kb, id string, 
 	if len(text) > s.limits.Frontmatter {
 		return false, fmt.Errorf("%w: the frontmatter is %d bytes written; the limit is %d", ErrTooLarge, len(text), s.limits.Frontmatter)
 	}
+	// From here on, what a failure leaves behind is removed: the root and
+	// the directories made for this write, when empty.
+	var undo []func()
+	defer func() {
+		if err != nil {
+			for _, u := range slices.Backward(undo) {
+				u()
+			}
+		}
+	}()
+	if root == nil {
+		var undoRoot func()
+		if root, undoRoot, err = s.createRoot(b, modes.Dir); err != nil {
+			return false, err
+		}
+		undo = append(undo, undoRoot)
+		defer closeQuietly(s.log, root)
+	}
 	dir := path.Dir(file)
 	if dir != "." {
-		if mkErr := mkdirAllIn(root, dir, modes.Dir); mkErr != nil {
+		made, mkErr := mkdirAllIn(root, dir, modes.Dir)
+		undo = append(undo, func() { s.removeDirsIn(root, made) })
+		if mkErr != nil {
 			return false, fmt.Errorf("kb: create directory for %s: %w", quote(id), mkErr)
 		}
 	}
@@ -183,9 +228,9 @@ func (s *Store) publish(ctx context.Context, root *os.Root, key, kb, id string, 
 	if err != nil {
 		return false, fmt.Errorf("kb: write %s: %w", quote(id), err)
 	}
-	if commitErr := s.commit(root, tmp, file, back, fm, body); commitErr != nil {
+	if err = s.commit(root, tmp, file, back, fm, body); err != nil {
 		s.removeTemp(root, tmp)
-		return false, fmt.Errorf("kb: write %s: %w", quote(id), commitErr)
+		return false, fmt.Errorf("kb: write %s: %w", quote(id), err)
 	}
 	if syncErr := s.syncDir(root, dir); syncErr != nil {
 		s.log.Warn("directory not synced after a write", "id", id, "error", syncErr.Error())
@@ -263,15 +308,73 @@ func (s *Store) syncDir(root *os.Root, dir string) error {
 // reindex updates the index after a write. A failure is logged and the
 // concept left for the next search to read again: the write stands.
 func (s *Store) reindex(ctx context.Context, root *os.Root, key, id string, fm Frontmatter, body string) {
-	s.index.mu.Lock()
-	defer s.index.mu.Unlock()
+	bi := s.index.acquire(ctx, key)
+	defer bi.mu.Unlock()
 	info, err := root.Lstat(filepath.FromSlash(fileName(id)))
 	if err == nil {
 		st := indexed{size: info.Size(), mod: info.ModTime()}
-		err = s.index.replace(context.WithoutCancel(ctx), key, id, st, displayTitle(id, fm), splitSections(body))
+		err = bi.replace(context.WithoutCancel(ctx), id, st, displayTitle(id, fm), splitSections(body))
 	}
 	if err != nil {
 		s.log.Warn("search index not updated after a write", "id", id, "error", err.Error())
-		s.index.forget(key, id)
+		bi.forget(id)
 	}
+}
+
+// countItems is the number of entries a list field holds as given: the
+// length of a slice, 0 for nil, 1 for anything else.
+func countItems(v any) int {
+	if v == nil {
+		return 0
+	}
+	if rv := reflect.ValueOf(v); rv.Kind() == reflect.Slice || rv.Kind() == reflect.Array {
+		return rv.Len()
+	}
+	return 1
+}
+
+// minBytes returns a lower bound of the bytes v takes written as YAML (its
+// strings and keys, and a separator per item), or a value over limit as
+// soon as the bound passes it, so an oversized value costs work in
+// proportion to the limit, not to its size. Values that are not
+// JSON-shaped count as one byte here; the exact size is checked when the
+// record is written.
+func minBytes(v any, limit int) int {
+	n := 0
+	var walk func(v any) bool
+	walk = func(v any) bool {
+		if n > limit {
+			return false
+		}
+		switch v := v.(type) {
+		case string:
+			n += len(v)
+		case map[string]any:
+			for k, item := range v {
+				n += len(k) + 2
+				if !walk(item) {
+					return false
+				}
+			}
+		case []any:
+			for _, item := range v {
+				n += 2
+				if !walk(item) {
+					return false
+				}
+			}
+		case []string:
+			for _, item := range v {
+				n += 2 + len(item)
+				if n > limit {
+					return false
+				}
+			}
+		default:
+			n++
+		}
+		return n <= limit
+	}
+	walk(v)
+	return n
 }

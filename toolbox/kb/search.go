@@ -13,6 +13,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -43,9 +44,11 @@ func (s *Store) Search(ctx context.Context, r Resolver, kb, query string, limit 
 	}
 	switch {
 	case !utf8.ValidString(query):
-		return nil, invalid(b.Name, "", FieldError{Field: "query", Reason: "is not valid UTF-8"})
+		return nil, invalid(b.name, "", FieldError{Field: "query", Reason: "is not valid UTF-8"})
+	case strings.IndexFunc(query, func(r rune) bool { return unicode.IsControl(r) && r != '\t' && r != '\n' && r != '\r' }) >= 0:
+		return nil, invalid(b.name, "", FieldError{Field: "query", Reason: "must not contain control characters"})
 	case strings.TrimSpace(query) == "":
-		return nil, invalid(b.Name, "", FieldError{Field: "query", Reason: "is empty"})
+		return nil, invalid(b.name, "", FieldError{Field: "query", Reason: "is empty"})
 	case utf8.RuneCountInString(query) > s.limits.QueryRunes:
 		return nil, fmt.Errorf("%w: the query is %d characters; the limit is %d", ErrTooLarge, utf8.RuneCountInString(query), s.limits.QueryRunes)
 	}
@@ -66,22 +69,22 @@ func (s *Store) Search(ctx context.Context, r Resolver, kb, query string, limit 
 		return []Hit{}, nil
 	}
 	key := bundleKey(b)
-	s.index.mu.Lock()
-	defer s.index.mu.Unlock()
-	if refreshErr := s.refresh(ctx, root, key); refreshErr != nil {
-		return nil, fmt.Errorf("kb: index %s: %w", quote(b.Name), refreshErr)
+	bi := s.index.acquire(ctx, key)
+	defer bi.mu.Unlock()
+	if refreshErr := s.refresh(ctx, root, bi); refreshErr != nil {
+		return nil, fmt.Errorf("kb: index %s: %w", quote(b.name), refreshErr)
 	}
-	hits, err := s.index.query(ctx, key, match, limit, s.limits.PassageRunes)
+	hits, err := bi.query(ctx, match, limit, s.limits.PassageRunes)
 	if err != nil {
-		return nil, fmt.Errorf("kb: search %s: %w", quote(b.Name), err)
+		return nil, fmt.Errorf("kb: search %s: %w", quote(b.name), err)
 	}
 	return hits, nil
 }
 
 // refresh brings the index of one bundle up to date with its files.
-// s.index.mu is held.
-func (s *Store) refresh(ctx context.Context, root *os.Root, key string) error {
-	state := s.index.state(key)
+// bi.mu is held.
+func (s *Store) refresh(ctx context.Context, root *os.Root, bi *bundleIndex) error {
+	state := bi.files
 	seen := make(map[string]bool, len(state))
 	err := walkConcepts(ctx, root, func(id string, info fs.FileInfo) error {
 		if idProblem(id, s.limits) != "" {
@@ -91,14 +94,14 @@ func (s *Store) refresh(ctx context.Context, root *os.Root, key string) error {
 		if st, ok := state[id]; ok && st.size == info.Size() && st.mod.Equal(info.ModTime()) {
 			return nil
 		}
-		return s.indexFile(ctx, root, key, id, info)
+		return s.indexFile(ctx, root, bi, id, info)
 	})
 	if err != nil {
 		return err
 	}
 	for id := range state {
 		if !seen[id] {
-			if err := s.index.remove(ctx, key, id); err != nil {
+			if err := bi.remove(ctx, id); err != nil {
 				return err
 			}
 		}
@@ -108,24 +111,24 @@ func (s *Store) refresh(ctx context.Context, root *os.Root, key string) error {
 
 // indexFile (re)indexes one file. A file that is not a valid concept is
 // skipped and logged; its state is kept so it is not read again until it
-// changes. s.index.mu is held.
-func (s *Store) indexFile(ctx context.Context, root *os.Root, key, id string, info fs.FileInfo) error {
+// changes. bi.mu is held.
+func (s *Store) indexFile(ctx context.Context, root *os.Root, bi *bundleIndex, id string, info fs.FileInfo) error {
 	st := indexed{size: info.Size(), mod: info.ModTime()}
 	c, problems, err := s.readConcept(root, id)
 	switch {
 	case errors.Is(err, ErrNotFound):
 		s.log.Debug("search skips a file that is not a concept", "id", id)
-		return s.index.replace(ctx, key, id, st, "", nil)
+		return bi.replace(ctx, id, st, "", nil)
 	case errors.Is(err, ErrTooLarge):
 		s.log.Warn("search skips a concept over the size limit", "id", id)
-		return s.index.replace(ctx, key, id, st, "", nil)
+		return bi.replace(ctx, id, st, "", nil)
 	case err != nil:
 		return err
 	case problems != nil:
 		s.log.Warn("search skips a concept that does not parse", "id", id, "problem", problems[0].Field+" "+problems[0].Reason)
-		return s.index.replace(ctx, key, id, st, "", nil)
+		return bi.replace(ctx, id, st, "", nil)
 	}
-	return s.index.replace(ctx, key, id, st, displayTitle(id, c.fm), splitSections(c.body))
+	return bi.replace(ctx, id, st, displayTitle(id, c.fm), splitSections(c.body))
 }
 
 // displayTitle is a concept's title, or the last segment of its ID.

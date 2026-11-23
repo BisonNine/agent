@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -204,7 +205,8 @@ func parseFrontmatter(text string) (*yaml.Node, Frontmatter, []FieldError) {
 		return nil, nil, []FieldError{{Field: "frontmatter", Reason: "is not a mapping"}}
 	}
 	c := converter{budget: maxNodes}
-	m := c.mapping(root, "frontmatter")
+	c.enter(root)
+	m := c.mapping(root, &fieldRef{key: "frontmatter"})
 	if c.problems != nil {
 		return nil, nil, c.problems
 	}
@@ -218,34 +220,101 @@ func yamlProblem(err error) []FieldError {
 	return []FieldError{{Field: "frontmatter", Reason: "is not valid YAML: " + strings.TrimPrefix(err.Error(), "yaml: ")}}
 }
 
+// Bounds on what reading one frontmatter may cost, whatever its text.
+const (
+	maxProblems  = 20  // problems reported per concept
+	maxFieldPath = 200 // bytes of a field path in a problem
+)
+
+// fieldRef is a field path, built only when a problem names it, so deep or
+// aliased values cost nothing extra.
+type fieldRef struct {
+	parent *fieldRef
+	key    string
+	index  int // used when key is ""
+}
+
+func (f *fieldRef) child(key string) *fieldRef { return &fieldRef{parent: f, key: key} }
+func (f *fieldRef) item(i int) *fieldRef       { return &fieldRef{parent: f, index: i} }
+
+// String renders the path, its head kept when it is long.
+func (f *fieldRef) String() string {
+	var parts []*fieldRef
+	for p := f; p != nil; p = p.parent {
+		parts = append(parts, p)
+	}
+	var b strings.Builder
+	for _, p := range slices.Backward(parts) {
+		switch {
+		case p.parent == nil:
+			b.WriteString(p.key)
+		case p.key != "":
+			b.WriteString("." + p.key)
+		default:
+			b.WriteString("[" + strconv.Itoa(p.index) + "]")
+		}
+		if b.Len() > maxFieldPath {
+			break
+		}
+	}
+	return clip(b.String(), maxFieldPath)
+}
+
+// clip shortens s to at most n bytes on a rune boundary, ending with "…"
+// when cut.
+func clip(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n - len("…")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
+
 // converter turns YAML nodes into JSON-shaped values, collecting problems
-// with their paths.
+// with their paths. Its work is bounded: at most maxNodes values are
+// converted (aliases count each time they are expanded), an alias to a
+// value being converted is refused, and conversion stops at maxProblems.
 type converter struct {
 	budget   int
 	problems []FieldError
+	open     map[*yaml.Node]bool // collections being converted
 }
 
-func (c *converter) fail(path, reason string) {
-	c.problems = append(c.problems, FieldError{Field: path, Reason: reason})
+func (c *converter) fail(path *fieldRef, reason string) {
+	c.problems = append(c.problems, FieldError{Field: path.String(), Reason: reason})
+	if len(c.problems) >= maxProblems {
+		c.budget = 0 // stop: enough is known
+	}
 }
 
-func (c *converter) value(n *yaml.Node, path string) any {
-	c.budget--
-	if c.budget < 0 {
-		if c.budget == -1 {
-			c.fail(path, "expands to too many values")
-		}
+func (c *converter) value(n *yaml.Node, path *fieldRef) any {
+	if c.spent(path) {
 		return nil
 	}
+	c.budget--
 	switch n.Kind {
 	case yaml.AliasNode:
+		if c.open[n.Alias] {
+			c.fail(path, "is an alias to a value that contains it")
+			return nil
+		}
 		return c.value(n.Alias, path)
 	case yaml.MappingNode:
+		c.enter(n)
+		defer delete(c.open, n)
 		return c.mapping(n, path)
 	case yaml.SequenceNode:
-		out := make([]any, 0, len(n.Content))
+		c.enter(n)
+		defer delete(c.open, n)
+		out := make([]any, 0, min(len(n.Content), c.budget))
 		for i, item := range n.Content {
-			out = append(out, c.value(item, path+"["+strconv.Itoa(i)+"]"))
+			if c.spent(path) {
+				break
+			}
+			out = append(out, c.value(item, path.item(i)))
 		}
 		return out
 	default: // a scalar: documents occur only at the top
@@ -253,9 +322,28 @@ func (c *converter) value(n *yaml.Node, path string) any {
 	}
 }
 
-func (c *converter) mapping(n *yaml.Node, path string) map[string]any {
-	out := make(map[string]any, len(n.Content)/2)
-	for i := 0; i+1 < len(n.Content); i += 2 {
+// spent reports whether the budget is used up, as a problem the first
+// time when no other problem stopped the work.
+func (c *converter) spent(path *fieldRef) bool {
+	if c.budget > 0 {
+		return false
+	}
+	if len(c.problems) == 0 {
+		c.fail(path, "expands to too many values")
+	}
+	return true
+}
+
+func (c *converter) enter(n *yaml.Node) {
+	if c.open == nil {
+		c.open = make(map[*yaml.Node]bool)
+	}
+	c.open[n] = true
+}
+
+func (c *converter) mapping(n *yaml.Node, path *fieldRef) map[string]any {
+	out := make(map[string]any, min(len(n.Content)/2, c.budget))
+	for i := 0; i+1 < len(n.Content) && !c.spent(path); i += 2 {
 		k, v := n.Content[i], n.Content[i+1]
 		if k.Kind != yaml.ScalarNode || k.ShortTag() != "!!str" {
 			if k.ShortTag() == "!!merge" {
@@ -265,7 +353,7 @@ func (c *converter) mapping(n *yaml.Node, path string) map[string]any {
 			}
 			continue
 		}
-		kp := path + "." + k.Value
+		kp := path.child(k.Value)
 		if _, dup := out[k.Value]; dup {
 			c.fail(kp, "is a duplicate key")
 			continue
@@ -275,7 +363,7 @@ func (c *converter) mapping(n *yaml.Node, path string) map[string]any {
 	return out
 }
 
-func (c *converter) scalar(n *yaml.Node, path string) any {
+func (c *converter) scalar(n *yaml.Node, path *fieldRef) any {
 	switch tag := n.ShortTag(); tag {
 	case "!!str", "!!timestamp":
 		// A timestamp keeps its source text: OKF gives its meaning.
@@ -349,7 +437,8 @@ func jsonNumber(v any) (any, bool) {
 
 // canonicalize returns fm as JSON-shaped values: whatever Go values a
 // caller passed are converted as encoding/json would, numbers as by
-// jsonNumber. List shorthand is normalised.
+// jsonNumber. List shorthand is normalised. A number that is not finite
+// as a float64 (a json.Number such as 1e400) is an error naming its field.
 func canonicalize(fm Frontmatter) (Frontmatter, error) {
 	data, err := json.Marshal(map[string]any(fm))
 	if err != nil {
@@ -361,7 +450,11 @@ func canonicalize(fm Frontmatter) (Frontmatter, error) {
 	if decErr := dec.Decode(&v); decErr != nil {
 		return nil, decErr
 	}
-	numbers(v) // in place
+	var bad []FieldError
+	numbers(v, &fieldRef{key: "frontmatter"}, &bad) // in place
+	if bad != nil {
+		return nil, invalid("", "", bad...)
+	}
 	out := Frontmatter(v)
 	if out == nil {
 		out = Frontmatter{}
@@ -370,24 +463,26 @@ func canonicalize(fm Frontmatter) (Frontmatter, error) {
 	return out, nil
 }
 
-// numbers replaces each json.Number in v.
-func numbers(v any) any {
+// numbers replaces each json.Number in v, adding to bad each one that is
+// out of range.
+func numbers(v any, path *fieldRef, bad *[]FieldError) any {
 	switch v := v.(type) {
 	case map[string]any:
 		for k, item := range v {
-			v[k] = numbers(item)
+			v[k] = numbers(item, path.child(k), bad)
 		}
 		return v
 	case []any:
 		for i, item := range v {
-			v[i] = numbers(item)
+			v[i] = numbers(item, path.item(i), bad)
 		}
 		return v
 	case json.Number:
 		if n, ok := jsonNumber(v); ok {
 			return n
 		}
-		return v.String() // not reached: encoding/json emits only finite numbers
+		*bad = append(*bad, FieldError{Field: path.String(), Reason: "is a number out of range: " + clip(v.String(), 40)})
+		return nil
 	default:
 		return v
 	}
@@ -539,6 +634,8 @@ func valueNode(v any, safe bool) *yaml.Node {
 func stringNode(s string, safe bool) *yaml.Node {
 	n := &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s}
 	switch {
+	case s == "<<": // the encoder writes it plain, and it reads back as a merge key
+		n.Style = yaml.DoubleQuotedStyle
 	case strings.IndexFunc(s, func(r rune) bool { return r != '\n' && unicode.IsControl(r) }) >= 0,
 		s != strings.TrimSpace(s) && strings.Contains(s, "\n"):
 		n.Style = yaml.DoubleQuotedStyle

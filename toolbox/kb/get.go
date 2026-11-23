@@ -28,9 +28,14 @@ type Record struct {
 	// one level deep, each once, in the order listed. Their own includes
 	// are not followed.
 	Includes []Record
-	// Missing lists the included IDs that are not concepts in the bundle
-	// (absent, not a concept, or unreadable). Get does not fail for them.
+	// Missing lists the include entries that are not concepts in the
+	// bundle (absent, not a concept, unreadable, or not a concept ID; an
+	// entry that is not a string is given as its JSON text). Get does not
+	// fail for them.
 	Missing []string
+	// Omitted lists the include entries beyond the first Limits.Includes,
+	// which are not loaded.
+	Omitted []string
 }
 
 // Get returns the concept id of knowledge base kb, with its inclusions.
@@ -43,11 +48,11 @@ func (s *Store) Get(ctx context.Context, r Resolver, kb, id string) (*Record, er
 		return nil, err
 	}
 	if reason := idProblem(id, s.limits); reason != "" {
-		return nil, invalid(b.Name, id, FieldError{Field: "concept_id", Reason: reason})
+		return nil, invalid(b.name, id, FieldError{Field: "concept_id", Reason: reason})
 	}
 	root, err := s.openForRead(b)
 	if errors.Is(err, errNoRoot) {
-		return nil, notFound(b.Name, id)
+		return nil, notFound(b.name, id)
 	}
 	if err != nil {
 		return nil, err
@@ -55,18 +60,30 @@ func (s *Store) Get(ctx context.Context, r Resolver, kb, id string) (*Record, er
 	defer closeQuietly(s.log, root)
 	c, problems, err := s.readConcept(root, id)
 	if err != nil {
-		return nil, s.readError(err, b.Name, id)
+		return nil, s.readError(err, b.name, id)
 	}
 	if problems != nil {
-		return nil, invalid(b.Name, id, problems...)
+		return nil, invalid(b.name, id, problems...)
 	}
-	rec := &Record{KB: b.Name, ID: id, Frontmatter: c.fm, Body: c.body}
+	rec := &Record{KB: b.name, ID: id, Frontmatter: c.fm, Body: c.body}
 	seen := map[string]bool{id: true}
-	for _, inc := range c.fm.Includes() {
+	for _, entry := range asList(c.fm[IncludeKey]) {
+		inc, isString := entry.(string)
+		if !isString {
+			inc = clip(canonicalJSON(entry), maxFieldPath)
+		}
 		if seen[inc] {
 			continue
 		}
 		seen[inc] = true
+		switch {
+		case len(rec.Includes)+len(rec.Missing) >= s.limits.Includes:
+			rec.Omitted = append(rec.Omitted, inc)
+			continue
+		case !isString:
+			rec.Missing = append(rec.Missing, inc)
+			continue
+		}
 		ic, ok, err := s.includedConcept(root, inc)
 		if err != nil {
 			return nil, err
@@ -75,7 +92,7 @@ func (s *Store) Get(ctx context.Context, r Resolver, kb, id string) (*Record, er
 			rec.Missing = append(rec.Missing, inc)
 			continue
 		}
-		rec.Includes = append(rec.Includes, Record{KB: b.Name, ID: inc, Frontmatter: ic.fm, Body: ic.body})
+		rec.Includes = append(rec.Includes, Record{KB: b.name, ID: inc, Frontmatter: ic.fm, Body: ic.body})
 	}
 	return rec, nil
 }
@@ -83,7 +100,7 @@ func (s *Store) Get(ctx context.Context, r Resolver, kb, id string) (*Record, er
 // includedConcept reads an included concept. ok is false when it is not a
 // readable concept; err is set only for an unexpected failure.
 func (s *Store) includedConcept(root *os.Root, id string) (*concept, bool, error) {
-	if idProblem(id, s.limits) != "" {
+	if root == nil || idProblem(id, s.limits) != "" {
 		return nil, false, nil
 	}
 	c, problems, err := s.readConcept(root, id)
@@ -111,9 +128,7 @@ func (s *Store) resolve(ctx context.Context, r Resolver, name string) (Bundle, e
 	if err != nil {
 		return Bundle{}, fmt.Errorf("kb: resolve %s: %w", quote(name), err)
 	}
-	if b.Name == "" {
-		b.Name = name
-	}
+	b.name = name
 	return b, nil
 }
 
@@ -121,9 +136,9 @@ func (s *Store) resolve(ctx context.Context, r Resolver, name string) (Bundle, e
 // errNoRoot when the bundle may be created (it reads as empty), and
 // ErrUnknownKB when it may not.
 func (s *Store) openForRead(b Bundle) (*os.Root, error) {
-	root, err := s.openRoot(b, false, 0)
+	root, err := s.openRoot(b)
 	if errors.Is(err, errNoRoot) && !b.Create {
-		return nil, fmt.Errorf("%w: %s has no directory", ErrUnknownKB, quote(b.Name))
+		return nil, fmt.Errorf("%w: %s has no directory", ErrUnknownKB, quote(b.name))
 	}
 	return root, err
 }

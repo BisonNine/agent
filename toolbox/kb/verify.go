@@ -44,6 +44,7 @@ func (s *Store) Verify(ctx context.Context, r Resolver, kb string) ([]FieldError
 	names := make(map[string]string) // lower-case path → path, per bundle
 	err = walkConcepts(ctx, root, func(id string, _ fs.FileInfo) error {
 		fields, checkErr := s.verifyConcept(root, key, b, id, names)
+		fields = boundFields(fields)
 		for i := range fields {
 			fields[i].ID = id
 		}
@@ -51,7 +52,7 @@ func (s *Store) Verify(ctx context.Context, r Resolver, kb string) ([]FieldError
 		return checkErr
 	})
 	if err != nil {
-		return nil, fmt.Errorf("kb: verify %s: %w", quote(b.Name), err)
+		return nil, fmt.Errorf("kb: verify %s: %w", quote(b.name), err)
 	}
 	return out, nil
 }
