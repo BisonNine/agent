@@ -287,6 +287,27 @@ func testToolError(t *testing.T, factory Factory) {
 	}
 }
 
+func testToolPanic(t *testing.T, factory Factory) {
+	f := newFixture(t)
+	addTool(t, f, "lookup_order", func(context.Context, map[string]any) (*toolspec.Result, error) {
+		panic("Bob's bug")
+	})
+	f.Provider.Script(PrimaryWire, callsStep("lookup_order"), modelstest.Reply("Sorry."))
+	a := build(t, factory, f)
+	evs := collect(t, a.Run(context.Background(), "s1", agent.UserText("Where is my order?")))
+	if res := result(evs); res.Outcome != hook.OutcomeOK {
+		t.Fatalf("result = %+v", res.TurnResult)
+	}
+	fin, _ := first[hook.ToolCallFinished](evs)
+	var perr *hook.ToolPanicError
+	if fin.Result == nil || !errors.As(fin.Result.Err, &perr) || perr.Tool != "lookup_order" || perr.Value != "Bob's bug" {
+		t.Fatalf("ToolCallFinished.Result = %+v, want a *hook.ToolPanicError", fin.Result)
+	}
+	if got, want := fin.Result.Err.Error(), "tool lookup_order panicked: Bob's bug"; got != want {
+		t.Fatalf("error text = %q, want %q", got, want)
+	}
+}
+
 func testToolRefused(t *testing.T, factory Factory) {
 	ran := false
 	f := newFixture(t, hook.Plugin{Name: "approve", BeforeTool: func(_ context.Context, call *hook.ToolCall) (*toolkit.Result, error) {

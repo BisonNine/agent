@@ -143,6 +143,7 @@ func Run(t *testing.T, factory Factory) {
 		{"Fallback", testFallback},
 		{"ToolCalls", testToolCalls},
 		{"ToolError", testToolError},
+		{"ToolPanic", testToolPanic},
 		{"ToolRefused", testToolRefused},
 		{"ToolRemovedMidTurn", testToolRemovedMidTurn},
 		{"InterruptRunningTurn", testInterruptRunningTurn},

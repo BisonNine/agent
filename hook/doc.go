@@ -62,7 +62,7 @@
 //     with an internal error.", Err the *PanicError), whatever the callbacks
 //     had done to it, and the call's later callbacks do not run; the turn
 //     goes on and the model sees a failed call, as for a panic in the tool
-//     itself.
+//     itself (whose error is a *ToolPanicError).
 //
 // # Event rules
 //

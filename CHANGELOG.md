@@ -300,7 +300,7 @@ project uses [Semantic Versioning](https://semver.org/).
   never the same agent.
 - `hook.ToolPanicError{Tool, Value}`: the error on the result of a tool
   call whose tool panicked, so a host can tell a panic from an ordinary
-  failure with `errors.As`. `mcphost` sets it.
+  failure with `errors.As`. The turn engine (`loop`) and `mcphost` set it.
 - `hook.ModelInfo.Rebuilt`: true when a step's request was built from the
   session store for that dispatch (the first request, or one after a
   compaction, eviction or overflow retry), so a `BeforeModel` callback knows

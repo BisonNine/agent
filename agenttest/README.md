@@ -32,7 +32,8 @@ batch order), and then:
 
 - outcomes: ok, empty, error (with the failed `ModelCall`);
 - fallback to the second model, with its `Fallback` event and `OnFallback`;
-- tool calls in a batch, a failing tool, a call refused by `BeforeTool`
+- tool calls in a batch, a failing tool, a panicking tool (only its call
+  fails, with a `*hook.ToolPanicError`), a call refused by `BeforeTool`
   (a refusal), a tool removed mid-turn;
 - interrupt: the running turn stops, queued runs are dropped and counted
   and emit only `TurnFinished`, tasks keep running;

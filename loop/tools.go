@@ -24,16 +24,6 @@ type toolCallResult struct {
 	result *toolkit.Result
 }
 
-// toolPanicError is the error of a tool call whose tool panicked. Its text is
-// what it always was; a consumer tells a panic from other failures with
-// errors.As.
-type toolPanicError struct {
-	tool  string
-	value any
-}
-
-func (e *toolPanicError) Error() string { return fmt.Sprintf("tool %s panicked: %v", e.tool, e.value) }
-
 // executeToolCalls runs a batch of tool calls in parallel and returns their
 // results in call order. ToolCallStarted is emitted for every call, in call
 // order, before the first call runs; each call's ToolCallFinished as it
@@ -240,7 +230,7 @@ func (e *engineTurn) execute(ctx context.Context, call hook.ToolCall) (result *t
 					"stack": string(debug.Stack()),
 				})
 			result = &toolkit.Result{
-				Err:    &toolPanicError{tool: name, value: r},
+				Err:    &hook.ToolPanicError{Tool: name, Value: r},
 				ForLLM: fmt.Sprintf("Tool %s failed with an internal error.", name),
 			}
 		}
