@@ -95,12 +95,18 @@ type Config struct {
 	// that dispatched by internal name did. Off, it names the tool as the
 	// call did, so no other agent's internal name reaches a caller.
 	RefuseWithInternalName bool
-	// PanicAsProtocolError answers a call whose tool panicked with MCP's
-	// protocol error (-32603 "panic recovered in <name> tool handler: <value>")
-	// instead of the error result "Tool <name> failed with an internal
-	// error.". The callbacks and events run as for any panic first; a
-	// result OnToolError gave in its place is not sent. A panic in a
-	// callback is always an error result.
+	// PanicAsProtocolError answers a call whose tool or host callback
+	// panicked with MCP's protocol error (-32603 "panic recovered in <name>
+	// tool handler: <value>") instead of the error result "Tool <name>
+	// failed with an internal error.". The host callbacks are the
+	// Authenticator (Argument), CallContext, ToolContext, the Gate and the
+	// plugins' BeforeTool, OnToolError and AfterTool; a panic in OnEvent
+	// changes nothing. The callbacks and events run as for any panic first:
+	// ToolCallFinished carries the internal-error result with the panic as
+	// its Err (a *hook.ToolPanicError for the tool or the Gate, a
+	// *hook.PanicError for a callback), but for an Authenticator panic,
+	// which comes before there is a caller and has no events. A result
+	// OnToolError gave in its place is not sent.
 	PanicAsProtocolError bool
 
 	// OnSkip, when set, is told of every catalogue tool left out (a taken
@@ -109,6 +115,12 @@ type Config struct {
 	// followed catalogue, in order of the tools' internal names. The
 	// endpoint logs them too.
 	OnSkip func(Skip)
+	// OnChange, when set, is told of every read of the catalogue that
+	// changed what is published (the names registered and withdrawn): at
+	// New, on each Refresh (which also returns it), and on each change of a
+	// followed catalogue, after that read's OnSkip calls. The endpoint logs
+	// only the counts.
+	OnChange func(RefreshResult)
 
 	// Logger is the endpoint's logger; records carry component=mcphost.
 	// Nil discards. Token values and tool arguments are never logged.
@@ -199,7 +211,7 @@ func New(cfg Config) (*Endpoint, error) {
 func (e *Endpoint) Refresh(ctx context.Context) RefreshResult {
 	res := e.sync()
 	if res.Changed {
-		e.logger.InfoContext(ctx, "MCP catalogue refreshed", "added", res.Added, "deleted", res.Removed)
+		e.logger.InfoContext(ctx, "MCP catalogue refreshed", "added", len(res.Added), "deleted", len(res.Removed))
 	}
 	return res
 }

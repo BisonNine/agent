@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -516,5 +517,77 @@ func TestUnion_PublishedNamesNeverShadow(t *testing.T) {
 				t.Errorf("%s = %+v", name, r)
 			}
 		}
+	}
+}
+
+// A tool whose schema cannot be encoded claims no name: a valid tool that
+// wants the same published name is served under it, under either rule, and
+// OnSkip reports only the invalid one.
+func TestSchemaSkip_ClaimsNoName(t *testing.T) {
+	bad := func() toolkit.Tool {
+		return &wireExternal{wireTool{name: "a_bad", desc: "bad", params: map[string]any{"type": "object", "default": func() {}}, run: wireText("bad ran")}, "q"}
+	}
+	good := func() toolkit.Tool {
+		return &wireExternal{wireTool{name: "b_good", desc: "good", params: map[string]any{}, run: wireText("good ran")}, "q"}
+	}
+	for _, tc := range []struct {
+		name string
+		rule NameRule
+		cats func() map[string]*toolkit.Catalog
+		tok  func(*perAgent) string // the caller holding the valid tool
+	}{
+		{
+			name: "ExternalFirst", rule: ExternalFirst,
+			cats: func() map[string]*toolkit.Catalog {
+				return map[string]*toolkit.Catalog{"alice": catalogOf(t, bad(), good())}
+			},
+			tok: func(h *perAgent) string { return h.aliceTok },
+		},
+		{
+			name: "PublishedNames", rule: PublishedNames,
+			cats: func() map[string]*toolkit.Catalog {
+				return map[string]*toolkit.Catalog{"alice": catalogOf(t, bad()), "bob": catalogOf(t, good())}
+			},
+			tok: func(h *perAgent) string { return h.bobTok },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var mu sync.Mutex
+			var skips []Skip
+			h := newPerAgent(t, tc.cats(), func(c *Config) {
+				c.Names = tc.rule
+				c.OnSkip = func(s Skip) {
+					mu.Lock()
+					skips = append(skips, s)
+					mu.Unlock()
+				}
+			})
+			tok := tc.tok(h)
+			arg := h.mustClient("/internal", "")
+			if got := names(list(t, arg)); !slices.Equal(got, []string{"q"}) {
+				t.Errorf("listed %v, want [q]", got)
+			}
+			if r := callT(t, arg, "q", map[string]any{TokenArgument: tok}); r.isError || r.text != "good ran" {
+				t.Errorf("q = %+v", r)
+			}
+			bearer := h.mustClient("/mcp", tok)
+			if got := names(list(t, bearer)); !slices.Equal(got, []string{"q"}) {
+				t.Errorf("bearer listed %v, want [q]", got)
+			}
+			if r := callT(t, bearer, "q", nil); r.isError || r.text != "good ran" {
+				t.Errorf("bearer q = %+v", r)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			// Two endpoints share OnSkip: each reports the invalid tool once.
+			if len(skips) != 2 {
+				t.Fatalf("skips = %+v, want one from each endpoint", skips)
+			}
+			for _, s := range skips {
+				if s.Reason != SkipSchema || s.Internal != "a_bad" || s.Published != "q" || s.Err == nil {
+					t.Errorf("skip = %+v, want a_bad's schema", s)
+				}
+			}
+		})
 	}
 }

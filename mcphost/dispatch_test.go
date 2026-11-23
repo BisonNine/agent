@@ -3,6 +3,7 @@ package mcphost
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -275,5 +276,100 @@ func TestDispatch_InFlight(t *testing.T) {
 	}
 	if n := f.bearer.InFlight(); n != 0 {
 		t.Errorf("InFlight after the call = %d", n)
+	}
+}
+
+// A panic in any host callback a call runs is answered as a panicking
+// tool is in each mode: the internal-error result, or with
+// PanicAsProtocolError MCP's protocol error. It ends with the call's
+// ToolCallFinished carrying the panic, as a tool's panic does; only an
+// Authenticator panic, before there is a caller, has no events.
+func TestDispatch_HostCallbackPanic(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		tool     string // "fail" reaches OnToolError
+		path     string
+		set      func(*Config)
+		callback string // the *hook.PanicError's Callback; "" for none
+		toolErr  bool   // a *hook.ToolPanicError (the Gate runs in the tool's step)
+		noEvents bool
+	}{
+		{name: "Authenticator", tool: "whoami", path: "/internal", noEvents: true, set: func(c *Config) {
+			c.Authenticator = AuthenticatorFunc(func(context.Context, string) (Caller, error) { panic("host exploded") })
+		}},
+		{name: "CallContext", tool: "whoami", path: "/mcp", callback: "CallContext", set: func(c *Config) {
+			c.CallContext = func(context.Context, Caller) context.Context { panic("host exploded") }
+		}},
+		{name: "ToolContext", tool: "whoami", path: "/mcp", callback: "ToolContext", set: func(c *Config) {
+			c.ToolContext = func(context.Context, Caller, toolkit.Info) context.Context { panic("host exploded") }
+		}},
+		{name: "BeforeTool", tool: "whoami", path: "/mcp", callback: "BeforeTool", set: func(c *Config) {
+			c.Plugins = append(c.Plugins, hook.Plugin{Name: "host", BeforeTool: func(context.Context, *hook.ToolCall) (*toolkit.Result, error) {
+				panic("host exploded")
+			}})
+		}},
+		{name: "OnToolError", tool: "fail", path: "/mcp", callback: "OnToolError", set: func(c *Config) {
+			c.Plugins = append(c.Plugins, hook.Plugin{Name: "host", OnToolError: func(context.Context, *hook.ToolCall, *toolkit.Result) *toolkit.Result {
+				panic("host exploded")
+			}})
+		}},
+		{name: "AfterTool", tool: "whoami", path: "/mcp", callback: "AfterTool", set: func(c *Config) {
+			c.Plugins = append(c.Plugins, hook.Plugin{Name: "host", AfterTool: func(context.Context, *hook.ToolCall, *toolkit.Result) { panic("host exploded") }})
+		}},
+		{name: "Gate", tool: "whoami", path: "/mcp", toolErr: true, set: func(c *Config) {
+			c.Gate = func(context.Context, toolkit.Info) *toolkit.Result { panic("host exploded") }
+		}},
+	} {
+		for _, protocol := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/protocol=%v", tc.name, protocol), func(t *testing.T) {
+				rec := &recorder{}
+				f := newFixture(t, func(c *Config) {
+					c.PanicAsProtocolError = protocol
+					c.Plugins = []hook.Plugin{rec.plugin()}
+					tc.set(c)
+				})
+				ep, token, args := f.bearer, f.aliceTok, map[string]any(nil)
+				if tc.path == "/internal" {
+					ep, token, args = f.arg, "", map[string]any{TokenArgument: f.aliceTok}
+				}
+				r := callT(t, f.mustClient(tc.path, token), tc.tool, args)
+				internalError := fmt.Sprintf("Tool %s failed with an internal error.", tc.tool)
+				if protocol {
+					want := fmt.Sprintf("panic recovered in %s tool handler: host exploded", tc.tool)
+					if r.err == nil || !strings.Contains(r.err.Error(), want) {
+						t.Errorf("result = %+v, want the protocol error %q", r, want)
+					}
+				} else if r.err != nil || !r.isError || r.text != internalError {
+					t.Errorf("result = %+v, want the error result %q", r, internalError)
+				}
+				if n := ep.InFlight(); n != 0 {
+					t.Errorf("InFlight after the call = %d", n)
+				}
+
+				fin := rec.finished()
+				if tc.noEvents {
+					if len(rec.events) != 0 {
+						t.Errorf("events = %+v, want none", rec.events)
+					}
+					return
+				}
+				if len(rec.events) != 2 || len(fin) != 1 {
+					t.Fatalf("events = %+v, want ToolCallStarted and ToolCallFinished", rec.events)
+				}
+				if fin[0].Result.ForLLM != internalError || !fin[0].Result.IsError {
+					t.Errorf("finished result = %+v", fin[0].Result)
+				}
+				var pe *hook.PanicError
+				var tpe *hook.ToolPanicError
+				switch {
+				case tc.toolErr:
+					if !errors.As(fin[0].Result.Err, &tpe) || tpe.Tool != tc.tool {
+						t.Errorf("Err = %v, want a *hook.ToolPanicError", fin[0].Result.Err)
+					}
+				case !errors.As(fin[0].Result.Err, &pe) || pe.Callback != tc.callback || pe.Value != "host exploded":
+					t.Errorf("Err = %v, want a %s *hook.PanicError", fin[0].Result.Err, tc.callback)
+				}
+			})
+		}
 	}
 }

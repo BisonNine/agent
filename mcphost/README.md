@@ -42,7 +42,11 @@ mcp-go: a host that serves no CLI model never links it.
   `ToolCallFinished`. The callbacks are `hook.Plugin`s, the same the turn
   engine runs, so audit and redaction are the same for every model, and a
   panic in a callback or a tool fails only that call ("Tool x failed with an
-  internal error."). The MCP result is the final `ForLLM` text with the
+  internal error."). A panic in `CallContext` or `ToolContext` fails it as a
+  `BeforeTool` panic does; every panic during a call ends with the call's
+  `ToolCallFinished` carrying it (`*hook.ToolPanicError` for the tool or the
+  `Gate`, `*hook.PanicError` for a callback), so a host that counts panics
+  counts them there. The MCP result is the final `ForLLM` text with the
   error flag. `ToolCallFinished` carries the whole result (`ForUser`,
   `Media`, ...) and `Config.AsyncResult` a background tool's late one, on
   the call's own context (the values of the call's time, not cancelled)
@@ -72,12 +76,13 @@ exchanges recorded from one):
 | Behaviour | Default | Option |
 | --- | --- | --- |
 | One toolkit catalogue per agent | `FromRegistry(cat)` | `Catalogue: Union(func() []toolkit.Registry {...})`, agents in the order whose descriptions the `Argument` list uses |
-| Notices only where the host says | automatic for `FromRegistry` | `Union` plus `Endpoint.Refresh(ctx)` where the host refreshed before; its `RefreshResult` says whether a notice was sent and how many tools were added and removed |
-| Tools left out | logged by mcphost | `OnSkip` is told of each (`SkipNameTaken`, `SkipSchema`, `SkipRefused`) on every read of the catalogue |
+| Notices only where the host says | automatic for `FromRegistry` | `Union` plus `Endpoint.Refresh(ctx)` where the host refreshed before; its `RefreshResult` says whether a notice was sent and which tools were added and removed (published and internal names) |
+| Lines for tools registered and removed | counts logged by mcphost | `OnChange` is given the `RefreshResult` of every read that changed what is published (at `New`, on `Refresh`, on a followed change) |
+| Tools left out | logged by mcphost | `OnSkip` is told of each (`SkipNameTaken`, `SkipSchema`, `SkipRefused`) on every read of the catalogue; a `SkipSchema` tool claims no name |
 | The internal name of what a call names | `TargetOf(ctx)` on every call's context: `Internal`, and `Held` (false: published, but not in the caller's set) | the same |
 | Refusing a published tool the caller lacks | `NotEnabledMessage` of the called name | `RefuseWithInternalName: true` (the internal name, on both transports) |
 | Published names | `PublishedNames` (toolkit's no-shadow rule) | `Names: ExternalFirst` (external name always; a later tool by internal name wanting a taken name is left out) |
-| A panicking tool | error result "Tool x failed with an internal error." | `PanicAsProtocolError: true` (-32603 "panic recovered in x tool handler: …", after the callbacks and events) |
+| A panicking tool or host callback | error result "Tool x failed with an internal error." | `PanicAsProtocolError: true` (-32603 "panic recovered in x tool handler: …", after the callbacks and events) |
 | Session key | on every call (`hook.WithScope`) | `ToolContext` returning `toolkit.WithSessionKey(ctx, "")` for tools that are not `SessionScoped` |
 | Background tools | the request's context | `DetachBackground: true` |
 | Revocation | `Caller.Done` cancels calls in flight | leave `Done` nil: a call in flight finishes |
@@ -151,4 +156,5 @@ access := mcphost.CLIConfig{
 
 `Config.Logger` and `WithLogger` (for the store); records carry
 `component=mcphost`; the default discards. Token values and tool arguments
-are never logged.
+are never logged. Catalogue changes are logged as counts; a host that wants
+a line per tool registered or removed logs it from `OnChange`.

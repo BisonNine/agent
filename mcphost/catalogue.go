@@ -80,7 +80,9 @@ func (c unionCatalogue) Tools() []toolkit.Info {
 }
 
 // NameRule is how an endpoint names the tools it publishes. Tools are taken
-// in internal-name order; a tool whose name is already taken is left out.
+// in internal-name order; a tool whose name is already taken is left out. A
+// tool whose schema cannot be encoded takes part in neither rule: it claims
+// no name.
 type NameRule int
 
 const (
@@ -95,8 +97,9 @@ const (
 
 // published is one tool as an endpoint publishes it.
 type published struct {
-	name string
-	info toolkit.Info
+	name   string
+	info   toolkit.Info
+	schema []byte // its encoded schema (publishable)
 }
 
 // SkipReason is why a tool of the catalogue is not published.
@@ -106,7 +109,8 @@ const (
 	// SkipNameTaken: another tool has the name it would be published under
 	// (ExternalFirst).
 	SkipNameTaken SkipReason = iota + 1
-	// SkipSchema: its schema cannot be encoded.
+	// SkipSchema: its schema cannot be encoded. Such a tool is left out
+	// before any name is chosen: it claims no name.
 	SkipSchema
 	// SkipRefused: MCP refused to register it (an invalid annotation). A
 	// changed tool MCP refuses keeps its previous registration, if it had
@@ -147,9 +151,54 @@ type RefreshResult struct {
 	// Changed reports that what is published changed, and so that
 	// tools/list_changed was sent.
 	Changed bool
-	// Added counts the tools registered or re-registered (a description or
-	// schema changed); Removed those withdrawn.
-	Added, Removed int
+	// Added is the tools registered or re-registered (a description or
+	// schema changed); Removed the names withdrawn, with the tool each was
+	// registered for. Each is in order of published name.
+	Added, Removed []PublishedTool
+}
+
+// PublishedTool is one name an endpoint publishes: Name is what clients
+// call, Internal the internal name of the tool registered under it.
+type PublishedTool struct {
+	Name, Internal string
+}
+
+// publishable encodes the schema of each of infos (sorted by internal
+// name) and names those that encode by the endpoint's rule (publish). A
+// tool whose schema cannot be encoded is left out before any name is
+// chosen, so it claims none. The tools left out are reported to skip when
+// it is not nil.
+func (e *Endpoint) publishable(infos []toolkit.Info, skip func(Skip)) []published {
+	valid := make([]toolkit.Info, 0, len(infos))
+	schemas := make(map[string][]byte, len(infos))
+	for _, info := range infos {
+		schema, err := e.encodeSchema(info)
+		if err != nil {
+			if skip != nil {
+				skip(Skip{Internal: info.Name, Published: e.wantedName(info), Reason: SkipSchema, Err: err})
+			}
+			continue
+		}
+		schemas[info.Name] = schema
+		valid = append(valid, info)
+	}
+	out := e.publish(valid, skip)
+	for i := range out {
+		out[i].schema = schemas[out[i].info.Name]
+	}
+	return out
+}
+
+// wantedName is the name the endpoint's rule would publish info under were
+// no other tool in its way.
+func (e *Endpoint) wantedName(info toolkit.Info) string {
+	if e.cfg.Names == ExternalFirst {
+		if en, ok := info.Tool.(toolkit.ExternalNamer); ok && en.ExternalName() != "" {
+			return en.ExternalName()
+		}
+		return info.Name
+	}
+	return cmp.Or(info.Published, info.Name)
 }
 
 // publish names infos (sorted by internal name) by the endpoint's rule.
@@ -160,10 +209,7 @@ func (e *Endpoint) publish(infos []toolkit.Info, skip func(Skip)) []published {
 		out := make([]published, 0, len(infos))
 		holder := make(map[string]string, len(infos))
 		for _, info := range infos {
-			name := info.Name
-			if en, ok := info.Tool.(toolkit.ExternalNamer); ok && en.ExternalName() != "" {
-				name = en.ExternalName()
-			}
+			name := e.wantedName(info)
 			if other, taken := holder[name]; taken {
 				if skip != nil {
 					skip(Skip{Internal: info.Name, Published: name, Reason: SkipNameTaken, Other: other})
@@ -234,7 +280,7 @@ func (e *Endpoint) autoSync() {
 // a tool that appeared is added, one whose name mapping, description or
 // schema changed is replaced, one that went is deleted. mcp-go sends
 // tools/list_changed for the adds and for the deletes. It reports what
-// changed. Every tool left out is reported (skipped), on every read of the
+// changed, to OnChange too. Every tool left out is reported (skipped), on every read of the
 // catalogue. A versioned catalogue whose version was already synced is not
 // read again.
 func (e *Endpoint) sync() RefreshResult {
@@ -246,6 +292,9 @@ func (e *Endpoint) sync() RefreshResult {
 	slices.SortStableFunc(skips, func(a, b Skip) int { return cmp.Compare(a.Internal, b.Internal) })
 	for _, s := range skips {
 		e.skipped(s)
+	}
+	if res.Changed && e.cfg.OnChange != nil {
+		e.changed(res)
 	}
 	return res
 }
@@ -269,12 +318,8 @@ func (e *Endpoint) syncOnce() (RefreshResult, []Skip) {
 	cur := e.state.Load()
 	want := make(map[string]registered, len(cur.byName))
 	var add []server.ServerTool
-	for _, p := range e.publish(e.cfg.Catalogue.Tools(), skip) {
-		reg, err := e.describe(p)
-		if err != nil {
-			skip(Skip{Internal: p.info.Name, Published: p.name, Reason: SkipSchema, Err: err})
-			continue
-		}
+	for _, p := range e.publishable(e.cfg.Catalogue.Tools(), skip) {
+		reg := e.describe(p)
 		want[p.name] = reg
 		if prior, ok := cur.byName[p.name]; ok && prior.equal(reg) {
 			continue
@@ -291,10 +336,9 @@ func (e *Endpoint) syncOnce() (RefreshResult, []Skip) {
 	if len(del) > 0 {
 		e.srv.DeleteTools(del...)
 	}
-	added := 0
+	var refused []string
 	if len(add) > 0 {
-		refused := e.addTools(add)
-		added = len(add) - len(refused)
+		refused = e.addTools(add)
 		var gone []string
 		for _, name := range refused {
 			skip(Skip{Internal: want[name].internal, Published: name, Reason: SkipRefused})
@@ -325,9 +369,19 @@ func (e *Endpoint) syncOnce() (RefreshResult, []Skip) {
 	e.version = version
 	e.seen.Store(version)
 	e.synced.Store(true)
-	res := RefreshResult{Changed: added > 0 || len(del) > 0, Added: added, Removed: len(del)}
+	res := RefreshResult{Changed: len(add) > len(refused) || len(del) > 0}
+	for _, t := range add {
+		if !slices.Contains(refused, t.Tool.Name) {
+			res.Added = append(res.Added, PublishedTool{Name: t.Tool.Name, Internal: want[t.Tool.Name].internal})
+		}
+	}
+	slices.SortFunc(res.Added, func(a, b PublishedTool) int { return cmp.Compare(a.Name, b.Name) })
+	for _, name := range del {
+		res.Removed = append(res.Removed, PublishedTool{Name: name, Internal: cur.byName[name].internal})
+	}
+	slices.SortFunc(res.Removed, func(a, b PublishedTool) int { return cmp.Compare(a.Name, b.Name) })
 	if res.Changed {
-		e.logger.Info("MCP catalogue updated", "added", added, "deleted", len(del), "tools", len(want))
+		e.logger.Info("MCP catalogue updated", "added", len(res.Added), "deleted", len(res.Removed), "tools", len(want))
 	}
 	return res, skips
 }
@@ -357,6 +411,16 @@ func (e *Endpoint) report(s Skip) {
 	e.cfg.OnSkip(s)
 }
 
+// changed calls OnChange; a panic in it is logged and changes nothing.
+func (e *Endpoint) changed(res RefreshResult) {
+	defer func() {
+		if v := recover(); v != nil {
+			e.logger.Error("MCP OnChange callback panicked", "panic", fmt.Sprint(v))
+		}
+	}()
+	e.cfg.OnChange(res)
+}
+
 // addTools registers tools in one batch (one tools/list_changed). mcp-go
 // panics on a schema it cannot register; then the tools are added one at a
 // time and the names of the ones it refuses are returned.
@@ -382,12 +446,11 @@ func (e *Endpoint) tryAdd(tools ...server.ServerTool) (ok bool) {
 	return true
 }
 
-// describe returns the MCP form of one published tool: its name, its
-// description, and its schema with free-form objects opened (and the
-// TokenArgument added on an Argument endpoint), or the error of a schema
-// that cannot be encoded.
-func (e *Endpoint) describe(p published) (registered, error) {
-	params := toolkit.OpenObjectProperties(p.info.Tool.Parameters())
+// encodeSchema returns the schema info is published with: its own, with
+// free-form objects opened (and the TokenArgument added on an Argument
+// endpoint), encoded; or the error of a schema that cannot be encoded.
+func (e *Endpoint) encodeSchema(info toolkit.Info) ([]byte, error) {
+	params := toolkit.OpenObjectProperties(info.Tool.Parameters())
 	if params == nil {
 		params = map[string]any{"type": "object", "properties": map[string]any{}}
 	}
@@ -396,15 +459,21 @@ func (e *Endpoint) describe(p published) (registered, error) {
 	}
 	schema, err := json.Marshal(params)
 	if err != nil {
-		return registered{}, fmt.Errorf("encode the schema of %s: %w", p.info.Name, err)
+		return nil, fmt.Errorf("encode the schema of %s: %w", info.Name, err)
 	}
+	return schema, nil
+}
+
+// describe returns the MCP form of one published tool: its name, its
+// description and its encoded schema.
+func (e *Endpoint) describe(p published) registered {
 	desc := p.info.Tool.Description()
 	return registered{
 		internal: p.info.Name,
 		desc:     desc,
-		schema:   schema,
-		tool:     mcp.NewToolWithRawSchema(p.name, desc, schema),
-	}, nil
+		schema:   p.schema,
+		tool:     mcp.NewToolWithRawSchema(p.name, desc, p.schema),
+	}
 }
 
 // afterList replaces the list mcp-go built: on an Argument endpoint the
@@ -427,12 +496,9 @@ func (e *Endpoint) afterList(ctx context.Context, _ any, _ *mcp.ListToolsRequest
 	if !ok || c.Set == nil || c.revoked() {
 		return
 	}
-	for _, p := range e.publish(c.Set.Snapshot().List(), nil) {
-		if _, offered := st.byName[p.name]; !offered {
-			continue
-		}
-		if reg, err := e.describe(p); err == nil {
-			result.Tools = append(result.Tools, reg.tool)
+	for _, p := range e.publishable(c.Set.Snapshot().List(), nil) {
+		if _, offered := st.byName[p.name]; offered {
+			result.Tools = append(result.Tools, e.describe(p).tool)
 		}
 	}
 	slices.SortFunc(result.Tools, func(a, b mcp.Tool) int { return cmp.Compare(a.Name, b.Name) })
@@ -450,7 +516,7 @@ func (e *Endpoint) afterList(ctx context.Context, _ any, _ *mcp.ListToolsRequest
 // refused as one not granted.
 func (e *Endpoint) resolve(caller Caller, name, internal string) (toolkit.Info, bool) {
 	if e.cfg.Transport == Bearer {
-		for _, p := range e.publish(caller.Set.Snapshot().List(), nil) {
+		for _, p := range e.publishable(caller.Set.Snapshot().List(), nil) {
 			if p.name == name {
 				return p.info, true
 			}
@@ -458,7 +524,7 @@ func (e *Endpoint) resolve(caller Caller, name, internal string) (toolkit.Info, 
 		// Not listed to the caller: only a disabled tool its own naming gives
 		// the name is resolved, to be refused as disabled; never one listed
 		// under another name.
-		for _, p := range e.publish(caller.Set.List(), nil) {
+		for _, p := range e.publishable(caller.Set.List(), nil) {
 			if p.name == name && !p.info.Enabled {
 				return p.info, true
 			}

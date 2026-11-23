@@ -102,9 +102,12 @@ project uses [Semantic Versioning](https://semver.org/).
   caller's set holds the tool), whether or not the tool runs.
   `Config.RefuseWithInternalName` words the refusal of a tool the caller
   lacks with its internal name; by default it names the called tool on both
-  transports. `Endpoint.Refresh` returns a `RefreshResult` (`Changed`,
-  `Added`, `Removed`), and `Config.OnSkip` is told of every tool left out
-  (`Skip`, `SkipReason`) on every read of the catalogue.
+  transports. `Endpoint.Refresh` returns a `RefreshResult` (`Changed`, and
+  `Added` and `Removed` as `PublishedTool`s: published and internal name),
+  `Config.OnChange` is given it for every read of the catalogue that changed
+  what is published (at `New` too), and `Config.OnSkip` is told of every
+  tool left out (`Skip`, `SkipReason`) on every read of the catalogue. A
+  tool whose schema cannot be encoded claims no published name.
 - `mcphost`: options to reproduce an existing server's wire behaviour.
   `Config.Catalogue` is now a `Catalogue` (`FromRegistry` for a toolkit
   registry, followed automatically; `Union` for agents that each have their
@@ -113,8 +116,12 @@ project uses [Semantic Versioning](https://semver.org/).
   `ExternalFirst`) chooses published names, and a call now runs exactly the
   tool published under its name. `Config.ToolContext` adjusts a call's
   context for the tool it resolved to (the session key for session-scoped
-  tools only). `Config.PanicAsProtocolError` answers a panicking tool with
-  the protocol error. A background tool now runs on the request's context
+  tools only). `Config.PanicAsProtocolError` answers a panicking tool, or
+  a panic in a host callback during the call (the Authenticator,
+  `CallContext`, `ToolContext`, the `Gate`, `BeforeTool`, `OnToolError`,
+  `AfterTool`), with the protocol error; without it each is the
+  internal-error result. Every such panic but the Authenticator's ends with
+  `ToolCallFinished` carrying it. A background tool now runs on the request's context
   unless `Config.DetachBackground`. A tool the caller's set does not hold is
   refused with `NotEnabledMessage`. A bearer caller is listed and described
   from its own set alone.

@@ -2,6 +2,7 @@ package mcphost
 
 import (
 	"context"
+	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -165,8 +166,9 @@ func TestTarget_InternalNameOnEveryCall(t *testing.T) {
 	}
 }
 
-// 3: Refresh reports what it added and removed, and every tool it leaves
-// out is reported to OnSkip on every read, as well as logged.
+// 3: Refresh reports what it added and removed, by published and internal
+// name, to OnChange as well, and every tool it leaves out is reported to
+// OnSkip on every read, as well as logged.
 func TestRefresh_CountsAndSkips(t *testing.T) {
 	alice := catalogOf(t,
 		&wireTool{name: "srv_write", desc: "Native write", params: map[string]any{}, run: wireText("native")},
@@ -177,6 +179,7 @@ func TestRefresh_CountsAndSkips(t *testing.T) {
 		}}, run: wireText("x")})
 	var mu sync.Mutex
 	var skips []Skip
+	var changes []RefreshResult
 	h := newPerAgent(t, map[string]*toolkit.Catalog{"alice": alice}, func(c *Config) {
 		c.Names = ExternalFirst
 		c.OnSkip = func(s Skip) {
@@ -184,7 +187,19 @@ func TestRefresh_CountsAndSkips(t *testing.T) {
 			skips = append(skips, s)
 			mu.Unlock()
 		}
+		c.OnChange = func(r RefreshResult) {
+			mu.Lock()
+			changes = append(changes, r)
+			mu.Unlock()
+		}
 	})
+	takeChanges := func() []RefreshResult {
+		mu.Lock()
+		defer mu.Unlock()
+		out := changes
+		changes = nil
+		return out
+	}
 	take := func() []Skip {
 		mu.Lock()
 		defer mu.Unlock()
@@ -213,9 +228,17 @@ func TestRefresh_CountsAndSkips(t *testing.T) {
 		}
 	}
 	check("at New", take())
+	// Each endpoint reported what New registered.
+	atNew := RefreshResult{Changed: true, Added: []PublishedTool{{"srv_write", "mcp_srv_write"}}}
+	if got := takeChanges(); len(got) != 2 || !reflect.DeepEqual(got[0], atNew) || !reflect.DeepEqual(got[1], atNew) {
+		t.Errorf("OnChange at New = %+v, want %+v from each endpoint", got, atNew)
+	}
 
-	if res := h.arg.Refresh(context.Background()); res != (RefreshResult{}) {
+	if res := h.arg.Refresh(context.Background()); !reflect.DeepEqual(res, RefreshResult{}) {
 		t.Errorf("Refresh with nothing changed = %+v", res)
+	}
+	if got := takeChanges(); len(got) != 0 {
+		t.Errorf("OnChange told of an unchanged Refresh: %+v", got)
 	}
 	got := take()
 	if len(got) != 3 {
@@ -229,14 +252,23 @@ func TestRefresh_CountsAndSkips(t *testing.T) {
 	if err := alice.AddEntries(toolkit.Entry{Tool: textTool("added_one", "a")}, toolkit.Entry{Tool: textTool("added_two", "b")}); err != nil {
 		t.Fatal(err)
 	}
-	if res := h.arg.Refresh(context.Background()); res != (RefreshResult{Changed: true, Added: 2}) {
+	added := RefreshResult{Changed: true, Added: []PublishedTool{{"added_one", "added_one"}, {"added_two", "added_two"}}}
+	if res := h.arg.Refresh(context.Background()); !reflect.DeepEqual(res, added) {
 		t.Errorf("Refresh after two adds = %+v", res)
+	}
+	if got := takeChanges(); len(got) != 1 || !reflect.DeepEqual(got[0], added) {
+		t.Errorf("OnChange after two adds = %+v", got)
 	}
 	alice.Remove("added_one")
 	if err := alice.Put(toolkit.Entry{Tool: textToolDesc("added_two", "changed")}); err != nil {
 		t.Fatal(err)
 	}
-	if res := h.arg.Refresh(context.Background()); res != (RefreshResult{Changed: true, Added: 1, Removed: 1}) {
+	changed := RefreshResult{
+		Changed: true,
+		Added:   []PublishedTool{{"added_two", "added_two"}},
+		Removed: []PublishedTool{{"added_one", "added_one"}},
+	}
+	if res := h.arg.Refresh(context.Background()); !reflect.DeepEqual(res, changed) {
 		t.Errorf("Refresh after a remove and a change = %+v", res)
 	}
 }
