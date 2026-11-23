@@ -38,7 +38,11 @@ project uses [Semantic Versioning](https://semver.org/).
   amend per turn; the agent then keeps no session and runs no compaction of
   its own), `Spec.TurnLimits` (read per turn, the tool timeout per batch),
   `Spec.ToolContext` (each call's context), `Spec.AsyncResult` (late results
-  of background tools), `Agent.ForgetSession`, `EnginePanicError` (an engine
+  of background tools, with the context the tool ran on, detached from
+  cancellation, so the values `ToolContext` set at call time, the scope and
+  the call are still on it however late the result comes, and the
+  `toolkit.Info` of the tool that ran; delivered after the turn and after
+  `Close` too, a panic in it recovered and logged), `Agent.ForgetSession`, `EnginePanicError` (an engine
   panic in the run's result), `CompactionStart` for a host's own managers.
   `Spec.LogContent` is a function, read live.
 - `hook`: `Turn.Model` (the turn's chosen model), `WithTurnID` and

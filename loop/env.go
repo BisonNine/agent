@@ -2,6 +2,9 @@ package loop
 
 import (
 	"context"
+	"fmt"
+	"maps"
+	"runtime/debug"
 	"slices"
 	"sync"
 
@@ -72,7 +75,7 @@ type gatedRegistry interface {
 // current contents (a tool removed since the model call is not found), on
 // the call's context with the call on it (hook.WithToolCall) and the host's
 // values (Spec.ToolContext). With Spec.AsyncResult a background tool's late
-// result goes there.
+// result goes there (deliverLate).
 func (e *agentEnv) executeTool(ctx context.Context, call hook.ToolCall) *toolkit.Result {
 	ctx = hook.WithToolCall(ctx, call)
 	if fn := e.a.spec.ToolContext; fn != nil {
@@ -84,21 +87,64 @@ func (e *agentEnv) executeTool(ctx context.Context, call hook.ToolCall) *toolkit
 	if tools == nil {
 		return toolkit.ErrorResult("tool not found: " + call.Name).WithError(toolkit.ErrToolNotFound)
 	}
+	gate := e.a.spec.Gate
+	g, resolves := tools.(gatedRegistry)
+	// info is the tool the call resolved to, as the gate sees it. A registry
+	// that cannot resolve a call for a gate gets the called name for both.
+	info := toolkit.Info{Name: call.Name, Published: call.Name}
 	var cb toolkit.AsyncCallback
 	if sink := e.a.spec.AsyncResult; sink != nil {
-		cb = func(cbCtx context.Context, result *toolkit.Result) { sink(cbCtx, call, result) }
+		cb = e.deliverLate(sink, context.WithoutCancel(ctx), copyCall(call), &info)
+		if resolves {
+			// Record the resolved tool; the host's gate, if any, decides.
+			hostGate := gate
+			gate = func(ctx context.Context, i toolkit.Info) *toolkit.Result {
+				info = i
+				if hostGate == nil {
+					return nil
+				}
+				return hostGate(ctx, i)
+			}
+		}
 	}
-	gate := e.a.spec.Gate
 	if gate == nil {
 		return tools.Execute(ctx, call.Name, call.Arguments, cb)
 	}
-	if g, ok := tools.(gatedRegistry); ok {
+	if resolves {
 		return g.ExecuteGated(ctx, call.Name, call.Arguments, cb, gate)
 	}
-	if refused := gate(ctx, toolkit.Info{Name: call.Name, Published: call.Name}); refused != nil {
+	if refused := gate(ctx, info); refused != nil {
 		return refused
 	}
 	return tools.Execute(ctx, call.Name, call.Arguments, cb)
+}
+
+// deliverLate is the callback a background tool reports its late result
+// to: it hands sink the context the call ran on without its cancellation
+// (ctx), the call as it ran and the resolved tool (*info, set by the gate
+// before the tool starts, so before any callback). The context the tool
+// hands its callback carries none of the host's values and is dropped. It
+// takes no lock of the agent's and works after the turn ended and after
+// Close: the result is delivered either way. A panic in sink is recovered
+// and logged, since it runs on the tool's goroutine.
+func (e *agentEnv) deliverLate(sink func(context.Context, hook.ToolCall, toolkit.Info, *toolkit.Result), ctx context.Context, call hook.ToolCall, info *toolkit.Info) toolkit.AsyncCallback {
+	a := e.a
+	return func(_ context.Context, r *toolkit.Result) {
+		defer func() {
+			if p := recover(); p != nil {
+				a.log.Error("panic in async result sink", "component", "agent", "agent_id", a.id,
+					"tool", call.Name, "panic", fmt.Sprintf("%v", p), "stack", string(debug.Stack()))
+			}
+		}()
+		sink(ctx, call, *info, r)
+	}
+}
+
+// copyCall returns call with its own copy of the arguments, so a late
+// result's call is the one that ran whatever later changes the original.
+func copyCall(call hook.ToolCall) hook.ToolCall {
+	call.Arguments = maps.Clone(call.Arguments)
+	return call
 }
 
 // turnMessage is the agent's last BeforeTurn: it keeps the message as the

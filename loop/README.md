@@ -29,7 +29,7 @@ offered under one name.
 | `Memory` | `hook.Memory` (`cogmem.Memory` adapts cogmem) | none |
 | `Context` | `ctxengine` options for every session's manager, after the agent's own | none |
 | `Limits`, `TurnLimits` | `hook.Limits`: iterations, tool timeout, turn budget (`NoTurnBudget` for none), cancel grace, retries; or the host's per turn | `hook.Default…` |
-| `ToolContext`, `AsyncResult` | each call's context from the host; background tools' late results | none; synchronous |
+| `ToolContext`, `AsyncResult` | each call's context from the host; background tools' late results, on the context the tool ran on (detached from cancellation) with the call and the resolved `toolkit.Info`, delivered even after the turn and after `Close` | none; synchronous |
 | `Temperature`, `RepeatHint` | sent to non-CLI models; extra steering for a repeated tool batch | none |
 | `Served` | `hook.ServedTools`: a CLI model's tools for its turn (`mcphost.Served`) | none |
 | `Project`, `Clock`, `Logger`, `Redactor`, `Truncator`, `LogContent` (a func, read live) | accounting project, time, logging | default project, real clock, discard |

@@ -330,9 +330,14 @@ of `agent/` imports 37 module packages and three third-party modules.
   `TaskCallback` task through the `TaskRegistrar` (section 9); its `Finish`
   emits `TaskFinished` with the result, which the host routes into a new
   `Run`. A `toolkit.AsyncExecutor` tool, as the first host has them, reports
-  its late result to `loop.Spec.AsyncResult` (with the call's context and
-  the call, possibly after the turn ended); without one it runs
-  synchronously.
+  its late result to `loop.Spec.AsyncResult` with the context the tool ran
+  on (the turn's scope, the call and what `Spec.ToolContext` added),
+  detached from cancellation, the call and the resolved `toolkit.Info`, so
+  the host routes it by the values of the call's time, not by what it would
+  compute when the result arrives. It may come after the turn ended and
+  after `Close` began, and is delivered then too; it runs under no engine
+  lock, and a panic in it is recovered and logged. Without one the tool
+  runs synchronously.
 
 ## 7. Where the 5a engine departs from `hook`, and what changes
 
@@ -659,7 +664,7 @@ section 1's example.
 | The tool-schema estimate (`InContext` of the request's history) | the engine: `discovery.ToolDefs` on the dispatch's snapshot with a session rebuilt from the history | — |
 | Allow checker, reply chat, chat, agent id on each call | `Spec.ToolContext(ctx, call)` | — |
 | A gate naming what the model called | `Spec.Gate` reading `ToolCallFrom(ctx).Name` | from `Spec.Allow` |
-| Async tools' late results | `Spec.AsyncResult(ctx, call, result)` | synchronous |
+| Async tools' late results | `Spec.AsyncResult(ctx, call, info, result)`: `ctx` is the call's (what `ToolContext` set then), detached; delivered after the turn and after `Close` | synchronous |
 | The turn id it made (logs, audit, devices) | `WithTurnID(id)` per run; `Scope.TurnID` everywhere | generated |
 | Tool timeout per batch, other limits per turn, from live config | `Spec.TurnLimits(ctx, scope)` | `Spec.Limits` |
 | Its own turn deadline, none inside | `Limits.TurnBudget: NoTurnBudget` (negative) | 15 min |

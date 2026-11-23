@@ -240,7 +240,9 @@ func TestHosting_ToolContextGateAndAsync(t *testing.T) {
 			gmu.Unlock()
 			return nil
 		}
-		s.AsyncResult = func(_ context.Context, call hook.ToolCall, r *toolkit.Result) { late <- call.Name + ": " + r.ForLLM }
+		s.AsyncResult = func(_ context.Context, call hook.ToolCall, _ toolkit.Info, r *toolkit.Result) {
+			late <- call.Name + ": " + r.ForLLM
+		}
 	})
 	a.Run(context.Background(), "s1", hook.UserText("go")).Wait()
 	if seen.Load() != "bob's chat" {

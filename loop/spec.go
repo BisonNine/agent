@@ -101,12 +101,20 @@ type Spec struct {
 	// was given). The callbacks see the turn's context.
 	ToolContext func(ctx context.Context, call hook.ToolCall) context.Context
 	// AsyncResult, when set, receives the late result of a tool that
-	// finishes in the background (toolkit.AsyncExecutor), with the call's
-	// context and the call, on the tool's goroutine, possibly after the turn
-	// ended; the host delivers it (as a new Run, say). Nil runs such tools
-	// synchronously. A task (hook.TaskRegistrar) is the alternative that
-	// also lists and cancels the work.
-	AsyncResult func(ctx context.Context, call hook.ToolCall, result *toolkit.Result)
+	// finishes in the background (toolkit.AsyncExecutor), for the host to
+	// deliver (as a new Run, say). ctx is the context the tool ran on (the
+	// turn's, with its scope, the tool call and what ToolContext returned)
+	// without its cancellation, so the values of the call's time are still
+	// on it however late the result comes; the context the tool hands its
+	// own callback is not passed, since it carries none of them. call is the
+	// call as it ran; info is the tool it resolved to, as the Gate saw it
+	// (Name the internal name). It runs on the tool's goroutine, under no
+	// lock of the agent's, possibly after the turn ended and after Close
+	// began: a late result is delivered then too. A panic in it is recovered
+	// and logged. Nil runs such tools synchronously. A task
+	// (hook.TaskRegistrar) is the alternative that also lists and cancels
+	// the work.
+	AsyncResult func(ctx context.Context, call hook.ToolCall, info toolkit.Info, result *toolkit.Result)
 
 	// Project groups the agent's accounting records; empty is the default.
 	Project string
