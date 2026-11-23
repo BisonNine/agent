@@ -659,18 +659,24 @@ section 1's example.
 | Its session cache: manager, memory, references, idle eviction, token | `Spec.Session(ctx, scope) Session{Context, Memory, Release, Assemble}`; build managers with `ctxengine.WithCompactionStartFunc(loop.CompactionStart)` | the agent's own manager per session |
 | Channel and chat (and any other field) of every request | `Session.Assemble` | — |
 | The deferred compaction after the reply | the host's: with `Spec.Session` the agent runs none | `CompactIfDue` after each turn |
-| Recall for the message as `BeforeTurn` left it (whispers) | the engine (the agent's last BeforeTurn records it) | — |
+| Recall for the message with whispers but before media references | a `BeforeTurn` sets `Turn.RecallText` | the message text as given to `Run` |
 | The system prompt | `Spec.InstructionLayers(ctx)`; `Spec.Instruction` empty adds no layer | — |
 | The tool-schema estimate (`InContext` of the request's history) | the engine: `discovery.ToolDefs` on the dispatch's snapshot with a session rebuilt from the history | — |
 | Allow checker, reply chat, chat, agent id on each call | `Spec.ToolContext(ctx, call)` | — |
 | A gate naming what the model called | `Spec.Gate` reading `ToolCallFrom(ctx).Name` | from `Spec.Allow` |
 | Async tools' late results | `Spec.AsyncResult(ctx, call, info, result)`: `ctx` is the call's (what `ToolContext` set then), detached; delivered after the turn and after `Close` | synchronous |
-| The turn id it made (logs, audit, devices) | `WithTurnID(id)` per run; `Scope.TurnID` everywhere | generated |
+| The turn id it made (logs, audit, devices); none for runs that have none (MCP sub-agent and Maestro runs) | `WithTurnID(id)` per run, or `WithoutTurnID()` (no `Scope.TurnID`, no `turn_id` on engine lines) | generated |
 | Tool timeout per batch, other limits per turn, from live config | `Spec.TurnLimits(ctx, scope)` | `Spec.Limits` |
 | Its own turn deadline, none inside | `Limits.TurnBudget: NoTurnBudget` (negative) | 15 min |
 | Content logging switched live | `Spec.LogContent func() bool` | off |
-| Its own recovery of an engine panic | `TurnResult.Err` is a `*loop.EnginePanicError`: re-panic with `Value` on the host's goroutine after `Wait` | recovered and logged |
-| Its own queue (merge, commands, slots) | call `Run` only when the session is idle | the agent's queue |
-| Sessions it no longer needs | nothing kept with `Spec.Session`; else `Agent.ForgetSession(key)` | kept until `Close` |
+| Its own recovery of an engine panic | `TurnResult.Err` is a `*loop.EnginePanicError` (`SetUp` for one before the engine): re-panic with `Value` on the host's goroutine after `Wait`; the agent logs nothing of it | recovered, reported, not logged |
+| Its own queue (merge, commands, slots), and paths that bypass it | `Spec.Unqueued` (`agent.WithUnqueued`): `Run` never queues, overlapping runs of a session are the host's to prevent, `Interrupt` stops every running turn of the session and reports dropped 0 | the agent's queue |
+| Sessions it no longer needs | nothing kept with `Spec.Session`; else `ForgetSession(key)` through `agent.SessionForgetter` | kept until `Close` |
 | Single-shot agents | its session context and `AfterTurn` (6.2) | — |
 | Task records, supervisor, clones | `TaskStart.OnCancel`, `OnDetach` (section 9) | — |
+| A turn answered in `BeforeTurn` (a human agent) with no session at all | `Spec.Session` returns `Session{}` (nil `Context`): the engine touches no session context; a turn that is not answered fails with `ErrNoSessionContext` | — |
+| A fresh manager for the overflow retry's forced compaction (a reload may have rebuilt it) | `Session.Compaction() (manager, release)`, released when the turn ends | the session's `Context` |
+| The context window for the turn's model | the host's, with `Spec.Session`: the agent sets none | the agent sets it on its own manager each turn |
+| An iteration limit of 0 or less (no model request) | `Limits.MaxIterations: NoIterations` (negative, kept by `WithDefaults`); the turn ends empty, finish reason `max_iterations` | 20 |
+| No line for a failed turn | the agent logs no turn error and no panic it delivers in `TurnFinished` | — |
+| `Release` after the reply is sent | `Release` runs after `TurnFinished` and its consumers return, before the session's next turn | — |

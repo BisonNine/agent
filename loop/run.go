@@ -45,6 +45,13 @@ var _ hook.Run = (*run)(nil)
 // add holds ev for Events. Nothing is added after TurnFinished, which also
 // closes Done.
 func (r *run) add(_ context.Context, ev hook.Event) {
+	if _, last := ev.(hook.TurnFinished); last {
+		// The run is no longer running before anyone can read its
+		// TurnFinished: an Interrupt from then on stops nothing of it.
+		r.a.mu.Lock()
+		r.ended = true
+		r.a.mu.Unlock()
+	}
 	r.mu.Lock()
 	if r.finished {
 		r.mu.Unlock()
@@ -60,11 +67,6 @@ func (r *run) add(_ context.Context, ev hook.Event) {
 	r.wake = make(chan struct{})
 	r.mu.Unlock()
 	if last {
-		// Once its TurnFinished is out the run is no longer running: an
-		// Interrupt from now on stops nothing of it.
-		r.a.mu.Lock()
-		r.ended = true
-		r.a.mu.Unlock()
 		close(r.done)
 	}
 }

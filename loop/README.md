@@ -23,7 +23,8 @@ offered under one name.
 | `Instruction`, `InstructionLayers` | the system prompt: the instruction, then the host's layers per dispatch | none |
 | `Models` | the agent's `*models.Set`: `Chat` for turns, `Summarize` for compaction | required without `TurnModels` |
 | `TurnModels` | the turn's chain (and limits), chosen by the host per turn | `Models.Begin(Chat, session scope)` |
-| `Session` | the turn's session context from the host (manager, memory, release, request amend) | the agent's own per session |
+| `Session` | the turn's session context from the host (manager, memory, release, request amend, a manager for forced compaction); `Context` nil for a turn a `BeforeTurn` answers | the agent's own per session |
+| `Unqueued` | the host serialises each session's runs; `Run` never queues | queued |
 | `Tools`, `Allow`, `Gate` | a `toolkit.Registry`, read per model call; a grant check or gate run again at execution | no tools |
 | `Sessions` | ctxengine's `session.SessionStore` | `session.NewMemory()` |
 | `Memory` | `hook.Memory` (`cogmem.Memory` adapts cogmem) | none |
@@ -40,7 +41,9 @@ offered under one name.
 `Run(ctx, session, msg, opts...)` returns the run's handle at once. Runs of
 one session are served one at a time, in order; a run on a busy session
 waits in its queue. Different sessions run concurrently. A host that keeps
-its own queue and calls `Run` only on an idle session gets the same turn.
+its own queue sets `Spec.Unqueued`: every run then starts at once, keeping
+runs of one session apart is the host's job, and `Interrupt(session)` stops
+every running turn of the session (dropped is 0).
 
 Each turn, on the run's context with the turn's `hook.Scope`, the turn
 budget, the agent's task registrar and its callbacks:
@@ -109,8 +112,14 @@ supplies them through the optional `Spec` fields above; `hook/DESIGN.md`
 section 10 is the checklist. A panic in the engine (or in the host's
 `TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
 `TurnFinished`: a host that wants its own recovery re-panics with its
-`Value` on its own goroutine. `ForgetSession(key)` drops an idle session the
-agent holds; with `Spec.Session` it holds none.
+`Value` on its own goroutine. The agent logs neither a panic nor a turn
+error it delivers in `TurnFinished`. `ForgetSession(key)` (the root
+package's `agent.SessionForgetter`) drops an idle session the agent holds;
+with `Spec.Session` it holds none. Memory recalls for `hook.Turn.RecallText`:
+the message as given to `Run`, unless a `BeforeTurn` sets it (a host that
+prepends held notes and then appends attachment references sets it in
+between). `hook.WithoutTurnID()` runs a turn with no id at all;
+`hook.NoIterations` a turn with no model request.
 
 ## Not here
 

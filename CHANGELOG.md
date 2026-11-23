@@ -45,6 +45,15 @@ project uses [Semantic Versioning](https://semver.org/).
   `Close` too, a panic in it recovered and logged), `Agent.ForgetSession`, `EnginePanicError` (an engine
   panic in the run's result), `CompactionStart` for a host's own managers.
   `Spec.LogContent` is a function, read live.
+- `loop`, for hosts that own their queue and sessions: `Spec.Unqueued`
+  (`agent.WithUnqueued`; `agenttest.RunUnqueued`), `Session.Compaction` (the
+  manager a forced compaction uses), a nil `Session.Context` for a turn a
+  `BeforeTurn` answers (`ErrNoSessionContext` otherwise), and
+  `agent.SessionForgetter`. With a host session the agent sets no context
+  window. The agent logs no panic or turn error it reports in `TurnFinished`.
+- `hook`: `Turn.RecallText` (what memory recalls for; the message as given
+  to `Run` by default), `WithoutTurnID`, `NoIterations` (a negative
+  `MaxIterations`, kept by `WithDefaults`: no model request).
 - `hook`: `Turn.Model` (the turn's chosen model), `WithTurnID` and
   `RunOptions.TurnID`, `NoTurnBudget`, and `WithToolCall`/`ToolCallFrom`
   (the call on a gate's and tool's context, in the engine and `mcphost`).
