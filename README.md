@@ -70,6 +70,7 @@ any implementation passes.
 | [`ident`](ident) | The agent id rule: valid ids, an id's identity, and when two ids name the same agent. |
 | [`mcphost`](mcphost) | Serves an agent's tools over MCP to CLI models: the HTTP handler, the authentication seam, session tokens, and calls through the tool callbacks. |
 | [`fsmode`](fsmode) | The modes of the directories and files the packages create, taken by each as `WithFileModes`. |
+| [`toolbox/kb`](toolbox/kb) | Knowledge bases as OKF bundles: exact reads with inclusions, ranked search, validated atomic writes, and the `kb_get`, `kb_search`, `kb_put` tools (`toolbox/kb/tools`). |
 
 Each package has its own README.
 
@@ -95,6 +96,9 @@ enforces that:
   `ctxengine`; it holds no loop and starts no goroutine.
 - `mcphost` imports `toolkit`, `toolspec`, `hook` and mcp-go; it is the only
   package that imports mcp-go, and nothing imports it.
+- `toolbox/kb` imports `fsmode`, yaml.v3, jsonschema and SQLite, never
+  `toolspec`; its provider `toolbox/kb/tools` imports only `kb` and
+  `toolspec`.
 
 ## Logging
 

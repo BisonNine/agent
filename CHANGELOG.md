@@ -336,6 +336,22 @@ project uses [Semantic Versioning](https://semver.org/).
   starts and returned on its `Notice` and `AuditEvent`s, so a notice can be
   routed even for a job that ends at once. `Tools.Update(Settings)` changes
   the timeouts and the job limits at run time.
+- `toolbox/kb`: knowledge bases stored as OKF v0.3 bundles. A `Store`
+  serves every caller; each call names a knowledge base that the host's
+  `Resolver` maps to a `Bundle` (root, optional confining folder, writable,
+  creatable, dataset rules, modes). `Get` returns a concept with its
+  `x-tenebris-include` concepts one level deep and reports missing ones;
+  `Search` ranks Markdown sections with an in-memory SQLite FTS5 index that
+  follows edits made outside the store; `Put` replaces a whole record after
+  checking the frontmatter schema, OKF's fields, the bundle's JSON Schema
+  rules and its includes, and publishes it atomically, keeping the text of
+  unchanged keys; `Verify` runs the same checks over a whole bundle. Paths
+  go through `os.Root`, and links inside a bundle are not followed. Limits
+  are fields of `Limits`.
+- `toolbox/kb/tools`: the provider for it, tools `get`, `search` and `put`
+  (published as `kb_get`, `kb_search`, `kb_put`) with compact JSON results.
+- `github.com/santhosh-tekuri/jsonschema/v6` is now a direct dependency
+  (used by `toolbox/kb`).
 - `toolbox/shell/proc`: the process manager under it. Each job runs in its
   own process group with its output in a file (head and tail kept past the
   size limit) and a record, so jobs running at a restart are marked lost.

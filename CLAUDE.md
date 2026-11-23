@@ -4,7 +4,8 @@
 holding `toolspec`, `toolkit`, `discovery`, `spawnllm`, `ctxengine`,
 `cogmem`, `accounting`, `fsmode`, `modelspec`, `clock`, `models`, `ident`,
 `hook`, `loop`, the root package `agent`, `agenttest`, `mcphost`, the
-`examples`, and the tool packages under `toolbox/` (`toolbox/shell`).
+`examples`, and the tool packages under `toolbox/` (`toolbox/shell`,
+`toolbox/kb`).
 
 ## Status
 
@@ -79,6 +80,12 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   own `proctest`. It takes its modes as `Options.Modes` (`fsmode.Modes`).
 - `toolbox/shell` imports only `toolspec`, `fsmode`, its own `proc`, and the
   standard library. Nothing else in the SDK imports `toolbox`.
+- `toolbox/kb` (knowledge bases as OKF bundles) imports only `fsmode`, the
+  standard library, `yaml.v3`, `santhosh-tekuri/jsonschema/v6` and SQLite;
+  never `toolspec`. Its provider `toolbox/kb/tools` imports only `kb`,
+  `toolspec` and the standard library, so the tools use nothing a host's
+  own code cannot. The library knows no folder or naming scheme: bundles
+  come from the host's `kb.Resolver`.
 - `internal/` directories stay inside their package (`spawnllm/internal`,
   `ctxengine/internal`); do not hoist them to the module root.
 - Logging is `log/slog`, injected per instance (`WithLogger` or the
