@@ -37,10 +37,13 @@ batch order), and then:
   (a refusal), a tool removed mid-turn;
 - interrupt: the running turn stops, queued runs are dropped and counted
   and emit only `TurnFinished`, tasks keep running;
-- `Run.Cancel` stops the turn and its tasks; `Agent.Cancel` stops all;
-- a cancel wins: an answer that returns after the interrupt is discarded
-  (turn cancelled, no `ModelAnswer`, nothing stored), its `ModelCall`
-  still carrying the usage;
+- `Run.Interrupt(cause)` stops the turn with its cause and leaves its
+  tasks; `Run.Cancel` stops the turn and its tasks; `Agent.Cancel` stops
+  all;
+- a cancel wins, for `Agent.Interrupt`, `Run.Interrupt(cause)` and
+  `Run.Cancel(cause)` alike: an answer that returns after the stop is
+  discarded (turn cancelled with that cause, no `ModelAnswer`, nothing
+  stored), its `ModelCall` still carrying the usage;
 - a tool that ignores its context is abandoned with `InterruptedResult`;
 - a panic in a step callback ends the turn with a `*hook.PanicError`; one
   in an observer does not;

@@ -82,11 +82,19 @@ type Run interface {
 	// event until it is yielded, so a host that never ranges Events runs
 	// the turn WithoutEvents; such a run yields TurnFinished alone.
 	Events() iter.Seq2[Event, error]
-	// Interrupt stops this run's turn with ErrInterrupted, or drops this run
-	// from the queue. Other queued runs and the tasks it started are left.
-	Interrupt()
-	// Cancel stops the turn and every task it started (TaskInfo.Turn), with
-	// theirs, with cause (nil means ErrInterrupted).
+	// Interrupt stops this run's turn with cause (nil means ErrInterrupted),
+	// or drops this run from the queue. Other queued runs and the tasks it
+	// started are left running: a host's "stop this reply" (/cancel) is an
+	// Interrupt.
+	Interrupt(cause error)
+	// Cancel stops the turn as Interrupt does and, unlike it, also cancels
+	// every task the turn started (TaskInfo.Turn), with theirs, with cause
+	// (nil means ErrInterrupted); like every task cancel it waits up to the
+	// registry's grace for their workers (TaskHandle.Exited).
+	//
+	// For the turn itself the two are the same: the turn ends with cause and
+	// its outcome (CauseOutcome), and a cancel wins (package documentation,
+	// "Cancel wins") from the instant either is called.
 	Cancel(cause error)
 	// Done is closed once TurnFinished has been emitted.
 	Done() <-chan struct{}

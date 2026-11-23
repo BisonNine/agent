@@ -41,7 +41,12 @@ type Agent struct {
 	// hooks are the agent's callbacks and consumers; each turn runs on a copy
 	// that also feeds its run's events.
 	hooks *turnHooks
-	tasks *taskRegistry
+	// registry is the agent's task registry: its own, or the host's
+	// (Spec.Tasks, sharedTasks); tasks is the agent's view of it, as its
+	// identity's agent.
+	tasks       *taskView
+	registry    *Tasks
+	sharedTasks bool
 	// life is cancelled once Close has stopped everything: background
 	// compaction runs on it.
 	life     context.Context
@@ -114,7 +119,12 @@ func New(spec Spec) (*Agent, error) {
 	if a.identity == (accounting.Identity{}) {
 		a.identity = accounting.Identity{Agent: spec.ID, Name: spec.Name, Project: spec.Project}
 	}
-	a.tasks = newTaskRegistry(a)
+	a.registry, a.sharedTasks = spec.Tasks, spec.Tasks != nil
+	if !a.sharedTasks {
+		// Its own registry waits for no worker: nothing reports its exit.
+		a.registry = NewTasks(a.clock, 0)
+	}
+	a.tasks = a.registry.view(a.identity.Agent, a)
 	a.life, a.endLife = context.WithCancel(context.Background())
 	return a, nil
 }
@@ -325,8 +335,10 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	}()
 	ctx = beginTurnContext(ctx, scope, hooks, a.clock)
 	// A turn on a task's context (a sub-agent's) keeps the registrar the task
-	// was started from, so its tasks are that task's children there.
-	if _, ok := hook.TaskRegistrarFrom(ctx); !ok {
+	// was started from, so its tasks are that task's children there. With a
+	// shared registry the turn has this agent's view of it: its tasks are
+	// this agent's, and still that task's children (Scope.Task).
+	if _, ok := hook.TaskRegistrarFrom(ctx); !ok || a.sharedTasks {
 		ctx = hook.WithTaskRegistrar(ctx, a.tasks)
 	}
 
@@ -684,16 +696,18 @@ func (a *Agent) interrupt(ctx context.Context, sessionKey string, cause error) (
 
 // Cancel stops every turn, queue and task of the agent with cause (nil means
 // hook.ErrInterrupted). A cause wrapping hook.ErrShutdown tells the agent it
-// is shutting down: its tasks' contexts end without being cancelled (no
-// OnCancel, no TaskFinished), so a host keeping their records relaunches them
-// after a restart, and no task starts from then on.
+// is shutting down: its tasks are not cancelled. With its own registry their
+// contexts end without being cancelled (no OnCancel, no TaskFinished), so a
+// host keeping their records relaunches them after a restart, and no task
+// starts from then on; a registry the host shares (Spec.Tasks) is left as it
+// is, its tasks running, for the host's Tasks.Shutdown.
 func (a *Agent) Cancel(cause error) {
 	if cause == nil {
 		cause = hook.ErrInterrupted
 	}
 	shutdown := errors.Is(cause, hook.ErrShutdown)
-	if shutdown {
-		a.tasks.shutDown(cause)
+	if shutdown && !a.sharedTasks {
+		a.registry.Shutdown(cause)
 	}
 	a.mu.Lock()
 	var stopped []*run
@@ -731,8 +745,9 @@ var errClosing = fmt.Errorf("agent closing: %w", hook.ErrShutdown)
 // Close shuts the agent down. It refuses new runs at once (they end with
 // ErrClosed), lets the running and queued turns finish until ctx is done,
 // then stops whatever is left with a cause wrapping hook.ErrShutdown (see
-// Cancel) and waits for it to end. Finally it closes the sessions' context
-// managers and memory. Every goroutine the agent started has ended when it
+// Cancel) and waits for it to end. Its own task registry is shut down; one
+// the host shares (Spec.Tasks) is not, and its tasks keep running. Finally
+// it closes the sessions' context managers and memory. Every goroutine the agent started has ended when it
 // returns, except a tool call's that ignored its cancellation past
 // Limits.CancelGrace: the turn abandoned it, and it ends when the tool
 // returns. It returns ctx's error when ctx ended first, else the first error
@@ -759,7 +774,9 @@ func (a *Agent) Close(ctx context.Context) error {
 	var err error
 	select {
 	case <-idle:
-		a.tasks.shutDown(errClosing)
+		if !a.sharedTasks {
+			a.registry.Shutdown(errClosing)
+		}
 	case <-ctx.Done():
 		err = ctx.Err()
 		a.endLife()          // a deferred compaction stops too

@@ -324,7 +324,7 @@ func TestTaskRegistry_DetachAndShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a.tasks.shutDown(errClosing)
+	a.registry.Shutdown(errClosing)
 	if tctx.Err() == nil || cancelled || h2.Info().State != hook.TaskRunning {
 		t.Fatalf("shutdown: ctx %v, OnCancel %v, %+v", tctx.Err(), cancelled, h2.Info())
 	}

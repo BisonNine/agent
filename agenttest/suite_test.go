@@ -133,9 +133,11 @@ type broken struct {
 	interrupt func(a agent.Agent, session string) (bool, int)
 	cancel    func(a agent.Agent, cause error)
 	runCancel func(r agent.Run, cause error)
-	close     func(n int) error
-	tasks     func() []hook.TaskInfo
-	closes    int
+	// runInterrupt overrides Run.Interrupt.
+	runInterrupt func(r agent.Run, cause error)
+	close        func(n int) error
+	tasks        func() []hook.TaskInfo
+	closes       int
 }
 
 func (b *broken) Run(ctx context.Context, session string, msg agent.Message, opts ...agent.RunOption) agent.Run {
@@ -211,6 +213,14 @@ func (r *brokenRun) Events() iter.Seq2[hook.Event, error] {
 			}
 		}
 	}
+}
+
+func (r *brokenRun) Interrupt(cause error) {
+	if r.b.runInterrupt != nil {
+		r.b.runInterrupt(r.Run, cause)
+		return
+	}
+	r.Run.Interrupt(cause)
 }
 
 func (r *brokenRun) Cancel(cause error) {
@@ -452,6 +462,15 @@ func TestSuiteFailsBrokenAgents(t *testing.T) {
 		{"InterruptLeavesTasks: tasks not listed", testInterruptLeavesTasks, building(broken{
 			tasks: func() []hook.TaskInfo { return nil },
 		}, nil), "Tasks = []"},
+		{"RunInterruptLeavesTasks: task stopped", testRunInterruptLeavesTasks, building(broken{
+			runInterrupt: func(r agent.Run, cause error) { r.Cancel(cause) },
+		}, nil), "Run.Interrupt stopped the turn's task"},
+		{"RunInterruptLeavesTasks: cause", testRunInterruptLeavesTasks, building(broken{
+			runInterrupt: func(r agent.Run, _ error) { r.Interrupt(nil) },
+		}, nil), "result = "},
+		{"RunInterruptLeavesTasks: tasks not listed", testRunInterruptLeavesTasks, building(broken{
+			tasks: func() []hook.TaskInfo { return nil },
+		}, nil), "Tasks = []"},
 		{"RunCancelStopsTasks: cause", testRunCancelStopsTasks, rewriting(finished(func(tf *hook.TurnFinished) {
 			tf.Cause = boom
 		})), "result = "},
@@ -479,6 +498,26 @@ func TestSuiteFailsBrokenAgents(t *testing.T) {
 			return slices.Insert(slices.Clone(in), len(in)-1, yielded{ev: hook.ModelAnswer{}})
 		}), "ModelAnswer 1 times"},
 		{"CancelWins: answer stored", testCancelWins, storingLate(), "the discarded answer was stored"},
+		{
+			"CancelWinsRunInterrupt: result", testCancelWinsRunInterrupt,
+			rewriting(outcome(hook.OutcomeCancelled, hook.OutcomeOK)), "result = ",
+		},
+		{"CancelWinsRunInterrupt: cause", testCancelWinsRunInterrupt, building(broken{
+			runInterrupt: func(r agent.Run, _ error) { r.Interrupt(nil) },
+		}, nil), "result = "},
+		{"CancelWinsRunInterrupt: answer reported", testCancelWinsRunInterrupt, rewriting(func(in []yielded) []yielded {
+			return slices.Insert(slices.Clone(in), len(in)-1, yielded{ev: hook.ModelAnswer{}})
+		}), "ModelAnswer 1 times"},
+		{"CancelWinsRunInterrupt: answer stored", testCancelWinsRunInterrupt, storingLate(), "the discarded answer was stored"},
+		{
+			"CancelWinsRunCancel: result", testCancelWinsRunCancel,
+			rewriting(outcome(hook.OutcomeCancelled, hook.OutcomeOK)), "result = ",
+		},
+		{
+			"CancelWinsRunCancel: usage", testCancelWinsRunCancel, rewriting(each(func(e *hook.ModelCall) { e.Response = nil })),
+			"ModelCall = ",
+		},
+		{"CancelWinsRunCancel: answer stored", testCancelWinsRunCancel, storingLate(), "the discarded answer was stored"},
 		{
 			"AbandonedTool: call", testAbandonedTool, rewriting(each(func(e *hook.ToolCallFinished) { e.Interrupted = false })),
 			"ToolCallFinished = ",
@@ -584,7 +623,7 @@ func interruptingCancel() func(testing.TB) Factory {
 			mu.Lock()
 			given = cause
 			mu.Unlock()
-			r.Interrupt()
+			r.Interrupt(nil)
 		},
 		events: finished(func(tf *hook.TurnFinished) {
 			mu.Lock()

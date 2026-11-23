@@ -47,6 +47,17 @@ project uses [Semantic Versioning](https://semver.org/).
   `CapToolResult` and `ToolResultCap` (the cap the engine puts on each tool
   result, for results a host delivers itself).
   `Spec.LogContent` is a function, read live.
+- `loop.Tasks`, a task registry a host shares between its agents and keeps
+  across their instances (`Spec.Tasks`; `NewTasks(clock, grace)`):
+  `For(owner)` (the registrar and `TaskController` of one owner, which
+  lists and cancels that owner's tasks only, a cancel cascading across
+  owners), `CancelChildren(id, cause)` (for an id that need not be
+  registered, remembered so a task started under it later is cancelled),
+  `Observe` and `Shutdown`. An agent never shuts a shared registry down;
+  with one, every turn's context carries the agent's view of it.
+- `hook.TaskHandle.Exited` and `Sealed`: a cancel waits up to the
+  registry's grace for the cancelled tasks' workers to exit, then seals
+  those still running. An agent's own registry has no grace.
 - `loop.ToolDefs(snapshot, revealed) Defs` (`Send`, `InContext`): the tool
   list the engine builds for a model call, exported; the engine calls it
   itself, so a host's listing or golden file is what the model is sent.
@@ -372,6 +383,12 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Breaking: `hook.Run.Interrupt` takes a cause (nil means
+  `hook.ErrInterrupted`): a host's "stop this reply" stops the turn with
+  its own cause and leaves the turn's tasks running, where `Run.Cancel`
+  also cancels them. `hook.TaskHandle` gains `Exited` and `Sealed`.
+- The task registry accepts the id of an ended task again (a relaunch);
+  only a running task's id is a duplicate.
 - A cancel wins: a model answer that returns after its turn was stopped is
   discarded and the turn ends stopped (it used to end OK with the cause);
   its `ModelCall` still reports the usage.

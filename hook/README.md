@@ -53,8 +53,9 @@ every `ToolCallStarted`, and what is emitted on a cancel).
 
 ## The run
 
-`Run` is the handle `Agent.Run` returns: `Events`, `Interrupt` (the turn
-only; its tasks keep running), `Cancel(cause)` (the turn and its tasks),
+`Run` is the handle `Agent.Run` returns: `Events`, `Interrupt(cause)` (the
+turn only; its tasks keep running: a host's "stop this reply"),
+`Cancel(cause)` (the turn and its tasks; for the turn the two are the same),
 `Done` and `Wait`, which returns the `TurnResult`. `Outcome` is `ok`,
 `error`, `cancelled` or `empty`. A run is given a `Message` (`UserText` for
 text alone) and `RunOption`s: `AlreadyStored`, `ResetSession`,
@@ -83,7 +84,9 @@ and the `TaskController` capability (`Tasks`, `CancelTask`). A tool starts
 a task through the `TaskRegistrar` on its context (`TaskRegistrarFrom`):
 `StartTask` returns the task's own context, whose `Scope` (`TaskScope`) names
 the task (`Scope.Task`, `TaskID`), and a `TaskHandle` (`Finish`, `Detach`,
-`Cancel`). DESIGN.md section 9 has the rules.
+`Cancel`, `Exited`, `Sealed`): a cancel waits up to the registry's grace for
+the worker to report `Exited`, and seals it if it does not. DESIGN.md
+section 9 has the rules.
 
 ## What the loop is given
 

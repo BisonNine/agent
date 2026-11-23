@@ -72,7 +72,7 @@ func chat(ctx context.Context, m *models.Catalog, in io.Reader, out io.Writer, i
 		go func() {
 			select {
 			case <-interrupts:
-				run.Interrupt() // stop this reply; the conversation goes on
+				run.Interrupt(nil) // stop this reply; the conversation goes on
 			case <-run.Done():
 			}
 		}()

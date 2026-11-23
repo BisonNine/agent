@@ -76,7 +76,9 @@ type TaskController interface {
 	// Tasks lists the agent's running tasks, oldest first.
 	Tasks() []TaskInfo
 	// CancelTask cancels the agent's task taskID and, first, the tasks it
-	// started (with theirs, whatever agent owns them), with cause. A task
+	// started (with theirs, whatever agent owns them), with cause, and
+	// waits up to the registry's grace for their workers to exit
+	// (TaskHandle.Exited). A task
 	// that had already ended is not an error: it is reported in
 	// AlreadyEnded (its children may still have been cancelled). An id that
 	// is not a task of this agent fails with ErrUnknownTask; so may the id
@@ -143,14 +145,15 @@ type TaskStart struct {
 // call's context (TaskRegistrarFrom), and the same registry the agent's
 // TaskController lists and cancels.
 //
-// The agent implements it (agent/loop): it emits TaskStarted and
-// TaskFinished on the agent's event stream and is told when the agent shuts
-// down. A host keeps its records through TaskStart's OnCancel and OnDetach.
-// (A host that implements it itself before the engine moves, as the first
-// host does, reports through its own observers and its own shutdown flag.)
+// The agent's task registry implements it (loop.Tasks, seen per owner): it
+// emits TaskStarted and TaskFinished on the agent's event stream and is told
+// when the host shuts down. A host keeps its records through TaskStart's
+// OnCancel and OnDetach, and may share one registry between its agents and
+// their instances (loop.Spec.Tasks), observing it with Tasks.Observe.
 //
-// Shutdown: the agent tells its registrar it is shutting down (its Close,
-// or a Cancel whose cause wraps ErrShutdown) before it cancels its turns.
+// Shutdown: the registry is told it is shutting down (the agent's Close, or
+// a Cancel whose cause wraps ErrShutdown, for a registry of its own; the
+// host's Tasks.Shutdown for a shared one) before the turns are cancelled.
 // Shutdown is not a cancellation of the tasks: their contexts end with a
 // cause wrapping ErrShutdown, but OnCancel does not run, no TaskFinished is
 // emitted, and their records stay as they are, so a restart relaunches
@@ -211,6 +214,22 @@ type TaskHandle interface {
 	// cause, as TaskController.CancelTask does; for a starter that cannot
 	// deliver the task's result. It reports whether this call cancelled it.
 	Cancel(cause error) bool
+	// Exited is the worker reporting it has returned and written all it
+	// writes (its partial output after a cancel, say). The starter calls it
+	// once, last, whether the task finished, failed or was cancelled; later
+	// calls do nothing. Every cancel (CancelTask, CancelAll, Cancel, Detach
+	// that cancels, Run.Cancel) waits, up to the registry's grace in all,
+	// for the workers of the tasks it cancelled to exit before it returns,
+	// so what they write as they unwind is written by then. A starter that
+	// never calls it makes every cancel of its task wait the whole grace.
+	Exited()
+	// Sealed reports that a cancel stopped waiting for the worker (its grace
+	// ran out, or the registry waits for none) before it exited: the worker
+	// must write nothing more of the task, and the record its OnCancel wrote
+	// is final. A worker checks it before writing its partial output. It
+	// stays false for a worker that exited in time, and for a task that was
+	// not cancelled.
+	Sealed() bool
 }
 
 type taskRegistrarKey struct{}

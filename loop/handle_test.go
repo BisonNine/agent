@@ -72,7 +72,7 @@ func TestRun_InterruptQueued(t *testing.T) {
 	first := a.Run(context.Background(), "s1", hook.UserText("one"))
 	waitFor(t, started, "the first call")
 	second := a.Run(context.Background(), "s1", hook.UserText("two"))
-	second.Interrupt()
+	second.Interrupt(nil)
 	res := second.Wait()
 	if res.Outcome != hook.OutcomeCancelled || !errors.Is(res.Cause, hook.ErrInterrupted) {
 		t.Fatalf("dropped run = %+v", res)
@@ -96,7 +96,7 @@ func TestRun_InterruptQueued(t *testing.T) {
 	if len(got) != 1 || got[0].Dropped != 1 || got[0].Running || got[0].Scope.Session != "s1" {
 		t.Fatalf("OnInterrupt = %+v", got)
 	}
-	first.Interrupt()
+	first.Interrupt(nil)
 	first.Cancel(nil)
 	if len(obs.all()) != 1 {
 		t.Fatalf("stopping a finished run was reported: %+v", obs.all())
@@ -130,7 +130,7 @@ func TestRun_InterruptAndCancelRunning(t *testing.T) {
 		if cancel {
 			r.Cancel(nil)
 		} else {
-			r.Interrupt()
+			r.Interrupt(nil)
 		}
 		res := r.Wait()
 		close(release)
@@ -426,6 +426,8 @@ func TestEnginePanicError_Text(t *testing.T) {
 }
 
 // Ended tasks are kept up to keptEnded; beyond that the oldest is forgotten.
+// The id of a running task cannot be started again; that of an ended one
+// can (a relaunch), and replaces it.
 func TestTaskRegistry_ForgetsOldEnded(t *testing.T) {
 	f := newAgentFixture(t)
 	a := f.agent(t, nil)
@@ -444,8 +446,15 @@ func TestTaskRegistry_ForgetsOldEnded(t *testing.T) {
 	if err != nil || len(got.AlreadyEnded) != 1 {
 		t.Fatalf("CancelTask of a kept ended task = %+v, %v", got, err)
 	}
+	_, h, err := a.tasks.StartTask(ctx, hook.TaskStart{Info: hook.TaskInfo{ID: "task-2"}})
+	if err != nil {
+		t.Fatalf("relaunch of an ended task's id: %v", err)
+	}
+	if h.Info().State != hook.TaskRunning || len(a.Tasks()) != 1 || a.Tasks()[0].ID != "task-2" {
+		t.Fatalf("relaunched task = %+v, tasks %+v", h.Info(), a.Tasks())
+	}
 	if _, _, err := a.tasks.StartTask(ctx, hook.TaskStart{Info: hook.TaskInfo{ID: "task-2"}}); err == nil {
-		t.Fatal("a duplicate task id was accepted")
+		t.Fatal("a running task's id was accepted again")
 	}
 }
 

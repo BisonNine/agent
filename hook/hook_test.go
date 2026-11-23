@@ -303,7 +303,7 @@ func (r *fakeRun) Events() iter.Seq2[hook.Event, error] {
 	}
 }
 
-func (r *fakeRun) Interrupt()            {}
+func (r *fakeRun) Interrupt(error)       {}
 func (r *fakeRun) Cancel(error)          {}
 func (r *fakeRun) Done() <-chan struct{} { return r.done }
 

@@ -25,6 +25,7 @@ offered under one name.
 | `TurnModels` | the turn's chain (and limits), chosen by the host per turn | `Models.Begin(Chat, session scope)` |
 | `Session` | the turn's session context from the host (manager, memory, release, request amend, a manager for forced compaction); `Context` nil for a turn a `BeforeTurn` answers | the agent's own per session |
 | `Unqueued` | the host serialises each session's runs; `Run` never queues | queued |
+| `Tasks` | a task registry the host shares between its agents and their instances (`NewTasks`); never shut down by the agent | a registry of its own |
 | `Tools`, `Allow`, `Gate` | a `toolkit.Registry`, read per model call; a grant check or gate run again at execution | no tools |
 | `Sessions` | ctxengine's `session.SessionStore` | `session.NewMemory()` |
 | `Memory` | `hook.Memory` (`cogmem.Memory` adapts cogmem) | none |
@@ -76,14 +77,18 @@ step, prompt-token calibration).
 
 ## Stopping
 
-- `Run.Interrupt`: that run only (its turn, or its place in the queue).
-- `Run.Cancel(cause)`: that run and the tasks its turn started.
+- `Run.Interrupt(cause)`: that run only (its turn, or its place in the
+  queue), with cause (nil means `hook.ErrInterrupted`); its tasks keep
+  running. A host's "stop this reply" (`/cancel`) is this.
+- `Run.Cancel(cause)`: that run, as `Interrupt` does, and the tasks its turn
+  started (waiting up to the registry's grace for their workers).
 - `Agent.Interrupt(session) (running, dropped)`: the session's turn and its
   queue; tasks keep running.
 - `Agent.Cancel(cause)`: every turn, queue and task. A cause wrapping
   `hook.ErrShutdown` tells the agent it is shutting down: tasks' contexts
   end without `OnCancel` or `TaskFinished`, so a host's records relaunch
-  them, and no task starts.
+  them, and no task starts. A registry the host shares (`Spec.Tasks`) is
+  left running: only the host's `Tasks.Shutdown` shuts it down.
 - `Agent.Close(ctx)`: refuses new runs (`ErrClosed`), lets running and
   queued turns finish until `ctx` ends, then stops the rest as a shutdown,
   waits, and closes every session's manager and memory. Every goroutine the
@@ -113,7 +118,31 @@ runs, and to `OnEvent` always. A turn run on a task's context (a
 sub-agent's) keeps the registrar that task was started from, so the tasks
 it starts are that task's children there and a cancel of it reaches them.
 The registry remembers the last 256 ended
-tasks for `AlreadyEnded`.
+tasks for `AlreadyEnded` (an ended task's id may be started again, a
+relaunch; a running one's may not), and the last 1024 cancelled ids, so a
+task started under one later is cancelled as it starts.
+
+Each agent has its own registry unless the host gives it one to share
+(`Spec.Tasks`, made with `NewTasks(clock, grace)`), which outlives the
+agent's instances (a config reload, temporary clones):
+
+- `Tasks.For(owner)` is the registrar and `TaskController` of one owner:
+  it lists and cancels that owner's tasks only (another owner's id is
+  `hook.ErrUnknownTask`); a cancel still cascades to the tasks they started
+  whatever owns them. The agent uses `For(Identity.Agent)` and puts it on
+  every turn's context, replacing one the run's context carries (the
+  turn's parent task still comes from `Scope.Task`).
+- `Tasks.CancelChildren(id, cause)` cancels the tasks started under an id
+  that need not be registered (a record a restart left behind) and
+  remembers it, so a task started under it later is cancelled at once.
+- `Tasks.Observe(fn)` is told of every start, mode change, cancel and
+  finish, and of a cancelled task's worker exit.
+- `Tasks.Shutdown(cause)` is the host's: the agent's `Close` and shutdown
+  `Cancel` leave a shared registry's tasks running.
+- Every cancel waits up to the grace, in all, for the cancelled tasks'
+  workers to report `TaskHandle.Exited`, then seals those still running
+  (`TaskHandle.Sealed`: they write nothing more). The agent's own registry
+  has no grace: its cancels wait for no worker.
 
 ## Hosting an existing application
 

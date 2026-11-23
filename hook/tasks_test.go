@@ -132,6 +132,10 @@ func (h *fakeHandle) Cancel(cause error) bool {
 	return h.end(hook.TaskCancelled, cause)
 }
 
+// Exited and Sealed: the fake waits for no worker.
+func (h *fakeHandle) Exited()      {}
+func (h *fakeHandle) Sealed() bool { return false }
+
 func (h *fakeHandle) Detach(cause error) bool {
 	h.reg.mu.Lock()
 	shutdown := h.reg.shutdown

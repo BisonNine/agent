@@ -36,7 +36,7 @@ run := alice.Run(ctx, "session-42", agent.UserText("Where is my order?"))
 for ev, err := range run.Events() { /* stream to the user */ }
 
 // from anywhere, at any time:
-run.Interrupt()                     // stop this reply; sub-agents keep working
+run.Interrupt(nil)                  // stop this reply; sub-agents keep working
 reg.Remove("refund")                // takes effect at the next model call
 m.Select(models.Chat, "haiku")      // takes effect at the next turn
 ```

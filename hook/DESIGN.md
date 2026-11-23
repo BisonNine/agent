@@ -548,11 +548,14 @@ the SDK's will live in `agent/loop`.
   context: `WithTaskRegistrar`, `TaskRegistrarFrom`.
 - `StartTask(ctx, TaskStart{Info, Depth, OnCancel, OnDetach})` returns the
   task's context and a `TaskHandle` (`ID`, `Info`, `Finish`, `Detach`,
-  `Cancel`).
-- The agent implements the registrar (`agent/loop`): it emits
-  `TaskStarted`/`TaskFinished` and is told of shutdown. The host keeps its
-  records through `OnCancel` and `OnDetach`. Until 5c the host's own
-  registry implements the interface and reports through its observers.
+  `Cancel`, `Exited`, `Sealed`).
+- `loop.Tasks` implements the registrar, seen per owner (`For(owner)`): it
+  emits `TaskStarted`/`TaskFinished`, tells its observers (`Observe`) and
+  is told of shutdown (`Shutdown`). Each agent has one of its own, or the
+  one the host shares (`loop.Spec.Tasks`). The host keeps its records
+  through `OnCancel` and `OnDetach`.
+- `Run.Interrupt(cause)` stops a turn and leaves its tasks;
+  `Run.Cancel(cause)` also cancels them.
 - `Scope.Task` and `TaskID(ctx)`: the task a context runs in;
   `TaskScope(from, info, depth)`: the scope of a task's context.
 - `TaskController.CancelTask` returns a `TaskCancel` (`Cancelled`,
@@ -620,38 +623,76 @@ the SDK's will live in `agent/loop`.
   `CancelAll`. A waiter selects on its task's context as well as the
   result: a context that ended with `State` cancelled means the waiter
   builds its own "cancelled" result.
+- 9.2.7 **One registry may outlive the agents that use it.** A host whose
+  tasks must survive a config reload or belong to a clone's source makes one
+  `loop.Tasks` for the process and gives it to every agent
+  (`Spec.Tasks`). An agent sees it as `For(Identity.Agent)` on every
+  turn's context (replacing a registrar its run's context carries; the
+  parent task still comes from `Scope.Task`, so a sub-agent's tasks stay its
+  task's children across agents). Owners are compared exactly; the host
+  passes one spelling. The agent never shuts a shared registry down: its
+  `Close` and a shutdown `Cancel` leave the tasks running, and the host
+  calls `Tasks.Shutdown` once, as the process shuts down. *Rejected:*
+  shutting the registry down with the last agent (a reload closes every
+  instance before the new ones exist) and an owner-less view (the host's
+  `Owns` check is a rule, not an option).
+- 9.2.8 **A cancel waits for the workers, then seals them.** Every cancel
+  waits, at most the registry's grace in all, for the workers of the tasks
+  it cancelled to report `TaskHandle.Exited`, so the partial output they
+  write as they unwind is in their record when the cancel returns. A worker
+  still running then is sealed (`Sealed`): it writes nothing more, and the
+  record `OnCancel` wrote is final. A task cancelled as it starts (under a
+  cancelled parent) is not waited for: its worker has not started. Waiting
+  happens after `OnCancel`, with no registry lock held. An agent's own
+  registry has no grace (nothing reports its workers' exit): its cancels
+  seal at once.
+- 9.2.9 **`CancelChildren` takes an id that need not be a task.** A host
+  cancelling a record a restart left unrelaunched cancels the tasks started
+  under it, then decides about the record itself; the id is remembered (with
+  every cancelled task's, the last 1024) so a task started under it later
+  is cancelled as it starts, with the cause given.
+- 9.2.10 **Interrupt leaves tasks, Cancel takes them.** `Run.Interrupt(cause)`
+  is "stop this reply": the turn ends with the host's cause, and a
+  `TaskWait` task it waited for is detached, not cancelled. `Run.Cancel(cause)`
+  also cancels every task the turn started. For the turn both are the same
+  stop, and a cancel wins from the instant either is called.
 
 ### 9.3 The host's checklist for adopting these types
 
-- [ ] Put the process registry behind `hook.TaskRegistrar` per owner
-  (`TaskRegistry.start` → `StartTask`, `Task.stop` → `TaskHandle.Cancel`,
-  `finished` → `Finish`, `SubagentManager.detach`/`await` →
-  `TaskHandle.Detach`), and put it on each tool call's context with
-  `hook.WithTaskRegistrar`.
+- [ ] Make one `loop.NewTasks(clock, hook.DefaultCancelGrace)` for the
+  process (where the process registry was made) and give it to every agent
+  instance and clone as `Spec.Tasks`. Pass the owner in one spelling (the
+  normalised agent id): the SDK compares owners exactly.
+- [ ] Call `Tasks.Shutdown(cause)` where the process sets its shutdown flag;
+  `sm.shuttingDown()` is then the registry's (a `Detach` cancels once it is
+  shut down, and `StartTask` fails with `ErrShutdown`).
+- [ ] Start every task through `Tasks.For(owner).StartTask` (or the
+  registrar on the tool call's context), with `TaskStart.OnCancel` as the
+  record's settle step (`cancelRun`) and `OnDetach` as the record half of
+  `detach`; put host values (ask chain) on the returned context. A caller
+  holding its own lock while starting must allow for `OnCancel` running
+  inside `StartTask` (a parent already cancelled).
+- [ ] The worker calls `TaskHandle.Finish` with its result, checks `Sealed`
+  before writing partial output after a cancel, and calls `Exited` last,
+  whatever happened (also for a task cancelled before its worker ran).
+- [ ] A waiting turn that stops waiting calls `Detach(cause)`, or `Cancel`
+  when the result has nowhere to go.
+- [ ] `agent_cancel`: `For(owner).CancelTask` / `CancelAll`
+  (`ErrUnknownTask` is "unknown"; `AlreadyEnded` is "already finished");
+  a record a restart left behind: `Tasks.CancelChildren(id, cause)`, then
+  the record under the settle lock.
 - [ ] Replace `agents.WithTaskID`/`agents.TaskID` with `Scope.Task`
-  (`hook.TaskScope` when starting a task; `hook.TaskID`); copy `Task` into
-  the scope of a sub-agent's turn.
-- [ ] Replace `isolatedContext` + `WithSpawnDepth` with a context of
-  `hook.WithScope(TaskScope(...))`, then add the ask chain on the returned
-  context in `launchTask`.
-- [ ] `beforeCancel`/`cancelRun` becomes `TaskStart.OnCancel`, unchanged in
-  meaning; the record part of `SubagentManager.detach` becomes
-  `TaskStart.OnDetach`.
-- [ ] `Task.stop`: run `beforeCancel` and the state change as one step, so
-  a worker ending between them cannot make a cancel report "already
-  finished" (today `beforeCancel` runs outside the `sync.Once`).
-- [ ] The supervisor's relaunch passes `Info.Parent` and `Info.Started`
-  from the record.
-- [ ] `Cancel`/`CancelAll` return `hook.TaskCancel`; `agent_cancel` reports
-  `AlreadyEnded` as "already finished".
-- [ ] `TaskRegistry.Observe` becomes `TaskStarted`/`TaskFinished` events;
-  `Cancel` returns `[]hook.TaskInfo` as `CancelTask` does.
-- [ ] `sm.shuttingDown()` becomes the registrar being told of shutdown.
+  (`hook.TaskID`); set `Scope.Task`/`Depth` and `hook.WithTaskRegistrar`
+  where a sub-agent's turn starts outside the agent (an MCP server).
+- [ ] `/cancel` (stop this reply) calls `Run.Interrupt(cause)`, never
+  `Run.Cancel`: the turn's tasks keep running. `/cancel all` is
+  `CancelAll` with its own cause.
+- [ ] Observers of the old registry move to `Tasks.Observe`.
 - Stays host-side: the task records and results files, the run markers and
   the live set with their settle lock, the supervisor that relaunches
   tasks after a restart (and `cancelRecord` for a task a restart left
-  unrelaunched), clones and their release, and the wording of results
-  (`detachedText`, the cancelled result).
+  unrelaunched), clones and their release, shell jobs (not tasks), and the
+  wording of results (`detachedText`, the cancelled result).
 
 ## 10. Hosting an existing application
 
@@ -689,6 +730,9 @@ section 1's example.
 | Sessions it no longer needs | nothing kept with `Spec.Session`; else `ForgetSession(key)` through `agent.SessionForgetter` | kept until `Close` |
 | Single-shot agents | its session context and `AfterTurn` (6.2) | — |
 | Task records, supervisor, clones | `TaskStart.OnCancel`, `OnDetach` (section 9) | — |
+| One task registry for the process, across reloads and clones | `Spec.Tasks` (`loop.NewTasks`); the host calls `Tasks.Shutdown` at shutdown, the agent never does | a registry per agent, shut down by its `Close` |
+| Its workers' partial output written before a cancel returns | `TaskHandle.Exited` from the worker, `Sealed` before a late write; the registry's grace | the agent's own registry waits for none |
+| "Stop this reply", leaving its tasks | `Run.Interrupt(cause)`; `Run.Cancel(cause)` also cancels the turn's tasks | — |
 | A turn answered in `BeforeTurn` (a human agent) with no session at all | `Spec.Session` returns `Session{}` (nil `Context`): the engine touches no session context; a turn that is not answered fails with `ErrNoSessionContext` | — |
 | A fresh manager for the overflow retry's forced compaction (a reload may have rebuilt it) | `Session.Compaction() (manager, release)`, released when the turn ends | the session's `Context` |
 | The context window for the turn's model | the host's, with `Spec.Session`: the agent sets none | the agent sets it on its own manager each turn |

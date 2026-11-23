@@ -84,6 +84,18 @@ type Spec struct {
 	// session's next run; the setting is meant for a host that also supplies
 	// Session. Off by default: runs of one session queue.
 	Unqueued bool
+	// Tasks, when set, is the task registry the host shares between its
+	// agents (NewTasks), kept across their instances (a config reload,
+	// temporary clones) so a task outlives the instance that started it. The
+	// agent sees it as its identity's agent (Tasks.For(Identity.Agent)):
+	// its TaskController lists and cancels that owner's tasks, and every
+	// turn's context carries that view (replacing a registrar the context
+	// given to Run already carries; the task a turn runs in still comes from
+	// its Scope.Task). The agent never shuts it down: its Close and a Cancel
+	// whose cause wraps hook.ErrShutdown leave its tasks running, for the
+	// host's Tasks.Shutdown. Nil means a registry of the agent's own, shut
+	// down with it, whose cancels wait for no worker.
+	Tasks *Tasks
 	// Memory is the agent's optional long-term memory.
 	Memory hook.Memory
 	// Context are the options of every session's context manager

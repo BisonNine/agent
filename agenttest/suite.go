@@ -491,6 +491,32 @@ func testRunCancelStopsTasks(t testing.TB, factory Factory) {
 	}
 }
 
+func testRunInterruptLeavesTasks(t testing.TB, factory Factory) {
+	f := newFixture(t)
+	var task context.Context
+	var mu sync.Mutex
+	spawnTool(t, f, &task, &mu)
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	f.Provider.Script(PrimaryWire, callsStep("spawn"), held(started, release))
+	a := build(t, factory, f)
+	r := a.Run(context.Background(), "s1", agent.UserText("Research this"))
+	wait(t, started, "the second model call")
+	cause := fmt.Errorf("host stop: %w", hook.ErrInterrupted)
+	r.Interrupt(cause)
+	if res := result(collect(t, r)); res.Outcome != hook.OutcomeCancelled || !errors.Is(res.Cause, cause) {
+		t.Fatalf("result = %+v", res.TurnResult)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if task == nil || task.Err() != nil {
+		t.Fatal("Run.Interrupt stopped the turn's task")
+	}
+	if tc, ok := a.(agent.TaskController); ok && len(tc.Tasks()) != 1 {
+		t.Fatalf("Tasks = %+v", tc.Tasks())
+	}
+}
+
 func testAgentCancel(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	var task context.Context
@@ -520,21 +546,41 @@ func testAgentCancel(t testing.TB, factory Factory) {
 var lateUsage = spawnllm.UsageInfo{PromptTokens: 120, CompletionTokens: 30, TotalTokens: 150}
 
 func testCancelWins(t testing.TB, factory Factory) {
+	cancelWins(t, factory, hook.ErrInterrupted, func(a agent.Agent, _ agent.Run) { a.Interrupt("s1") })
+}
+
+// errHostStop is the cause the Run.Interrupt and Run.Cancel cases of
+// "cancel wins" stop the turn with.
+var errHostStop = fmt.Errorf("host stop: %w", hook.ErrInterrupted)
+
+func testCancelWinsRunInterrupt(t testing.TB, factory Factory) {
+	cancelWins(t, factory, errHostStop, func(_ agent.Agent, r agent.Run) { r.Interrupt(errHostStop) })
+}
+
+func testCancelWinsRunCancel(t testing.TB, factory Factory) {
+	cancelWins(t, factory, errHostStop, func(_ agent.Agent, r agent.Run) { r.Cancel(errHostStop) })
+}
+
+// cancelWins stops a turn with stop as the model's answer is reported,
+// after the call returned and before the agent took the answer, and checks
+// the answer is discarded and the turn ends with cause.
+func cancelWins(t testing.TB, factory Factory, cause error, stop func(agent.Agent, agent.Run)) {
 	var a agent.Agent
 	var once sync.Once
-	// The interrupt lands as the model's answer is reported, after the call
-	// returned and before the agent took the answer.
+	runs := make(chan agent.Run, 1)
 	f := newFixture(t, hook.Plugin{Name: "stop", OnEvent: func(_ context.Context, ev hook.Event) {
 		if c, ok := ev.(hook.ModelCall); ok && c.Response != nil {
-			once.Do(func() { a.Interrupt("s1") })
+			once.Do(func() { stop(a, <-runs) })
 		}
 	}})
 	usage := lateUsage
 	f.Provider.Script(PrimaryWire, modelstest.Step{Response: &spawnllm.LLMResponse{Content: "late", FinishReason: "stop", Usage: &usage}})
 	a = build(t, factory, f)
-	evs := collect(t, a.Run(context.Background(), "s1", agent.UserText("Hello")))
+	r := a.Run(context.Background(), "s1", agent.UserText("Hello"))
+	runs <- r
+	evs := collect(t, r)
 	res := result(evs)
-	if res.Outcome != hook.OutcomeCancelled || !errors.Is(res.Cause, hook.ErrInterrupted) || res.Reply != "" {
+	if res.Outcome != hook.OutcomeCancelled || !errors.Is(res.Cause, cause) || res.Reply != "" {
 		t.Fatalf("result = %+v", res.TurnResult)
 	}
 	call, ok := first[hook.ModelCall](evs)

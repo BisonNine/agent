@@ -106,8 +106,14 @@ func (r *run) Events() iter.Seq2[hook.Event, error] {
 	}
 }
 
-// Interrupt stops this run's turn, or drops it from the queue.
-func (r *run) Interrupt() { r.a.stopRun(r, hook.ErrInterrupted, false) }
+// Interrupt stops this run's turn, or drops it from the queue, with cause
+// (nil means hook.ErrInterrupted); its tasks keep running.
+func (r *run) Interrupt(cause error) {
+	if cause == nil {
+		cause = hook.ErrInterrupted
+	}
+	r.a.stopRun(r, cause, false)
+}
 
 // Cancel stops this run's turn and the tasks it started.
 func (r *run) Cancel(cause error) {
