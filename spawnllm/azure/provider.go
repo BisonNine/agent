@@ -270,6 +270,9 @@ func (p *Provider) readStream(
 					BodyPreview: streamErr.Message,
 				}
 		}
+		if errors.Is(err, common.ErrStreamRead) {
+			return azureErrorStatus(model, "error", durationMs, bytesSent, counter.n), err
+		}
 		return azureErrorStatus(model, "parse_error", durationMs, bytesSent, counter.n), err
 	}
 

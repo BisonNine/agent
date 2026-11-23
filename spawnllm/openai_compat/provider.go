@@ -582,6 +582,9 @@ func (p *Provider) readStream(
 					BodyPreview: streamErr.Message,
 				}
 		}
+		if errors.Is(err, common.ErrStreamRead) {
+			return httpErrorStatus(model, "error", durationMs, bytesSent, counter.n), err
+		}
 		return httpErrorStatus(model, "parse_error", durationMs, bytesSent, counter.n), err
 	}
 

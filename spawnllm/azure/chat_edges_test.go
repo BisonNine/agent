@@ -130,10 +130,9 @@ func TestChatStreamTruncatedIsReadError(t *testing.T) {
 	if _, ok := errors.AsType[*common.HTTPStatusError](err); ok {
 		t.Fatalf("err = %T, a broken stream is not a provider error", err)
 	}
-	// The stop reason is not checked: a broken stream is labelled
-	// "parse_error" here but "error" by the other providers (reported).
-	if out == nil || out.Status == nil || out.Status.Success {
-		t.Fatalf("out = %+v, want a failed status", out)
+	// A broken stream is a read failure, not a parse failure.
+	if out == nil || out.Status == nil || out.Status.Success || out.Status.StopReason != "error" {
+		t.Fatalf("out = %+v, want a failed error status", out)
 	}
 	if out.Status.BytesReceived == 0 {
 		t.Fatalf("BytesReceived = 0, want the bytes read before the break")
@@ -155,5 +154,28 @@ func TestChatStreamWithoutModelUsesDeployment(t *testing.T) {
 	}
 	if out.Status == nil || out.Status.Model != "deploy" {
 		t.Fatalf("Status = %+v, want Model deploy", out.Status)
+	}
+}
+
+func TestChatStreamMalformedIsParseError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		stream := "data: " + `{"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}]}` + "\n\n" +
+			"data: " + `{"choices":[],"usage":"not an object"}` + "\n\n" +
+			"data: [DONE]\n\n"
+		if _, err := w.Write([]byte(stream)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	out, err := NewProvider("k", srv.URL, "").Chat(t.Context(), testID, hello, nil, "deploy",
+		map[string]any{common.TextDeltaOption: func(string) {}})
+	if err == nil || errors.Is(err, common.ErrStreamRead) {
+		t.Fatalf("err = %v, want a parse error", err)
+	}
+	if out == nil || out.Status == nil || out.Status.Success || out.Status.StopReason != "parse_error" {
+		t.Fatalf("out = %+v, want a failed parse_error status", out)
 	}
 }

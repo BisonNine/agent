@@ -491,3 +491,4 @@ project uses [Semantic Versioning](https://semver.org/).
   state: …", applies nothing, keeps the watermark, and records the error.
 - `ctxengine/memory`: `ListSessions` silently skipped an archive it could not read; it now returns the readable keys with an error naming each unreadable archive.
 - `spawnllm`: `NormalizeToolCall` filled in the caller's `ToolCall.Function`, so the agent loop changed the response's tool calls; it now returns a copy and leaves its argument unchanged.
+- `spawnllm`: a chat stream that broke mid-read was reported with the stop reason `parse_error` by `openai_compat` and `azure` but `error` by the other protocols; all four now report `error`, and `parse_error` is kept for a stream that was read but could not be parsed (`common.ErrStreamRead` tells the two apart).

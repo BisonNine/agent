@@ -2,6 +2,7 @@ package openai_compat
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"net/http"
@@ -185,10 +186,9 @@ func TestProviderChat_StreamTruncatedIsReadError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "failed to read stream") {
 		t.Fatalf("err = %v, want stream read error", err)
 	}
-	// The stop reason is not checked: a broken stream is labelled
-	// "parse_error" here but "error" by the other providers (reported).
-	if out == nil || out.Status == nil || out.Status.Success {
-		t.Fatalf("out = %+v, want a failed status", out)
+	// A broken stream is a read failure, not a parse failure.
+	if out == nil || out.Status == nil || out.Status.Success || out.Status.StopReason != "error" {
+		t.Fatalf("out = %+v, want a failed error status", out)
 	}
 	if out.Status.BytesReceived != int64(len(chunk)) {
 		t.Errorf("BytesReceived = %d, want %d", out.Status.BytesReceived, len(chunk))
@@ -363,5 +363,22 @@ func TestWriteLogEntry_DisabledWritesNothing(t *testing.T) {
 	p.writeLogEntry(logEntry{Dir: "request", Body: json.RawMessage(`{}`)})
 	if p.logFile != nil || p.logOpenErr != nil {
 		t.Fatalf("logFile = %v, logOpenErr = %v; want nothing opened", p.logFile, p.logOpenErr)
+	}
+}
+
+func TestProviderChat_StreamMalformedIsParseError(t *testing.T) {
+	stream := "data: " + `{"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}]}` + "\n\n" +
+		"data: " + `{"choices":[],"usage":"not an object"}` + "\n\n" +
+		"data: [DONE]\n\n"
+	p := NewProvider("key", "https://example.com/v1", "")
+	p.httpClient = &http.Client{Transport: fakeTransport(http.StatusOK, "text/event-stream", stream)}
+
+	out, err := p.Chat(t.Context(), testID, hello, nil, "gpt-4o",
+		map[string]any{common.TextDeltaOption: func(string) {}})
+	if err == nil || errors.Is(err, common.ErrStreamRead) {
+		t.Fatalf("err = %v, want a parse error", err)
+	}
+	if out == nil || out.Status == nil || out.Status.Success || out.Status.StopReason != "parse_error" {
+		t.Fatalf("out = %+v, want a failed parse_error status", out)
 	}
 }

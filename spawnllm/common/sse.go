@@ -124,6 +124,11 @@ type StreamChatError struct {
 
 func (e *StreamChatError) Error() string { return e.Message }
 
+// ErrStreamRead matches (errors.Is) the error AccumulateChatStream returns
+// when reading the stream fails (the connection broke mid-stream), as
+// distinct from a stream that was read but could not be parsed.
+var ErrStreamRead = errors.New("failed to read stream")
+
 // AccumulateChatStream consumes a chat/completions SSE stream from r, firing cb
 // with each non-empty content delta (in order), and reconstructs the equivalent
 // NON-streaming chat/completions JSON body. That reconstructed body is then fed
@@ -132,7 +137,8 @@ func (e *StreamChatError) Error() string { return e.Message }
 // verbatim. toolNames is forwarded to ParseResponse for the content-sniff
 // cross-check.
 //
-// An in-band error chunk aborts accumulation and returns *StreamChatError.
+// An in-band error chunk aborts accumulation and returns *StreamChatError; a
+// failure to read the stream returns an error matching ErrStreamRead.
 // The reconstructed body bytes are returned (best-effort, possibly partial) so
 // callers can log what was assembled.
 func AccumulateChatStream(r io.Reader, cb TextDeltaFunc, toolNames map[string]struct{}, opts ...ParseOption) (*LLMResponse, []byte, error) {
@@ -155,7 +161,7 @@ func AccumulateChatStream(r io.Reader, cb TextDeltaFunc, toolNames map[string]st
 		if !ok {
 			// io.EOF is the normal end-of-stream signal; any other error is real.
 			if err != nil && !errors.Is(err, io.EOF) {
-				return nil, nil, fmt.Errorf("failed to read stream: %w", err)
+				return nil, nil, fmt.Errorf("%w: %w", ErrStreamRead, err)
 			}
 			break
 		}

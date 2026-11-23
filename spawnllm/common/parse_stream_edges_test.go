@@ -92,7 +92,7 @@ func TestAccumulateChatStream_ReadError(t *testing.T) {
 	boom := errors.New("connection reset")
 	r := io.MultiReader(strings.NewReader(buildSSE(`{"choices":[{"delta":{"content":"x"}}]}`)), iotest.ErrReader(boom))
 	out, body, err := AccumulateChatStream(r, func(string) {}, nil)
-	if out != nil || body != nil || !errors.Is(err, boom) || !strings.Contains(err.Error(), "failed to read stream") {
+	if out != nil || body != nil || !errors.Is(err, boom) || !errors.Is(err, ErrStreamRead) || !strings.Contains(err.Error(), "failed to read stream") {
 		t.Fatalf("AccumulateChatStream = %+v, %q, %v; want a read error wrapping the cause", out, body, err)
 	}
 }
