@@ -64,7 +64,9 @@ func TestHosting_SessionContext(t *testing.T) {
 		}
 		s.Plugins = []hook.Plugin{{BeforeTurn: func(_ context.Context, turn *hook.Turn) (*hook.TurnResult, error) {
 			turn.Message.Text = "[note from Bob] " + turn.Message.Text
-			return nil, nil //nolint:nilnil // (nil, nil): the turn goes on
+			turn.RecallText = turn.Message.Text
+			turn.Message.Text += "\n[attached: photo.jpg]" // not recalled for
+			return nil, nil                                //nolint:nilnil // (nil, nil): the turn goes on
 		}}}
 	})
 	if res := a.Run(context.Background(), "s1", hook.UserText("hello")).Wait(); res.Outcome != hook.OutcomeOK {
@@ -80,7 +82,7 @@ func TestHosting_SessionContext(t *testing.T) {
 	if len(mem.recall) == 0 || mem.recall[0] != "[note from Bob] hello" {
 		t.Fatalf("recalled for %q", mem.recall)
 	}
-	if h := store.GetHistory("s1"); len(h) != 2 || h[0].Content != "[note from Bob] hello" {
+	if h := store.GetHistory("s1"); len(h) != 2 || h[0].Content != "[note from Bob] hello\n[attached: photo.jpg]" {
 		t.Fatalf("history = %+v", h)
 	}
 	kept := 1

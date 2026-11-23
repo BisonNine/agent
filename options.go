@@ -69,6 +69,10 @@ func WithContext(opts ...ctxengine.Option) Option {
 // (for instance mcphost.Served).
 func WithServedTools(st ServedTools) Option { return func(s *loop.Spec) { s.Served = st } }
 
+// WithUnqueued tells the agent the host serialises each session's runs: Run
+// never queues (see loop.Spec.Unqueued).
+func WithUnqueued() Option { return func(s *loop.Spec) { s.Unqueued = true } }
+
 // WithLimits sets the loop's limits.
 func WithLimits(l Limits) Option { return func(s *loop.Spec) { s.Limits = l } }
 

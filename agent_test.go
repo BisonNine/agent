@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"go.bison9.com/agent"
 	"go.bison9.com/agent/models"
@@ -72,6 +73,17 @@ func TestNew_Options(t *testing.T) {
 		}
 		if mh, ok := a.(agent.ModelHolder); !ok || mh.Models() != cat.Default() {
 			t.Fatal("no ModelHolder")
+		}
+		sf, ok := a.(agent.SessionForgetter)
+		if !ok {
+			t.Fatal("no SessionForgetter")
+		}
+		// The session may still be finishing its turn for a moment.
+		for i := 0; !sf.ForgetSession("s1"); i++ {
+			if i > 5000 {
+				t.Fatal("the session stayed busy")
+			}
+			time.Sleep(time.Millisecond)
 		}
 		if err := a.Close(context.Background()); err != nil {
 			t.Fatal(err)

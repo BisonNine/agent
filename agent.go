@@ -49,7 +49,7 @@ type Agent interface {
 }
 
 // Optional capabilities, found by type assertion. The agent New builds has
-// all three.
+// all four.
 type (
 	// TaskController lists and cancels the agent's tasks.
 	TaskController = hook.TaskController
@@ -57,6 +57,9 @@ type (
 	ToolHolder interface{ Tools() toolkit.Registry }
 	// ModelHolder gives the agent's models.
 	ModelHolder interface{ Models() *models.Set }
+	// SessionForgetter drops what the agent keeps of an idle session; it
+	// reports false while the session is busy.
+	SessionForgetter interface{ ForgetSession(session string) bool }
 )
 
 // New builds the agent id names with opts applied in order. It fails
@@ -81,4 +84,6 @@ var (
 	_ TaskController = (*loop.Agent)(nil)
 	_ ToolHolder     = (*loop.Agent)(nil)
 	_ ModelHolder    = (*loop.Agent)(nil)
+
+	_ SessionForgetter = (*loop.Agent)(nil)
 )

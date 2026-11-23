@@ -228,6 +228,12 @@ func TestLimitsWithDefaults(t *testing.T) {
 	if got := (hook.Limits{ToolTimeout: -time.Second}).WithDefaults().ToolTimeout; got != hook.DefaultToolTimeout {
 		t.Fatalf("negative ToolTimeout = %v, want the default", got)
 	}
+	if got := (hook.Limits{MaxIterations: hook.NoIterations}).WithDefaults().MaxIterations; got != hook.NoIterations {
+		t.Fatalf("NoIterations = %d, want it kept (none)", got)
+	}
+	if got := hook.ApplyRunOptions(hook.WithoutTurnID()); !got.NoTurnID {
+		t.Fatal("WithoutTurnID not set")
+	}
 	if got := (hook.Limits{TurnBudget: hook.NoTurnBudget}).WithDefaults().TurnBudget; got != hook.NoTurnBudget {
 		t.Fatalf("NoTurnBudget = %v, want it kept (none)", got)
 	}

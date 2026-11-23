@@ -32,6 +32,9 @@ type agentEnv struct {
 	cm    ctxengine.ContextManager
 	mem   hook.MemorySession
 	amend func(ctx context.Context, req *ctxengine.AssembleRequest)
+	// compact is the host's manager for a forced compaction
+	// (Session.Compaction); nil means cm.
+	compact func() (ctxengine.ContextManager, func())
 	// served is the served-tools prompt of a CLI model's turn.
 	served string
 
@@ -147,10 +150,10 @@ func copyCall(call hook.ToolCall) hook.ToolCall {
 	return call
 }
 
-// turnMessage is the agent's last BeforeTurn: it keeps the message as the
-// host's BeforeTurn callbacks left it, for memory to recall for.
+// turnMessage is the agent's last BeforeTurn: it keeps the recall text as
+// the BeforeTurn callbacks left it (hook.Turn.RecallText).
 func (e *agentEnv) turnMessage(_ context.Context, turn *hook.Turn) (*hook.TurnResult, error) {
-	e.text = turn.Message.Text
+	e.text = turn.RecallText
 	return nil, nil //nolint:nilnil // (nil, nil): the turn goes on
 }
 
@@ -234,6 +237,9 @@ func (e *agentEnv) recall(ctx context.Context) []ctxengine.Injection {
 // compressionManager is the session's context manager; there is nothing to
 // release.
 func (e *agentEnv) compressionManager() (ctxengine.ContextManager, func()) {
+	if e.compact != nil {
+		return e.compact()
+	}
 	return e.cm, func() {}
 }
 

@@ -59,11 +59,14 @@ type Agent struct {
 // sessionState is one session as the agent holds it.
 type sessionState struct {
 	key string
-	// queue holds the runs not yet started; running is the run whose turn
-	// runs; busy while a goroutine serves the session.
+	// queue holds the runs not yet started; running are the runs whose turns
+	// run (one at most unless Spec.Unqueued); busy while a goroutine serves
+	// the queue.
 	queue   []*run
-	running *run
+	running []*run
 	busy    bool
+	// openMu serialises making cm and mem (unqueued turns may race to it).
+	openMu sync.Mutex
 
 	// cm and mem are made on the session's first turn and closed at Close or
 	// ForgetSession; never when the host supplies the session (Spec.Session).
@@ -158,6 +161,13 @@ func (a *Agent) Run(ctx context.Context, sessionKey string, msg hook.Message, op
 		return r
 	}
 	s := a.state(sessionKey)
+	if a.spec.Unqueued && !s.busy { // busy: being forgotten; the run waits for it
+		a.startLocked(s, r)
+		a.wg.Add(1)
+		go a.serveOne(s, r) //nolint:contextcheck // the run's goroutine runs it on its own context
+		a.mu.Unlock()
+		return r
+	}
 	s.queue = append(s.queue, r)
 	if !s.busy {
 		s.busy = true
@@ -186,34 +196,60 @@ func (a *Agent) serve(s *sessionState) {
 		a.mu.Lock()
 		if len(s.queue) == 0 {
 			s.busy = false
-			if s.cm == nil && s.mem == nil {
-				delete(a.states, s.key) // nothing of the session is kept
-			}
+			a.dropIdleLocked(s)
 			a.mu.Unlock()
 			return
 		}
 		r := s.queue[0]
 		s.queue = s.queue[1:]
-		s.running = r
-		r.started = true
+		a.startLocked(s, r)
+		a.mu.Unlock()
+		a.runStarted(s, r)
+	}
+}
+
+// serveOne runs one run of an unqueued agent at once.
+func (a *Agent) serveOne(s *sessionState, r *run) {
+	defer a.wg.Done()
+	a.runStarted(s, r)
+	a.mu.Lock()
+	a.dropIdleLocked(s)
+	a.mu.Unlock()
+}
+
+// startLocked marks r started on s: its turn id and its cancel. a.mu is held.
+func (a *Agent) startLocked(s *sessionState, r *run) {
+	s.running = append(s.running, r)
+	r.started = true
+	switch {
+	case r.opts.NoTurnID:
+		r.turnID = ""
+	case r.opts.TurnID != "":
 		r.turnID = r.opts.TurnID
-		if r.turnID == "" {
-			r.turnID = newTurnID()
-		}
-		ctx, cancel := context.WithCancelCause(r.ctx)
-		r.cancel = cancel
-		a.mu.Unlock()
+	default:
+		r.turnID = newTurnID()
+	}
+	r.turnCtx, r.cancel = context.WithCancelCause(r.ctx)
+}
 
-		a.runTurn(ctx, s, r)
-		cancel(nil)
+// runStarted runs r's turn, then ends it on s and, for the agent's own
+// session context, runs the compaction the turn deferred.
+func (a *Agent) runStarted(s *sessionState, r *run) {
+	a.runTurn(r.turnCtx, s, r)
+	r.cancel(nil)
+	a.mu.Lock()
+	s.running = slices.DeleteFunc(s.running, func(x *run) bool { return x == r })
+	r.ended = true
+	a.mu.Unlock()
+	if a.spec.Session == nil {
+		a.compactIfDue(s)
+	}
+}
 
-		a.mu.Lock()
-		s.running = nil
-		r.ended = true
-		a.mu.Unlock()
-		if a.spec.Session == nil {
-			a.compactIfDue(s)
-		}
+// dropIdleLocked forgets s when nothing of it is kept. a.mu is held.
+func (a *Agent) dropIdleLocked(s *sessionState) {
+	if !s.busy && len(s.running) == 0 && s.cm == nil && s.mem == nil {
+		delete(a.states, s.key)
 	}
 }
 
@@ -273,12 +309,11 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	engineRan := false
 	defer func() {
 		// A panic in the engine itself (not in a callback) has already ended
-		// the turn with OutcomeError and an *EnginePanicError; one before the engine
-		// started ends it here. Either stops here: re-raised on this goroutine
-		// it would end the process.
+		// the turn with OutcomeError and an *EnginePanicError; one before the
+		// engine started ends it here. Either stops here: re-raised on this
+		// goroutine it would end the process. It is not logged: the run's
+		// TurnFinished (and Wait) deliver it, value and stack, to the host.
 		if p := recover(); p != nil {
-			a.log.Error("panic in turn", "component", "agent", "agent_id", a.id,
-				"session", s.key, "panic", fmt.Sprintf("%v", p), "stack", string(debug.Stack()))
 			if !engineRan {
 				a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: &EnginePanicError{Value: p, Stack: debug.Stack(), SetUp: true}})
 			}
@@ -309,7 +344,9 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 		return
 	}
 	defer release()
-	if lim.ContextWindow > 0 {
+	// The agent's own manager follows the turn's model; a host that supplies
+	// the session sets its window itself.
+	if a.spec.Session == nil && lim.ContextWindow > 0 {
 		if err := cm.SetContextWindow(lim.ContextWindow); err != nil {
 			a.log.Warn("context window not set", "component", "agent", "error", err.Error())
 		}
@@ -353,11 +390,8 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 		hooks: hooks,
 	}
 	engineRan = true
-	if _, err := newEngineTurn(spec, nil).run(ctx); err != nil {
-		// The run's TurnFinished carries the error; a host renders it.
-		a.log.Debug("turn ended with an error", "component", "agent", "agent_id", a.id,
-			"session", s.key, "error", a.redact(err.Error()))
-	}
+	// The run's TurnFinished (and Wait) carry the turn's error.
+	_, _ = newEngineTurn(spec, nil).run(ctx) //nolint:errcheck // delivered in TurnFinished
 }
 
 // limits are the turn's limits, with their defaults.
@@ -403,16 +437,16 @@ func (a *Agent) sessionOf(ctx context.Context, s *sessionState, scope hook.Scope
 		return s.cm, s.mem, func() {}, nil
 	}
 	sess, err := a.spec.Session(ctx, scope)
-	if err == nil && sess.Context == nil {
-		err = errors.New("no context manager")
-	}
 	if err != nil {
 		if sess.Release != nil {
 			sess.Release()
 		}
 		return nil, nil, nil, fmt.Errorf("session %q: %w", s.key, err)
 	}
-	env.cm, env.mem, env.amend = sess.Context, sess.Memory, sess.Assemble
+	// A nil Context is only for a turn a BeforeTurn answers: the engine
+	// touches no session context then, and fails one that is not answered
+	// with ErrNoSessionContext.
+	env.cm, env.mem, env.amend, env.compact = sess.Context, sess.Memory, sess.Assemble, sess.Compaction
 	release := sess.Release
 	if release == nil {
 		release = func() {}
@@ -423,6 +457,8 @@ func (a *Agent) sessionOf(ctx context.Context, s *sessionState, scope hook.Scope
 // openSession makes the session's context manager and memory session on its
 // first turn.
 func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Scope) {
+	s.openMu.Lock()
+	defer s.openMu.Unlock()
 	if s.cm == nil {
 		opts := make([]ctxengine.Option, 0, 3+len(a.spec.Context))
 		opts = append(opts, ctxengine.WithLogger(a.log), ctxengine.WithCompactionStartFunc(CompactionStart))
@@ -458,7 +494,7 @@ func (a *Agent) ForgetSession(key string) bool {
 		a.mu.Unlock()
 		return true
 	}
-	if s.busy {
+	if s.busy || len(s.running) > 0 {
 		a.mu.Unlock()
 		return false
 	}
@@ -607,24 +643,26 @@ func (a *Agent) interrupt(ctx context.Context, sessionKey string, cause error) (
 	}
 	queued := s.queue
 	s.queue = nil
-	cur := s.running
-	var cancel context.CancelCauseFunc
-	turnID := ""
-	if cur != nil && !cur.ended {
-		cancel, turnID = cur.cancel, cur.turnID
+	var cur []*run
+	for _, r := range s.running {
+		if !r.ended {
+			cur = append(cur, r)
+		}
 	}
 	a.mu.Unlock()
 
 	for _, r := range queued {
 		a.finishUnstarted(r.ctx, r, droppedResult(cause)) //nolint:contextcheck // a dropped run's consumers get its own context
 	}
-	if cancel != nil {
-		cancel(cause)
-		a.endServed(cur)
-	}
 	scope := a.scopeOf(sessionKey)
-	scope.TurnID = turnID
-	ev := hook.Interrupted{Scope: scope, Cause: cause, Running: cancel != nil, Dropped: len(queued)}
+	for _, r := range cur {
+		r.cancel(cause)
+		a.endServed(r)
+		if len(cur) == 1 {
+			scope.TurnID = r.turnID
+		}
+	}
+	ev := hook.Interrupted{Scope: scope, Cause: cause, Running: len(cur) > 0, Dropped: len(queued)}
 	if !ev.Running && ev.Dropped == 0 {
 		return false, 0 // nothing was stopped: no one is told
 	}
@@ -656,8 +694,10 @@ func (a *Agent) Cancel(cause error) {
 	for _, s := range a.states {
 		dropped = append(dropped, s.queue...)
 		s.queue = nil
-		if s.running != nil && !s.running.ended {
-			stopped = append(stopped, s.running)
+		for _, r := range s.running {
+			if !r.ended {
+				stopped = append(stopped, r)
+			}
 		}
 	}
 	a.mu.Unlock()

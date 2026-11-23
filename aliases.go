@@ -46,6 +46,9 @@ func TurnBudget(d time.Duration) RunOption { return hook.TurnBudget(d) }
 // WithTurnID gives the turn the id the host made for it.
 func WithTurnID(id string) RunOption { return hook.WithTurnID(id) }
 
+// WithoutTurnID runs the turn with no turn id.
+func WithoutTurnID() RunOption { return hook.WithoutTurnID() }
+
 // AtDepth runs the turn at sub-agent depth n.
 func AtDepth(n int) RunOption { return hook.AtDepth(n) }
 
@@ -117,6 +120,7 @@ var (
 	ErrNoModelAvailable = hook.ErrNoModelAvailable
 	ErrInvalidSpec      = loop.ErrInvalidSpec
 	ErrClosed           = loop.ErrClosed
+	ErrNoSessionContext = loop.ErrNoSessionContext
 )
 
 // SessionStoreError, PanicError and EnginePanicError are the typed errors a turn ends with.

@@ -618,6 +618,36 @@ func testTurnIDAndModel(t *testing.T, factory Factory) {
 	}
 }
 
+func testWithoutTurnID(t *testing.T, factory Factory) {
+	f := newFixture(t)
+	f.Provider.Script(PrimaryWire, modelstest.Reply("Hello"))
+	a := build(t, factory, f)
+	for _, ev := range collect(t, a.Run(context.Background(), "s1", agent.UserText("Hello"), agent.WithoutTurnID())) {
+		if id := ev.Header().Scope.TurnID; id != "" {
+			t.Fatalf("%T has turn id %q, want none", ev, id)
+		}
+	}
+}
+
+func testUnqueued(t *testing.T, factory Factory) {
+	f := newFixture(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	f.Provider.Script(PrimaryWire, held(started, release), modelstest.Reply("second"))
+	a := build(t, factory, f)
+	r1 := a.Run(context.Background(), "s1", agent.UserText("one"))
+	wait(t, started, "the first run's call")
+	if res := result(collect(t, a.Run(context.Background(), "s1", agent.UserText("two")))); res.Outcome != hook.OutcomeOK {
+		t.Fatalf("an unqueued second run of the session = %+v", res.TurnResult)
+	}
+	if running, dropped := a.Interrupt("s1"); !running || dropped != 0 {
+		t.Fatalf("Interrupt = %v, %d", running, dropped)
+	}
+	if res := result(collect(t, r1)); res.Outcome != hook.OutcomeCancelled {
+		t.Fatalf("first run = %+v", res.TurnResult)
+	}
+}
+
 // kinds names the events, for failure messages.
 func kinds(evs []hook.Event) []string {
 	out := make([]string, 0, len(evs))

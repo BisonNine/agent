@@ -23,6 +23,7 @@ type run struct {
 	started bool
 	ended   bool
 	cancel  context.CancelCauseFunc
+	turnCtx context.Context //nolint:containedctx // the turn's context, made when the run starts
 	turnID  string
 	served  func()
 

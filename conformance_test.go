@@ -17,3 +17,14 @@ func TestConformance(t *testing.T) {
 		return a
 	})
 }
+
+// It passes the suite unqueued too.
+func TestConformanceUnqueued(t *testing.T) {
+	agenttest.RunUnqueued(t, func(f agenttest.Fixture) agent.Agent {
+		a, err := agent.New("alice", f.Options()...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	})
+}

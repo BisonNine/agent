@@ -40,8 +40,11 @@ type RunOptions struct {
 	Depth int
 	// TurnID is the turn's id (Scope.TurnID) when the host made one before
 	// the run (for its own logs and records); empty means the agent makes
-	// one.
+	// one, unless NoTurnID is set.
 	TurnID string
+	// NoTurnID runs the turn with no id at all: Scope.TurnID stays empty and
+	// the engine's lines carry no turn id. It wins over TurnID.
+	NoTurnID bool
 }
 
 // RunOption sets one of the RunOptions.
@@ -61,6 +64,9 @@ func AtDepth(n int) RunOption { return func(o *RunOptions) { o.Depth = n } }
 
 // WithTurnID gives the turn the id the host made for it.
 func WithTurnID(id string) RunOption { return func(o *RunOptions) { o.TurnID = id } }
+
+// WithoutTurnID runs the turn with no turn id.
+func WithoutTurnID() RunOption { return func(o *RunOptions) { o.NoTurnID = true } }
 
 // ApplyRunOptions returns the RunOptions opts set, in order. A nil option is
 // skipped.

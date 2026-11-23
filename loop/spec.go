@@ -73,6 +73,13 @@ type Spec struct {
 	// host does). Nil means the agent's own, per session, kept until
 	// ForgetSession or Close. An error ends the run with OutcomeError.
 	Session func(ctx context.Context, s hook.Scope) (Session, error)
+	// Unqueued tells the agent the host serialises each session's runs
+	// itself: Run never queues, every run starts at once (two runs of one
+	// session may then overlap, and keeping them apart is the host's job),
+	// Interrupt(session) stops every running turn of the session and reports
+	// dropped 0. A run given while ForgetSession closes the session waits for
+	// it. Off by default: runs of one session queue.
+	Unqueued bool
 	// Memory is the agent's optional long-term memory.
 	Memory hook.Memory
 	// Context are the options of every session's context manager
@@ -151,7 +158,9 @@ type TurnModels struct {
 // Session is a turn's session context as the host supplies it
 // (Spec.Session).
 type Session struct {
-	// Context is the session's context manager. Required. A manager the host
+	// Context is the session's context manager. It may be nil only for a turn
+	// a BeforeTurn answers (TurnResult.Skipped), which touches no session
+	// context; any other turn then fails with ErrNoSessionContext. A manager the host
 	// builds reports its compaction passes to the turn when it is given
 	// ctxengine.WithCompactionStartFunc(CompactionStart).
 	Context ctxengine.ContextManager
@@ -160,6 +169,11 @@ type Session struct {
 	// Release, when set, is called once when the turn has ended: after its
 	// TurnFinished, before the session's next turn starts.
 	Release func()
+	// Compaction, when set, is asked for the manager the engine force-compacts
+	// with when a model refuses a request as too large (a fresh reference,
+	// which after a reload may be a rebuilt manager), and returns its
+	// release, called when the turn ends. Nil means Context.
+	Compaction func() (ctxengine.ContextManager, func())
 	// Assemble, when set, amends each request the engine builds before it
 	// is assembled (the turn's first and every dispatch's): to name the
 	// conversation (Channel, ChatID) or change the layers.

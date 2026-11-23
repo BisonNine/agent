@@ -34,6 +34,12 @@ type Turn struct {
 	// it (ModelInfo.Model of every dispatch); zero when it has none. Read
 	// only.
 	Model ModelRef
+	// RecallText is the text the agent's memory recalls for (MemorySession.Recall)
+	// on every dispatch of the turn. It starts as the message's text as given
+	// to Run; a BeforeTurn callback may set it, for instance after adding
+	// held notes to the message but before appending attachment references
+	// it does not want recalled for.
+	RecallText string
 }
 
 // ModelInfo is one dispatch of a turn: the request the engine is about to

@@ -326,6 +326,18 @@ func (noTurnMemory) RecordToolUse(...string)                        {}
 // manager or store, or the host's services.
 var errEngineIncomplete = errors.New("turn engine: no context manager, session store or host services")
 
+// ErrNoSessionContext ends a turn that reaches its model loop with no
+// session context manager (a Spec.Session that gave none): only a turn a
+// BeforeTurn answers may run without one.
+var ErrNoSessionContext error = noSessionContextError{}
+
+// noSessionContextError is ErrNoSessionContext's type: it is also an
+// incomplete engine spec.
+type noSessionContextError struct{}
+
+func (noSessionContextError) Error() string { return "turn engine: the turn has no session context" }
+func (noSessionContextError) Unwrap() error { return errEngineIncomplete }
+
 // run runs one turn, its whole span: TurnStarted; BeforeTurn; the session
 // reset and the message stored (unless the run says it already is); the
 // pending-turn marker; BeforeLoop and LoopStarted; the model loop;
@@ -347,7 +359,7 @@ func (e *engineTurn) run(ctx context.Context) (res engineResult, err error) {
 	}
 
 	e.hooks.emit(ctx, hook.TurnStarted{EventHeader: e.header(), Message: e.spec.message, Options: e.spec.options})
-	turn := &hook.Turn{Message: e.spec.message, Options: e.spec.options, Model: e.turnModelRef()}
+	turn := &hook.Turn{Message: e.spec.message, Options: e.spec.options, Model: e.turnModelRef(), RecallText: e.spec.message.Text}
 	var tr hook.TurnResult
 	stage := stageBeforeTurn
 	defer func() {
@@ -430,7 +442,10 @@ func (e *engineTurn) finish(ctx context.Context, tr hook.TurnResult) {
 // the message stored unless it already is, the first request assembled, the
 // pending-turn marker set.
 func (e *engineTurn) begin(ctx context.Context, turn *hook.Turn) error {
-	if e.spec.cm == nil || e.spec.store == nil {
+	if e.spec.cm == nil {
+		return ErrNoSessionContext
+	}
+	if e.spec.store == nil {
 		return errEngineIncomplete
 	}
 	if turn.Options.ResetSession {

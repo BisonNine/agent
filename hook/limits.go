@@ -12,6 +12,9 @@ const (
 	DefaultRetryBackoff  = 5 * time.Second
 )
 
+// NoIterations, as Limits.MaxIterations, lets a turn make no model request.
+const NoIterations = -1
+
 // NoTurnBudget, as Limits.TurnBudget, gives a turn no budget of the loop's.
 const NoTurnBudget time.Duration = -1
 
@@ -20,7 +23,9 @@ const NoTurnBudget time.Duration = -1
 // modelspec.Limits. A zero field takes its default.
 type Limits struct {
 	// MaxIterations is the most model requests one turn makes. On the last
-	// one the model is told to answer and may not call tools.
+	// one the model is told to answer and may not call tools. A negative
+	// value (NoIterations) means none: the turn makes no model request and
+	// ends empty, with finish reason "max_iterations".
 	MaxIterations int
 	// ToolTimeout is each tool call's budget; its context ends then.
 	ToolTimeout time.Duration
@@ -42,10 +47,10 @@ type Limits struct {
 }
 
 // WithDefaults returns l with each zero (or negative) field set to its
-// default, except Retries and TurnBudget: only a zero one takes the default,
+// default, except MaxIterations, Retries and TurnBudget: only a zero one takes the default,
 // and a negative one is kept (none). Applying it twice gives the same limits.
 func (l Limits) WithDefaults() Limits {
-	if l.MaxIterations <= 0 {
+	if l.MaxIterations == 0 {
 		l.MaxIterations = DefaultMaxIterations
 	}
 	if l.ToolTimeout <= 0 {

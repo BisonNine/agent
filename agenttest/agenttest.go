@@ -51,6 +51,9 @@ type Fixture struct {
 	Sessions session.SessionStore
 	Limits   hook.Limits
 	Plugins  []hook.Plugin
+	// Unqueued: the agent must be built not to queue runs of one session
+	// (agent.WithUnqueued); set by RunUnqueued.
+	Unqueued bool
 }
 
 // Options are the fixture as the root package's options.
@@ -64,6 +67,9 @@ func (f Fixture) Options() []agent.Option {
 	)
 	for _, p := range f.Plugins {
 		opts = append(opts, agent.WithPlugin(p))
+	}
+	if f.Unqueued {
+		opts = append(opts, agent.WithUnqueued())
 	}
 	return opts
 }
@@ -133,6 +139,23 @@ func addTool(t *testing.T, f Fixture, name string, fn func(ctx context.Context, 
 // Run runs the suite against the agents factory builds, one per test.
 func Run(t *testing.T, factory Factory) {
 	t.Helper()
+	run(t, factory, false)
+}
+
+// RunUnqueued runs the suite against an agent built not to queue runs of one
+// session (Fixture.Unqueued): the cases about the queue are left out, and one
+// checks that two runs of a session overlap.
+func RunUnqueued(t *testing.T, factory Factory) {
+	t.Helper()
+	run(t, func(f Fixture) agent.Agent {
+		f.Unqueued = true
+		return factory(f)
+	}, true)
+}
+
+func run(t *testing.T, factory Factory, unqueued bool) {
+	t.Helper()
+	queued := map[string]bool{"InterruptDropsQueue": true}
 	tests := []struct {
 		name string
 		fn   func(t *testing.T, factory Factory)
@@ -157,8 +180,13 @@ func Run(t *testing.T, factory Factory) {
 		{"SessionsRunConcurrently", testSessionsConcurrent},
 		{"TurnIDAndModel", testTurnIDAndModel},
 		{"Close", testClose},
+		{"WithoutTurnID", testWithoutTurnID},
+		{"Unqueued", testUnqueued},
 	}
 	for _, tt := range tests {
+		if (unqueued && queued[tt.name]) || (!unqueued && tt.name == "Unqueued") {
+			continue
+		}
 		t.Run(tt.name, func(t *testing.T) { tt.fn(t, factory) })
 	}
 }
