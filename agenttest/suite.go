@@ -21,7 +21,7 @@ import (
 const waitLimit = 10 * time.Second
 
 // collect reads every event of r and checks the contract every run keeps.
-func collect(t *testing.T, r agent.Run) []hook.Event {
+func collect(t testing.TB, r agent.Run) []hook.Event {
 	t.Helper()
 	done := make(chan []hook.Event, 1)
 	go func() {
@@ -54,7 +54,7 @@ func collect(t *testing.T, r agent.Run) []hook.Event {
 
 // checkContract checks the event rules of package hook that hold for every
 // run.
-func checkContract(t *testing.T, evs []hook.Event) {
+func checkContract(t testing.TB, evs []hook.Event) {
 	t.Helper()
 	if len(evs) == 0 {
 		t.Fatal("a run emitted no event")
@@ -162,7 +162,7 @@ func held(started, release chan struct{}) modelstest.Step {
 }
 
 // wait waits for ch, failing the test after waitLimit.
-func wait(t *testing.T, ch <-chan struct{}, what string) {
+func wait(t testing.TB, ch <-chan struct{}, what string) {
 	t.Helper()
 	select {
 	case <-ch:
@@ -171,7 +171,7 @@ func wait(t *testing.T, ch <-chan struct{}, what string) {
 	}
 }
 
-func testOutcomeOK(t *testing.T, factory Factory) {
+func testOutcomeOK(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	f.Provider.Script(PrimaryWire, modelstest.Reply("Hello, Bob."))
 	a := build(t, factory, f)
@@ -185,7 +185,7 @@ func testOutcomeOK(t *testing.T, factory Factory) {
 	}
 }
 
-func testOutcomeEmpty(t *testing.T, factory Factory) {
+func testOutcomeEmpty(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	f.Provider.Script(PrimaryWire, modelstest.Reply(""))
 	a := build(t, factory, f)
@@ -194,7 +194,7 @@ func testOutcomeEmpty(t *testing.T, factory Factory) {
 	}
 }
 
-func testOutcomeError(t *testing.T, factory Factory) {
+func testOutcomeError(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	boom := errors.New("boom")
 	f.Provider.Script(PrimaryWire, modelstest.Fail(boom))
@@ -210,7 +210,7 @@ func testOutcomeError(t *testing.T, factory Factory) {
 	}
 }
 
-func testFallback(t *testing.T, factory Factory) {
+func testFallback(t testing.TB, factory Factory) {
 	var observed []hook.Fallback
 	f := newFixture(t, hook.Plugin{Name: "watch", OnFallback: func(_ context.Context, ev hook.Fallback) { observed = append(observed, ev) }})
 	f.Provider.Script(PrimaryWire, modelstest.Status(503, 0))
@@ -233,7 +233,7 @@ func testFallback(t *testing.T, factory Factory) {
 	}
 }
 
-func testToolCalls(t *testing.T, factory Factory) {
+func testToolCalls(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	addTool(t, f, "lookup_order", func(context.Context, map[string]any) (*toolspec.Result, error) {
 		return &toolspec.Result{ForLLM: "Order 42 shipped."}, nil
@@ -270,7 +270,7 @@ func testToolCalls(t *testing.T, factory Factory) {
 	}
 }
 
-func testToolError(t *testing.T, factory Factory) {
+func testToolError(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	addTool(t, f, "lookup_order", func(context.Context, map[string]any) (*toolspec.Result, error) {
 		return nil, errors.New("database down")
@@ -287,7 +287,7 @@ func testToolError(t *testing.T, factory Factory) {
 	}
 }
 
-func testToolPanic(t *testing.T, factory Factory) {
+func testToolPanic(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	addTool(t, f, "lookup_order", func(context.Context, map[string]any) (*toolspec.Result, error) {
 		panic("Bob's bug")
@@ -308,7 +308,7 @@ func testToolPanic(t *testing.T, factory Factory) {
 	}
 }
 
-func testToolRefused(t *testing.T, factory Factory) {
+func testToolRefused(t testing.TB, factory Factory) {
 	ran := false
 	f := newFixture(t, hook.Plugin{Name: "approve", BeforeTool: func(_ context.Context, call *hook.ToolCall) (*toolkit.Result, error) {
 		if call.Name == "refund" {
@@ -329,7 +329,7 @@ func testToolRefused(t *testing.T, factory Factory) {
 	}
 }
 
-func testToolRemovedMidTurn(t *testing.T, factory Factory) {
+func testToolRemovedMidTurn(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	addTool(t, f, "refund", func(context.Context, map[string]any) (*toolspec.Result, error) {
 		return &toolspec.Result{ForLLM: "refunded"}, nil
@@ -356,7 +356,7 @@ func testToolRemovedMidTurn(t *testing.T, factory Factory) {
 	}
 }
 
-func testInterruptRunningTurn(t *testing.T, factory Factory) {
+func testInterruptRunningTurn(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	started, release := make(chan struct{}), make(chan struct{})
 	defer close(release)
@@ -382,7 +382,7 @@ func testInterruptRunningTurn(t *testing.T, factory Factory) {
 	}
 }
 
-func testInterruptDropsQueue(t *testing.T, factory Factory) {
+func testInterruptDropsQueue(t testing.TB, factory Factory) {
 	var interrupted []hook.Interrupted
 	var mu sync.Mutex
 	f := newFixture(t, hook.Plugin{Name: "watch", OnInterrupt: func(_ context.Context, ev hook.Interrupted) {
@@ -420,7 +420,7 @@ func testInterruptDropsQueue(t *testing.T, factory Factory) {
 
 // spawnTool registers "spawn", which starts a task through the call's
 // registrar and keeps its context.
-func spawnTool(t *testing.T, f Fixture, task *context.Context, mu *sync.Mutex) {
+func spawnTool(t testing.TB, f Fixture, task *context.Context, mu *sync.Mutex) {
 	addTool(t, f, "spawn", func(ctx context.Context, _ map[string]any) (*toolspec.Result, error) {
 		reg, ok := hook.TaskRegistrarFrom(ctx)
 		if !ok {
@@ -437,7 +437,7 @@ func spawnTool(t *testing.T, f Fixture, task *context.Context, mu *sync.Mutex) {
 	})
 }
 
-func testInterruptLeavesTasks(t *testing.T, factory Factory) {
+func testInterruptLeavesTasks(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	var task context.Context
 	var mu sync.Mutex
@@ -464,7 +464,7 @@ func testInterruptLeavesTasks(t *testing.T, factory Factory) {
 	}
 }
 
-func testRunCancelStopsTasks(t *testing.T, factory Factory) {
+func testRunCancelStopsTasks(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	var task context.Context
 	var mu sync.Mutex
@@ -491,7 +491,7 @@ func testRunCancelStopsTasks(t *testing.T, factory Factory) {
 	}
 }
 
-func testAgentCancel(t *testing.T, factory Factory) {
+func testAgentCancel(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	var task context.Context
 	var mu sync.Mutex
@@ -516,7 +516,7 @@ func testAgentCancel(t *testing.T, factory Factory) {
 	}
 }
 
-func testAbandonedTool(t *testing.T, factory Factory) {
+func testAbandonedTool(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	inTool := make(chan struct{})
 	stuck := make(chan struct{})
@@ -541,7 +541,7 @@ func testAbandonedTool(t *testing.T, factory Factory) {
 	}
 }
 
-func testCallbackPanic(t *testing.T, factory Factory) {
+func testCallbackPanic(t testing.TB, factory Factory) {
 	f := newFixture(t, hook.Plugin{Name: "broken", AfterModel: func(context.Context, *hook.ModelInfo, *hook.ModelResponse) {
 		panic("broken callback")
 	}})
@@ -554,7 +554,7 @@ func testCallbackPanic(t *testing.T, factory Factory) {
 	}
 }
 
-func testObserverPanic(t *testing.T, factory Factory) {
+func testObserverPanic(t testing.TB, factory Factory) {
 	f := newFixture(t, hook.Plugin{Name: "broken", OnEvent: func(context.Context, hook.Event) { panic("broken observer") }})
 	f.Provider.Script(PrimaryWire, modelstest.Reply("Hello"))
 	a := build(t, factory, f)
@@ -563,7 +563,7 @@ func testObserverPanic(t *testing.T, factory Factory) {
 	}
 }
 
-func testSessionsConcurrent(t *testing.T, factory Factory) {
+func testSessionsConcurrent(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	started, release := make(chan struct{}), make(chan struct{})
 	f.Provider.Script(PrimaryWire, held(started, release), modelstest.Reply("other"))
@@ -580,7 +580,7 @@ func testSessionsConcurrent(t *testing.T, factory Factory) {
 	}
 }
 
-func testClose(t *testing.T, factory Factory) {
+func testClose(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	f.Provider.Script(PrimaryWire, modelstest.Reply("Hello"))
 	a := factory(f)
@@ -599,7 +599,7 @@ func testClose(t *testing.T, factory Factory) {
 	}
 }
 
-func testTurnIDAndModel(t *testing.T, factory Factory) {
+func testTurnIDAndModel(t testing.TB, factory Factory) {
 	var model hook.ModelRef
 	f := newFixture(t, hook.Plugin{Name: "watch", BeforeTurn: func(_ context.Context, turn *hook.Turn) (*hook.TurnResult, error) {
 		model = turn.Model
@@ -618,7 +618,7 @@ func testTurnIDAndModel(t *testing.T, factory Factory) {
 	}
 }
 
-func testWithoutTurnID(t *testing.T, factory Factory) {
+func testWithoutTurnID(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	f.Provider.Script(PrimaryWire, modelstest.Reply("Hello"))
 	a := build(t, factory, f)
@@ -629,7 +629,7 @@ func testWithoutTurnID(t *testing.T, factory Factory) {
 	}
 }
 
-func testUnqueued(t *testing.T, factory Factory) {
+func testUnqueued(t testing.TB, factory Factory) {
 	f := newFixture(t)
 	started, release := make(chan struct{}), make(chan struct{})
 	defer close(release)

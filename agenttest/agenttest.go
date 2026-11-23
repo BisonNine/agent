@@ -78,22 +78,22 @@ func (f Fixture) Options() []agent.Option {
 type Factory func(f Fixture) agent.Agent
 
 // newFixture is a fixture with both models and no tools.
-func newFixture(t *testing.T, plugins ...hook.Plugin) Fixture {
-	t.Helper()
+func newFixture(tb testing.TB, plugins ...hook.Plugin) Fixture {
+	tb.Helper()
 	p := modelstest.New()
 	cat := models.New()
 	if err := cat.AddProvider(modelspec.Provider{Name: "api", Protocol: "openai-chat", BaseURL: "http://127.0.0.1:0/v1", APIKey: "k"}); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	for i, m := range []modelspec.Model{
 		{ModelName: Primary, Model: PrimaryWire, Provider: "api", MaxTokens: 4096},
 		{ModelName: Backup, Model: BackupWire, Provider: "api", MaxTokens: 4096},
 	} {
 		if err := cat.Add(m, models.For(models.Chat, i+1)); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 		if err := cat.RegisterClient(m.ModelName, p); err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
 	}
 	return Fixture{
@@ -107,32 +107,32 @@ func newFixture(t *testing.T, plugins ...hook.Plugin) Fixture {
 }
 
 // build makes the agent and closes it when the test ends.
-func build(t *testing.T, factory Factory, f Fixture) agent.Agent {
-	t.Helper()
+func build(tb testing.TB, factory Factory, f Fixture) agent.Agent {
+	tb.Helper()
 	a := factory(f)
 	if a == nil {
-		t.Fatal("the factory returned no agent")
+		tb.Fatal("the factory returned no agent")
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := a.Close(ctx); err != nil {
-			t.Errorf("Close: %v", err)
+			tb.Errorf("Close: %v", err)
 		}
 	})
 	return a
 }
 
 // addTool registers a tool that runs fn.
-func addTool(t *testing.T, f Fixture, name string, fn func(ctx context.Context, args map[string]any) (*toolspec.Result, error)) {
-	t.Helper()
+func addTool(tb testing.TB, f Fixture, name string, fn func(ctx context.Context, args map[string]any) (*toolspec.Result, error)) {
+	tb.Helper()
 	err := f.Tools.Add(toolspec.ToolDefinition{
 		Name:        name,
 		Description: "Test tool " + name + ".",
 		Handler:     func(call *toolspec.ToolCall) (*toolspec.Result, error) { return fn(call.Ctx, call.Args) },
 	})
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
@@ -158,7 +158,7 @@ func run(t *testing.T, factory Factory, unqueued bool) {
 	queued := map[string]bool{"InterruptDropsQueue": true}
 	tests := []struct {
 		name string
-		fn   func(t *testing.T, factory Factory)
+		fn   func(t testing.TB, factory Factory)
 	}{
 		{"OutcomeOK", testOutcomeOK},
 		{"OutcomeEmpty", testOutcomeEmpty},
