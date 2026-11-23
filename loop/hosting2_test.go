@@ -261,8 +261,9 @@ func TestHosting_UnqueuedForget(t *testing.T) {
 	if running, _ := a.Interrupt("s1"); !running {
 		t.Fatal("Interrupt did not find the running turn")
 	}
+	res := r.Wait()
 	close(hold)
-	if res := r.Wait(); res.Outcome != hook.OutcomeCancelled {
+	if res.Outcome != hook.OutcomeCancelled {
 		t.Fatalf("result = %+v", res)
 	}
 }
