@@ -163,3 +163,58 @@ func TestFakeContextEarlierParentDeadline(t *testing.T) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
 	}
 }
+
+// A parent's end shows on the context as soon as the parent's cancel
+// returns, as on a context.WithDeadline context: Err, context.Cause and Done
+// report it at once, for a standard parent and for a fake one (nested), and
+// Deadline and Value are unchanged by it.
+func TestFakeContextParentEndShowsAtOnce(t *testing.T) {
+	type key struct{}
+	why := errors.New("why")
+	f := NewFake(epoch)
+
+	check := func(t *testing.T, ctx context.Context, wantErr, wantCause error) {
+		t.Helper()
+		if err := ctx.Err(); !errors.Is(err, wantErr) {
+			t.Errorf("err = %v right after the parent ended, want %v", err, wantErr)
+		}
+		if cause := context.Cause(ctx); !errors.Is(cause, wantCause) {
+			t.Errorf("cause = %v right after the parent ended, want %v", cause, wantCause)
+		}
+		select {
+		case <-ctx.Done():
+		default:
+			t.Error("Done not closed right after the parent ended")
+		}
+		if d, ok := ctx.Deadline(); !ok || !d.Equal(epoch.Add(time.Hour)) {
+			t.Errorf("deadline = %v, %v; want %v", d, ok, epoch.Add(time.Hour))
+		}
+		if ctx.Value(key{}) != "v" {
+			t.Error("value not inherited from the parent")
+		}
+	}
+
+	t.Run("standard parent", func(t *testing.T) {
+		parent, cancel := context.WithCancelCause(context.WithValue(context.Background(), key{}, "v"))
+		ctx, stop := f.WithTimeout(parent, time.Hour)
+		defer stop()
+		cancel(why)
+		check(t, ctx, context.Canceled, why)
+	})
+	t.Run("fake parent", func(t *testing.T) {
+		root, cancelRoot := context.WithCancelCause(context.WithValue(context.Background(), key{}, "v"))
+		parent, stopParent := f.WithTimeout(root, 2*time.Hour)
+		defer stopParent()
+		ctx, stop := f.WithTimeout(parent, time.Hour)
+		defer stop()
+		cancelRoot(why)
+		check(t, ctx, context.Canceled, why)
+	})
+	t.Run("fake parent cancelled", func(t *testing.T) {
+		parent, stopParent := f.WithTimeout(context.WithValue(context.Background(), key{}, "v"), 2*time.Hour)
+		ctx, stop := f.WithTimeout(parent, time.Hour)
+		defer stop()
+		stopParent()
+		check(t, ctx, context.Canceled, context.Canceled)
+	})
+}

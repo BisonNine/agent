@@ -14,15 +14,17 @@ func (f *Fake) WithTimeout(parent context.Context, d time.Duration) (context.Con
 // WithDeadline is context.WithDeadline on the fake clock: the context ends
 // with context.DeadlineExceeded, its cause too, once the clock reaches
 // deadline (at once when it is already there), or with its parent's error
-// and cause when the parent ends first. Deadline reports the parent's
-// deadline when that is earlier, as context.WithDeadline does.
+// and cause when the parent ends first; as with context.WithDeadline, Err,
+// Done and context.Cause show the parent's end as soon as the parent's
+// cancel returns. Deadline reports the parent's deadline when that is
+// earlier, as context.WithDeadline does.
 func (f *Fake) WithDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
 	// inner carries the cause: context.Cause finds it through Value. done
 	// is the context's own channel, so a context derived from this one
 	// learns of its end through Err (context.DeadlineExceeded) rather than
 	// as a child of inner (context.Canceled).
 	inner, cancelInner := context.WithCancelCause(parent)
-	c := &fakeDeadlineCtx{inner: inner, cancelInner: cancelInner, deadline: deadline, done: make(chan struct{})}
+	c := &fakeDeadlineCtx{parent: parent, inner: inner, cancelInner: cancelInner, deadline: deadline, done: make(chan struct{})}
 	if pd, ok := parent.Deadline(); ok && pd.Before(deadline) {
 		c.deadline = pd
 	}
@@ -50,6 +52,7 @@ func (f *Fake) WithDeadline(parent context.Context, deadline time.Time) (context
 
 // fakeDeadlineCtx is a context with a deadline on a Fake.
 type fakeDeadlineCtx struct {
+	parent      context.Context
 	inner       context.Context
 	cancelInner context.CancelCauseFunc
 	deadline    time.Time
@@ -62,13 +65,28 @@ type fakeDeadlineCtx struct {
 }
 
 func (c *fakeDeadlineCtx) Deadline() (time.Time, bool) { return c.deadline, true }
-func (c *fakeDeadlineCtx) Done() <-chan struct{}       { return c.done }
 func (c *fakeDeadlineCtx) Value(key any) any           { return c.inner.Value(key) }
 
+func (c *fakeDeadlineCtx) Done() <-chan struct{} {
+	c.followParent()
+	return c.done
+}
+
 func (c *fakeDeadlineCtx) Err() error {
+	c.followParent()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.err
+}
+
+// followParent ends the context when its parent has ended. The AfterFunc
+// set up in WithDeadline does the same, but from a goroutine of its own:
+// without this, the context would look alive for a moment after the
+// parent's cancel returned, where a context.WithDeadline context has ended.
+func (c *fakeDeadlineCtx) followParent() {
+	if err := c.parent.Err(); err != nil {
+		c.end(err, context.Cause(c.parent))
+	}
 }
 
 // end records err as the context's error and cause as its cause, and

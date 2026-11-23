@@ -461,3 +461,9 @@ project uses [Semantic Versioning](https://semver.org/).
   number inside its own transaction.
 - `ctxengine/session`: a panic in the host's noise key function left that
   session locked, so every later operation on it hung.
+- `clock`: a `Fake` `WithTimeout`/`WithDeadline` context still reported a
+  nil `Err` and `context.Cause`, and an open `Done`, for a moment after its
+  parent was cancelled, so code that read the cause right after a cancel
+  (as a turn deciding how it ended does) saw none. They now show the
+  parent's end as soon as the parent's cancel returns, as a
+  `context.WithDeadline` context does.

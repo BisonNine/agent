@@ -11,7 +11,8 @@ testable. It imports only the standard library.
 - `NewFake(start)` is a clock tests move by hand: `Advance`, `Set`, `Waiters`
   and `BlockUntil` (wait until n timers are pending). Its contexts end when
   the fake time passes their deadline, carry the parent's values and cause,
-  and take the parent's deadline when it is earlier.
+  show the parent's end as soon as the parent's cancel returns, and take the
+  parent's deadline when it is earlier.
 
 ```go
 f := clock.NewFake(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
