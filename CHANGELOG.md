@@ -43,7 +43,9 @@ project uses [Semantic Versioning](https://semver.org/).
   the call are still on it however late the result comes, and the
   `toolkit.Info` of the tool that ran; delivered after the turn and after
   `Close` too, a panic in it recovered and logged), `Agent.ForgetSession`, `EnginePanicError` (an engine
-  panic in the run's result), `CompactionStart` for a host's own managers.
+  panic in the run's result), `CompactionStart` for a host's own managers,
+  `CapToolResult` and `ToolResultCap` (the cap the engine puts on each tool
+  result, for results a host delivers itself).
   `Spec.LogContent` is a function, read live.
 - `loop`, for hosts that own their queue and sessions: `Spec.Unqueued`
   (`agent.WithUnqueued`; `agenttest.RunUnqueued`), `Session.Compaction` (the

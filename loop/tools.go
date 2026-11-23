@@ -340,7 +340,7 @@ func (e *engineTurn) toolResultMessage(r toolCallResult) spawnllm.Message {
 	if contentForLLM == "" && r.result.Err != nil {
 		contentForLLM = r.result.Err.Error()
 	}
-	if capped := capToolResult(contentForLLM, r.result.IsError, e.spec.contextWindow); len(capped) != len(contentForLLM) {
+	if capped := CapToolResult(contentForLLM, r.result.IsError, e.spec.contextWindow); len(capped) != len(contentForLLM) {
 		e.logAt(slog.LevelWarn, "Tool result truncated for context", map[string]any{
 			"agent_id":     e.spec.agentID,
 			"tool":         r.tc.Name,

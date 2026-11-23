@@ -22,17 +22,22 @@ const (
 	toolErrorMinChars = 4 << 10
 )
 
-// toolResultCap returns the per-result character cap for a context window.
-func toolResultCap(contextWindow int) int {
+// ToolResultCap returns the character cap of one tool result for a model
+// whose context window is contextWindow tokens: a quarter of the window at
+// four characters a token, kept between 16 KiB and 512 KiB.
+func ToolResultCap(contextWindow int) int {
 	limit := int(float64(contextWindow) * toolResultCapWindowFraction * toolResultCharsPerToken)
 	return min(max(limit, toolResultCapFloor), toolResultCapCeiling)
 }
 
-// capToolResult truncates content to the cap for contextWindow, keeping the
-// head and appending a marker that tells the model how to see the rest.
-// Error text is never cut below toolErrorMinChars.
-func capToolResult(content string, isError bool, contextWindow int) string {
-	limit := toolResultCap(contextWindow)
+// CapToolResult truncates content to ToolResultCap(contextWindow), keeping
+// the head (never splitting a rune) and appending a marker that tells the
+// model how to see the rest; content within the cap is returned unchanged.
+// Error text (isError) is never cut below 4 KiB. The engine applies it to
+// every tool result it stores; a host applies it to tool results it
+// delivers itself, so they are capped alike.
+func CapToolResult(content string, isError bool, contextWindow int) string {
+	limit := ToolResultCap(contextWindow)
 	if isError && limit < toolErrorMinChars {
 		limit = toolErrorMinChars
 	}

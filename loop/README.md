@@ -124,6 +124,8 @@ between). `hook.WithoutTurnID()` runs a turn with no id at all;
 `hook.NoIterations` a turn with no model request. A run's handle holds its
 events until `Events` reads them; a host that only calls `Wait` runs its
 turns with `hook.WithoutEvents()`, so the handle keeps only `TurnFinished`.
+`CapToolResult` caps a tool result a host delivers itself as the engine
+caps those it stores (`ToolResultCap` is the cap for a context window).
 
 ## Not here
 
