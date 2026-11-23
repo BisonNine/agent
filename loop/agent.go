@@ -446,8 +446,9 @@ func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Sco
 // ForgetSession drops what the agent keeps of an idle session: its own
 // context manager and memory session (closed) and its entry. It reports
 // false, and drops nothing, while the session has a turn running or runs
-// queued, or is being forgotten by another call. A run given meanwhile waits until they are closed, then starts on
-// new ones. The session store is not touched. With Spec.Session the agent
+// queued, or is being forgotten by another call. A run given meanwhile
+// waits until they are closed, then starts on new ones. The session store is
+// not touched. With Spec.Session the agent
 // keeps nothing of an idle session, and this only reports. After Close it
 // does nothing.
 func (a *Agent) ForgetSession(key string) bool {
