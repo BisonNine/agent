@@ -6,6 +6,7 @@ package anthropicmessages
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -268,5 +269,36 @@ func TestNormalizeBaseURL_BareV1(t *testing.T) {
 		if got := normalizeBaseURL(in); got != defaultBaseURL {
 			t.Errorf("normalizeBaseURL(%q) = %q, want %q", in, got, defaultBaseURL)
 		}
+	}
+}
+
+// TestChat_StreamingKeepsUndecodableToolArguments checks that streamed tool
+// call arguments that do not decode (cut short here) are kept under "raw" and
+// logged, as on the OpenAI-compatible path, rather than becoming {}.
+func TestChat_StreamingKeepsUndecodableToolArguments(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"message_start","message":{"model":"claude-test","usage":{"input_tokens":3}}}`,
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"search"}}`,
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"q\":\"bo"}}`,
+		`data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":2}}`,
+	}, "\n\n") + "\n\n"
+	srv := sseMessagesServer(t, body, nil)
+	logs := &launchtest.Logs{}
+	opts := map[string]any{"max_tokens": 64, common.TextDeltaOption: func(string) {}}
+	out, err := NewProvider("k", srv.URL, WithLogger(logs.Logger())).
+		Chat(context.Background(), testID, hello, nil, "claude-test", opts)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %+v, want 1", out.ToolCalls)
+	}
+	tc := out.ToolCalls[0]
+	if tc.Name != "search" || len(tc.Arguments) != 1 || tc.Arguments["raw"] != `{"q":"bo` {
+		t.Errorf("arguments = %v, want the text kept under raw", tc.Arguments)
+	}
+	e, ok := logs.Find("failed to decode tool call arguments payload")
+	if !ok || e.Level != slog.LevelWarn || e.Attrs["name"] != "search" {
+		t.Errorf("entry = %+v, found %v; want the warning naming the tool", e, ok)
 	}
 }

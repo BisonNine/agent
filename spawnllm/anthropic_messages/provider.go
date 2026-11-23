@@ -268,7 +268,7 @@ func (p *Provider) readStream(
 	start time.Time,
 ) (*LLMResponse, error) {
 	counter := &countingReader{r: resp.Body}
-	body, streamErr := accumulateMessagesStream(counter, cb)
+	body, streamErr := accumulateMessagesStream(counter, cb, p.logger)
 	durationMs := time.Since(start).Milliseconds()
 	bytesReceived := counter.n
 
@@ -319,8 +319,9 @@ type streamContentBlock struct {
 // JSON body (message_start skeleton + accumulated content blocks + message_delta
 // stop_reason/usage). The SSE line framing is reused from common.SSEReader; the
 // event/accumulation shape is Anthropic-specific and stays local to this
-// package. An `error` event returns a non-nil error.
-func accumulateMessagesStream(r io.Reader, cb common.TextDeltaFunc) ([]byte, error) {
+// package. An `error` event returns a non-nil error. log receives the
+// warning for tool call arguments that do not decode (nil discards).
+func accumulateMessagesStream(r io.Reader, cb common.TextDeltaFunc, log *slog.Logger) ([]byte, error) {
 	sr := common.NewSSEReader(r)
 
 	var (
@@ -399,18 +400,20 @@ func accumulateMessagesStream(r io.Reader, cb common.TextDeltaFunc) ([]byte, err
 		}
 	}
 
-	return reconstructMessagesBody(model, stopReason, usage, order, byIndex), nil
+	return reconstructMessagesBody(model, stopReason, usage, order, byIndex, log), nil
 }
 
 // reconstructMessagesBody assembles a non-streaming Messages-API JSON body from
 // the accumulated stream state. The shape mirrors exactly what parseResponseBody
 // consumes (content[].{text|tool_use}, stop_reason, model, usage), so no parsing
-// is duplicated.
+// is duplicated. Tool call arguments that do not decode are kept under "raw"
+// and logged on log, as on the OpenAI-compatible path.
 func reconstructMessagesBody(
 	model, stopReason string,
 	usage usageInfo,
 	order []int,
 	byIndex map[int]*streamContentBlock,
+	log *slog.Logger,
 ) []byte {
 	content := make([]map[string]any, 0, len(order))
 	for _, idx := range order {
@@ -428,13 +431,7 @@ func reconstructMessagesBody(
 				"data": blk.data,
 			})
 		case "tool_use":
-			var input map[string]any
-			raw := blk.input.String()
-			if raw == "" {
-				input = map[string]any{}
-			} else if err := json.Unmarshal([]byte(raw), &input); err != nil {
-				input = map[string]any{}
-			}
+			input := common.DecodeToolCallArguments(json.RawMessage(blk.input.String()), blk.name, log)
 			content = append(content, map[string]any{
 				"type":  "tool_use",
 				"id":    blk.id,

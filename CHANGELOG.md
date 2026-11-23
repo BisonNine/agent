@@ -467,3 +467,6 @@ project uses [Semantic Versioning](https://semver.org/).
   (as a turn deciding how it ended does) saw none. They now show the
   parent's end as soon as the parent's cancel returns, as a
   `context.WithDeadline` context does.
+- `spawnllm/anthropic_messages`: streamed tool call arguments that did not
+  decode became `{}`; they are now kept under `"raw"` with a warning, as on
+  the OpenAI-compatible path.
