@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -81,18 +82,25 @@ func ArchivePath(dir, sessionKey string) string {
 
 // ListSessions returns the session keys of every *.archive.db in dir that has
 // a session_state row, sorted. Keys are read from the databases, not
-// reconstructed from file names. A database that cannot be opened or has no
-// state row (an archive that predates the window fold, or an empty one) is
-// skipped. Returns nil, nil if dir does not exist.
+// reconstructed from file names. An archive with no state row (an empty or
+// not yet initialised file, or one that was never written) is not a session
+// and is skipped, as is a file removed while the directory is read (or a
+// dangling link). Returns nil, nil if dir does not exist.
+//
+// An archive that exists but cannot be read (permissions, a damaged file, a
+// lock held past the busy timeout) is not skipped silently: ListSessions
+// still returns the keys of every archive it could read, together with a
+// non-nil error that joins (errors.Join) one error per unreadable archive,
+// each naming its file. A caller lists or acts on the keys and reports the
+// error. When dir itself cannot be read the keys are nil.
 //
 // A file is listed under the key it holds. When several keys map to one file
 // (see KeyCollisionError) only the one that wrote it first is a session; the
 // others were refused and are not listed. This never makes the listing fail.
 //
-// Unreadable archives are logged to logger, tagged with the component
+// logger receives what closing an archive reports, tagged with the component
 // "memory"; nil discards.
 func ListSessions(dir string, logger *slog.Logger) ([]string, error) {
-	log := componentLog(logger)
 	entries, err := os.ReadDir(dir)
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -100,28 +108,48 @@ func ListSessions(dir string, logger *slog.Logger) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("memory: list sessions: %w", err)
 	}
-	var keys []string
+	var (
+		keys []string
+		errs []error
+	)
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), archiveSuffix) {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		a, err := OpenReadOnly(path, logger)
+		key, err := listedKey(filepath.Join(dir, entry.Name()), logger)
 		if err != nil {
+			errs = append(errs, fmt.Errorf("memory: list sessions: %s: %w", entry.Name(), err))
 			continue
 		}
-		st, err := a.State()
-		if err != nil {
-			log.Debug("list sessions: skipping unreadable archive",
-				"path", entry.Name(), "error", err.Error())
-			continue
-		}
-		if st.Key != "" {
-			keys = append(keys, st.Key)
+		if key != "" {
+			keys = append(keys, key)
 		}
 	}
 	sort.Strings(keys)
-	return keys, nil
+	return keys, errors.Join(errs...)
+}
+
+// listedKey returns the key the archive at path holds, or "" when the file is
+// gone or holds no session state.
+func listedKey(path string, logger *slog.Logger) (string, error) {
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	a := &ArchiveStore{path: path, log: componentLog(logger)}
+	db, done, err := a.openRead()
+	if err != nil {
+		return "", err
+	}
+	defer done()
+	ok, err := hasTable(db, "session_state")
+	if err != nil || !ok {
+		return "", err
+	}
+	st, err := readState(db)
+	return st.Key, err
 }
 
 // DeleteSession removes <key>.archive.db and its -wal/-shm sidecars. A

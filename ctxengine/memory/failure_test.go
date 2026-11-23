@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -438,6 +439,69 @@ func TestListSessions_Errors(t *testing.T) {
 			t.Errorf("keys = %v, want [alice]", keys)
 		}
 	})
+}
+
+// TestListSessions_UnreadableArchive lists a directory holding an archive
+// that exists but cannot be read: the readable sessions are listed and the
+// error names the unreadable file.
+func TestListSessions_UnreadableArchive(t *testing.T) {
+	tests := []struct {
+		name     string
+		spoil    func(t *testing.T, dir, path string)
+		wantKeys []string // the sessions still listed
+		wantErrs int      // the archives reported
+	}{
+		{"damaged file", func(t *testing.T, _, path string) {
+			t.Helper()
+			noErr(t, os.WriteFile(path, []byte(strings.Repeat("not a database ", 100)), 0o600))
+		}, []string{"alice"}, 1},
+		{"damaged state", func(t *testing.T, _, path string) {
+			t.Helper()
+			noErr(t, os.Remove(path))
+			writeRawDB(t, path, `CREATE TABLE session_state (id INTEGER PRIMARY KEY)`)
+		}, []string{"alice"}, 1},
+		{"unreadable file", func(t *testing.T, _, path string) {
+			t.Helper()
+			if os.Getuid() == 0 {
+				t.Skip("root ignores file permissions")
+			}
+			noErr(t, os.Chmod(path, 0))
+		}, []string{"alice"}, 1},
+		// A WAL archive cannot be read without creating its -shm file.
+		{"read-only directory", func(t *testing.T, dir, _ string) {
+			t.Helper()
+			readOnlyDir(t, dir)
+		}, nil, 2},
+		// The names can be listed but no file in it can be reached.
+		{"unsearchable directory", func(t *testing.T, dir, _ string) {
+			t.Helper()
+			if os.Getuid() == 0 {
+				t.Skip("root ignores directory permissions")
+			}
+			noErr(t, os.Chmod(dir, 0o600))
+			t.Cleanup(func() { noErr(t, os.Chmod(dir, 0o700)) })
+		}, nil, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeSession(t, dir, "alice", "hello")
+			writeSession(t, dir, "bob", "hello")
+			tt.spoil(t, dir, ArchivePath(dir, "bob"))
+
+			keys, err := ListSessions(dir, nil)
+			if !slices.Equal(keys, tt.wantKeys) {
+				t.Errorf("keys = %v, want %v", keys, tt.wantKeys)
+			}
+			if err == nil || !strings.Contains(err.Error(), "bob"+archiveSuffix) {
+				t.Fatalf("err = %v, want one naming bob%s", err, archiveSuffix)
+			}
+			var joined interface{ Unwrap() []error }
+			if !errors.As(err, &joined) || len(joined.Unwrap()) != tt.wantErrs {
+				t.Errorf("err = %v, want %d joined errors", err, tt.wantErrs)
+			}
+		})
+	}
 }
 
 func TestReadOnlySession_FileRemoved(t *testing.T) {

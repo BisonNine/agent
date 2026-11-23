@@ -489,3 +489,4 @@ project uses [Semantic Versioning](https://semver.org/).
   memories sent the model an empty current state, without a log line, and the
   model could recreate them. The run now fails with "consolidate: current
   state: …", applies nothing, keeps the watermark, and records the error.
+- `ctxengine/memory`: `ListSessions` silently skipped an archive it could not read; it now returns the readable keys with an error naming each unreadable archive.
