@@ -475,3 +475,6 @@ project uses [Semantic Versioning](https://semver.org/).
   a string, as `openai_compat` does.
 - `ctxengine/session`: `MigrateJSONL` reported a failure to write a
   session's state as a failure to write its window.
+- `ctxengine`: a compaction attempt whose request could not be encoded was
+  left out of the debug capture file without a word; it is now logged as a
+  warning.

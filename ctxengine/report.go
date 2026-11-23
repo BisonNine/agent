@@ -217,6 +217,10 @@ func (r *compactionRecorder) record(model, status, detail string, dur time.Durat
 	}
 	data, err := json.Marshal(rec)
 	if err != nil {
+		r.logger().Warn("compaction debug capture: encode failed",
+			"session_key", r.sessionKey,
+			"error", err.Error(),
+		)
 		return
 	}
 	f, err := openDebugCapture(r.debugPath, r.debugPerm, r.logger())
