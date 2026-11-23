@@ -3,12 +3,14 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"go.bison9.com/agent"
 	"go.bison9.com/agent/models"
 	"go.bison9.com/agent/models/modelstest"
 	"go.bison9.com/agent/modelspec"
@@ -114,5 +116,95 @@ func TestChat_IsSmall(t *testing.T) {
 	}
 	if n >= 100 {
 		t.Fatalf("main.go has %d lines of code, want fewer than 100", n)
+	}
+}
+
+// A catalogue with no chat model is reported, not run.
+func TestChat_NoChatModel(t *testing.T) {
+	var out strings.Builder
+	err := chat(context.Background(), models.New(), strings.NewReader("Hello\n"), &out, make(chan os.Signal, 1))
+	if !errors.Is(err, agent.ErrInvalidSpec) {
+		t.Fatalf("chat = %v, want ErrInvalidSpec", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("output %q, want none", out.String())
+	}
+}
+
+// A Ctrl-C pressed at the prompt does not stop the next reply.
+func TestChat_InterruptAtPrompt(t *testing.T) {
+	p := modelstest.New().Script("sonnet-wire", modelstest.Reply("Hello, Bob."))
+	interrupts := make(chan os.Signal, 1)
+	interrupts <- os.Interrupt
+	var out strings.Builder
+	if err := chat(context.Background(), scripted(t, p), strings.NewReader("Hello\n"), &out, interrupts); err != nil {
+		t.Fatal(err)
+	}
+	if want := "> Hello, Bob.\n> "; out.String() != want {
+		t.Fatalf("output %q, want %q", out.String(), want)
+	}
+}
+
+// A failed reply is written as an error and the conversation goes on.
+func TestChat_ModelError(t *testing.T) {
+	down := errors.New("service down")
+	p := modelstest.New().
+		Script("sonnet-wire", modelstest.Fail(down), modelstest.Reply("Back again.")).
+		Script("haiku-wire", modelstest.Fail(down))
+	var out strings.Builder
+	if err := chat(context.Background(), scripted(t, p), strings.NewReader("Hello\nHello?\n"), &out, make(chan os.Signal, 1)); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(out.String(), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "> error: ") || !strings.Contains(lines[0], "service down") ||
+		lines[1] != "> Back again." || lines[2] != "> " {
+		t.Fatalf("output %q", out.String())
+	}
+}
+
+type failingWriter struct{ err error }
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// Output that cannot be written ends the conversation with the error,
+// before anything is sent to the model.
+func TestChat_WriteError(t *testing.T) {
+	closed := errors.New("stdout closed")
+	p := modelstest.New()
+	err := chat(context.Background(), scripted(t, p), strings.NewReader("Hello\n"), failingWriter{closed}, make(chan os.Signal, 1))
+	if !errors.Is(err, closed) {
+		t.Fatalf("chat = %v, want the write error", err)
+	}
+	if n := len(p.Calls()); n != 0 {
+		t.Fatalf("%d model calls, want none", n)
+	}
+}
+
+// main builds the example's models and chats on stdin and stdout; at the end
+// of the input it exits without calling a model.
+func TestMain_EndOfInput(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "test-key")
+	stdin, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close() }() //nolint:errcheck // a read-only file
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldIn, oldOut := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = stdin, outW
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+	main()
+	if err = outW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(outR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "> " {
+		t.Fatalf("output %q, want the prompt alone", got)
 	}
 }

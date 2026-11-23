@@ -23,7 +23,7 @@ import (
 func main() {
 	m := models.New()
 	err := errors.Join(
-		m.AddProvider(modelspec.Provider{Name: "anthropic", Protocol: "anthropic", APIKey: os.Getenv("ANTHROPIC_API_KEY")}),
+		m.AddProvider(modelspec.Provider{Name: "anthropic", Protocol: "anthropic", BaseURL: "https://api.anthropic.com", APIKey: os.Getenv("ANTHROPIC_API_KEY")}),
 		m.Add(modelspec.Model{ModelName: "sonnet", Model: "claude-sonnet-5-5", Provider: "anthropic"}, models.For(models.Chat, 1)),
 		m.Add(modelspec.Model{ModelName: "haiku", Model: "claude-haiku-5-5", Provider: "anthropic"}, models.For(models.Chat, 2), models.For(models.Summarize, 1)),
 	)

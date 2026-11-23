@@ -428,6 +428,8 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `examples/chat`: the example stopped at once with "base_url is required";
+  its Anthropic provider now names the API's base URL.
 - `ctxengine/memory`: two session keys that map to one file (`a:b`, `a/b`
   and `a_b`, or keys differing only in case on a case-insensitive file
   system) silently shared one history. A file now belongs to the first key
