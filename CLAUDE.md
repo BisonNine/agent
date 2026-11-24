@@ -49,7 +49,8 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   types it aliases) and the standard library. It
   knows no host protocol, name or alert; a host supplies those through
   `RegisterClient`, `WithObserver` and `WithDeclinedMessage`.
-- `accounting` imports only the standard library. `spawnllm` may
+- `accounting` imports only `fsmode` and the standard library; it takes
+  its modes as an `fsmode.Modes` (`WithFileModes`). `spawnllm` may
   import it; `ctxengine` and `cogmem` do not.
 - `ident` (the agent id rule) imports only the standard library, so a
   host's configuration can use it without the rest of the SDK.

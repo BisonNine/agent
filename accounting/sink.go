@@ -19,11 +19,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
+
+	"go.bison9.com/agent/fsmode"
 )
 
 // FileName is the name of the accounting file in the directory given to
@@ -83,14 +86,38 @@ type sink struct {
 	closeErr error // set by the writer before done is closed
 }
 
-// Start creates dir if needed (mode 0700), opens dir/accounting.log for
-// appending (mode 0600 when created) and starts the writer. It returns
+// Option configures Start.
+type Option func(*options)
+
+type options struct {
+	modes fsmode.Modes
+}
+
+// WithFileModes sets the modes of what Start creates: Dir for the directory
+// when it does not exist, File for accounting.log when it does not exist.
+// A zero field keeps its default, fsmode.DefaultDir (0700) or
+// fsmode.DefaultFile (0600). An existing directory or file keeps its mode.
+func WithFileModes(m fsmode.Modes) Option {
+	return func(o *options) { o.modes = m }
+}
+
+// Start creates dir if needed (mode 0700 unless WithFileModes says
+// otherwise), opens dir/accounting.log for appending (mode 0600 when created,
+// unless WithFileModes says otherwise) and starts the writer. The modes of
+// what it creates are set with chmod, so the umask does not alter them. It returns
 // ErrAlreadyStarted while a sink is running; after Close it may be called
 // again. While a Close is still draining, Start waits for it to finish.
-func Start(dir string) error {
+func Start(dir string, opts ...Option) error {
 	if dir == "" {
 		return errors.New("accounting: directory is required")
 	}
+	var o options
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&o)
+		}
+	}
+	modes := o.modes.Or(fsmode.Modes{Dir: fsmode.DefaultDir, File: fsmode.DefaultFile})
 	lifecycle.Lock()
 	defer lifecycle.Unlock()
 	mu.Lock()
@@ -98,14 +125,11 @@ func Start(dir string) error {
 	if current != nil {
 		return ErrAlreadyStarted
 	}
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("accounting: create directory: %w", err)
-	}
-	path := filepath.Join(dir, FileName)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600) //nolint:gosec // G304: the directory is the host's choice; the file name is fixed
+	f, err := openFile(dir, modes)
 	if err != nil {
-		return fmt.Errorf("accounting: open file: %w", err)
+		return err
 	}
+	path := f.Name()
 	s := &sink{
 		path:  path,
 		file:  f,
@@ -115,6 +139,39 @@ func Start(dir string) error {
 	go s.run()
 	current = s
 	return nil
+}
+
+// openFile creates dir if it does not exist and opens dir/accounting.log for
+// appending, creating it if it does not exist. What it creates gets the
+// modes set with chmod, so the umask does not alter them; what exists keeps
+// its mode.
+func openFile(dir string, modes fsmode.Modes) (*os.File, error) {
+	_, statErr := os.Stat(dir)
+	if err := os.MkdirAll(dir, modes.Dir); err != nil {
+		return nil, fmt.Errorf("accounting: create directory: %w", err)
+	}
+	if errors.Is(statErr, fs.ErrNotExist) {
+		if err := os.Chmod(dir, modes.Dir); err != nil {
+			return nil, fmt.Errorf("accounting: set directory mode: %w", err)
+		}
+	}
+	path := filepath.Join(dir, FileName)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|os.O_APPEND, modes.File) //nolint:gosec // G304: the directory is the host's choice; the file name is fixed
+	if errors.Is(err, fs.ErrExist) {
+		f, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0) //nolint:gosec // G304: as above
+		if err != nil {
+			return nil, fmt.Errorf("accounting: open file: %w", err)
+		}
+		return f, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("accounting: open file: %w", err)
+	}
+	if err := f.Chmod(modes.File); err != nil {
+		_ = f.Close() //nolint:errcheck // the mode error is the one returned
+		return nil, fmt.Errorf("accounting: set file mode: %w", err)
+	}
+	return f, nil
 }
 
 // Report records one launch. It is safe for concurrent use. It first sets

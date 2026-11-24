@@ -57,3 +57,48 @@ func TestIdentityNormalize(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckProject(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+		ok   bool
+	}{
+		{name: "default", code: DefaultProject, ok: true},
+		{name: "letters digits and punctuation", code: "Pentest-Acme_2026.q4", ok: true},
+		{name: "one character", code: "a", ok: true},
+		{name: "at limit", code: strings.Repeat("p", MaxNameLength), ok: true},
+		{name: "only punctuation", code: ".-_", ok: true},
+		{name: "empty", code: ""},
+		{name: "too long", code: strings.Repeat("p", MaxNameLength+1)},
+		{name: "space inside", code: "acme garden"},
+		{name: "surrounding space", code: " acme"},
+		{name: "slash", code: "acme/garden"},
+		{name: "non-ASCII letter", code: "café"},
+		{name: "control character", code: "acme\n"},
+		{name: "colon", code: "acme:1"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckProject(tt.code)
+			if tt.ok {
+				if err != nil {
+					t.Errorf("CheckProject(%q) = %v, want nil", tt.code, err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidProject) {
+				t.Errorf("CheckProject(%q) = %v, want ErrInvalidProject", tt.code, err)
+			}
+		})
+	}
+}
+
+func TestCheckProjectIsCaseSensitive(t *testing.T) {
+	// Both are valid and distinct: nothing folds case.
+	for _, code := range []string{"Garden", "garden"} {
+		if err := CheckProject(code); err != nil {
+			t.Errorf("CheckProject(%q) = %v", code, err)
+		}
+	}
+}

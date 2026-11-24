@@ -27,7 +27,39 @@ var (
 	// ErrNameTooLong reports an agent or project longer than MaxNameLength
 	// characters.
 	ErrNameTooLong = errors.New("name is too long")
+	// ErrInvalidProject reports a project that CheckProject refuses.
+	ErrInvalidProject = errors.New("invalid project")
 )
+
+// CheckProject reports whether code is a valid project: 1 to MaxNameLength
+// characters, each an ASCII letter, digit, '.', '_' or '-'. Case matters
+// ("Garden" and "garden" are two projects) and nothing is trimmed. It returns
+// nil or an error wrapping ErrInvalidProject. Normalize does not call it: a
+// host that lets someone choose a project checks it here first.
+func CheckProject(code string) error {
+	if code == "" {
+		return fmt.Errorf("accounting: project is empty: %w", ErrInvalidProject)
+	}
+	if len(code) > MaxNameLength {
+		return fmt.Errorf("accounting: project has more than %d characters: %w", MaxNameLength, ErrInvalidProject)
+	}
+	for i := 0; i < len(code); i++ {
+		if !projectByte(code[i]) {
+			return fmt.Errorf("accounting: project %q has a character other than a letter, digit, '.', '_' or '-': %w",
+				code, ErrInvalidProject)
+		}
+	}
+	return nil
+}
+
+// projectByte reports whether b may appear in a project.
+func projectByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	}
+	return b == '.' || b == '_' || b == '-'
+}
 
 // ellipsis ends a Name shortened to MaxNameLength characters.
 const ellipsis = "…"

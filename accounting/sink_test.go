@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"go.bison9.com/agent/fsmode"
 )
 
 // capture is a slog handler that keeps the accounting records and counts
@@ -465,4 +467,108 @@ func TestLoggerRecordsCarryComponent(t *testing.T) {
 	if logged, _ := c.snapshot(); len(logged) != 1 {
 		t.Fatalf("logger got %d records with component accounting, want 1", len(logged))
 	}
+}
+
+// TestStartFileModes checks the modes Start gives what it creates, with and
+// without WithFileModes, and that the umask does not alter them.
+func TestStartFileModes(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     []Option
+		wantDir  os.FileMode
+		wantFile os.FileMode
+	}{
+		{name: "default", wantDir: 0o700, wantFile: 0o600},
+		{name: "nil option ignored", opts: []Option{nil}, wantDir: 0o700, wantFile: 0o600},
+		{name: "zero modes keep the default", opts: []Option{WithFileModes(fsmode.Modes{})}, wantDir: 0o700, wantFile: 0o600},
+		{name: "both set", opts: []Option{WithFileModes(fsmode.Modes{Dir: 0o750, File: 0o640})}, wantDir: 0o750, wantFile: 0o640},
+		{name: "file only", opts: []Option{WithFileModes(fsmode.Modes{File: 0o640})}, wantDir: 0o700, wantFile: 0o640},
+		// A usual umask (022) strips group write; the chmod restores it.
+		{name: "umask overridden", opts: []Option{WithFileModes(fsmode.Modes{Dir: 0o770, File: 0o660})}, wantDir: 0o770, wantFile: 0o660},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "acct")
+			if err := Start(dir, tt.opts...); err != nil {
+				t.Fatalf("Start: %v", err)
+			}
+			if err := Close(); err != nil {
+				t.Fatal(err)
+			}
+			if got := statPerm(t, dir); got != tt.wantDir {
+				t.Errorf("directory mode = %v, want %v", got, tt.wantDir)
+			}
+			if got := statPerm(t, filepath.Join(dir, FileName)); got != tt.wantFile {
+				t.Errorf("file mode = %v, want %v", got, tt.wantFile)
+			}
+		})
+	}
+}
+
+// TestStartKeepsExistingModes checks that an existing directory and file
+// keep their modes whatever WithFileModes says, and that the file is
+// appended to.
+func TestStartKeepsExistingModes(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "acct")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, FileName)
+	if err := os.WriteFile(path, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Start(dir, WithFileModes(fsmode.Modes{Dir: 0o700, File: 0o600})); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	Report(testRecord("alice", 1))
+	if err := Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := statPerm(t, dir); got != 0o755 {
+		t.Errorf("directory mode = %v, want 0755 kept", got)
+	}
+	if got := statPerm(t, path); got != 0o644 {
+		t.Errorf("file mode = %v, want 0644 kept", got)
+	}
+	if got := readLines(t, dir); len(got) != 1 || got[0].Agent != "alice" {
+		t.Errorf("records = %+v", got)
+	}
+}
+
+// TestStartFailures checks the errors Start returns when it cannot create
+// the directory or open the file.
+func TestStartFailures(t *testing.T) {
+	base := t.TempDir()
+	notDir := filepath.Join(base, "file")
+	if err := os.WriteFile(notDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Start(filepath.Join(notDir, "acct")); err == nil {
+		_ = Close() //nolint:errcheck // the test failed already
+		t.Error("Start under a file succeeded")
+	}
+	// accounting.log is a directory: it exists, so it is opened, and that fails.
+	dir := filepath.Join(base, "acct")
+	if err := os.MkdirAll(filepath.Join(dir, FileName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Start(dir); err == nil {
+		_ = Close() //nolint:errcheck // the test failed already
+		t.Error("Start with a directory named accounting.log succeeded")
+	}
+}
+
+func statPerm(t *testing.T, path string) os.FileMode {
+	t.Helper()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Mode().Perm()
 }
