@@ -23,6 +23,7 @@ offered under one name.
 | `Instruction`, `InstructionLayers` | the system prompt: the instruction, then the host's layers per dispatch | none |
 | `Models` | the agent's `*models.Set`: `Chat` for turns, `Summarize` for compaction | required without `TurnModels` |
 | `TurnModels` | the turn's chain (and limits), chosen by the host per turn | `Models.Begin(Chat, session scope)` |
+| `TurnProject` | the turn's accounting project, chosen by the host at set-up and again before each model call (see below) | `Identity.Project` |
 | `Session` | the turn's session context from the host (manager, memory, release, request amend, a manager for forced compaction); `Context` nil for a turn a `BeforeTurn` answers | the agent's own per session |
 | `Unqueued` | the host serialises each session's runs; `Run` never queues | queued |
 | `Tasks` | a task registry the host shares between its agents and their instances (`NewTasks`); never shut down by the agent | a registry of its own |
@@ -68,6 +69,30 @@ budget, the agent's task registrar and its callbacks:
   stopped;
 - after the turn, the compaction the session's adds deferred runs outside
   the turn (`OnCompaction`, `OnEvent` only).
+
+### The turn's project
+
+`TurnProject(ctx, scope)` lets a host bill each session, or each run, to
+its own project. It is asked once as the turn is set up (before
+`TurnLimits`, `TurnModels`, `Session` and `TurnStarted`) and again before
+each dispatch of the model loop. A non-empty answer replaces
+`Scope.Project` and the scope is put on the turn's context again, so a
+change made during the turn (by a tool, say) applies from the next model
+call: to that call's accounting identity and `ModelCall`, compaction inside
+the turn (the summary caller reads the project from the scope on its
+context), `InstructionLayers`, tool calls and the tasks they start
+(`hook.TaskScope` copies it), later events, `AfterTurn` and
+`TurnFinished`. An empty answer means `Identity.Project`. An answer
+`accounting.CheckProject` refuses ends the turn with `OutcomeError` and an
+error wrapping `accounting.ErrInvalidProject` (at set-up before
+`TurnStarted`, mid-turn before the next model call): a bad project never
+reaches a record. A panic in it ends the turn with an `*EnginePanicError`.
+The deferred compaction after a turn asks it too, with the session's scope
+(no turn id) and the run's context values; a refused answer or a panic there
+skips that compaction and logs an error. A served-tools credential keeps the
+project of the turn's set-up. The project a session has chosen is a host
+value; ctxengine keeps one for it in the session's state
+(`memory.CompactionState.Project`).
 
 The engine's own behaviour is unchanged from the host it came from (sticky
 model per turn, fallback per call with cooldown skips, timeout and overflow
@@ -149,7 +174,7 @@ agent's instances (a config reload, temporary clones):
 A host with its own session cache, model selection, identity and timing
 supplies them through the optional `Spec` fields above; `hook/DESIGN.md`
 section 10 is the checklist. A panic in the engine (or in the host's
-`TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
+`TurnProject`/`TurnLimits`/`TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
 `TurnFinished`: a host that wants its own recovery re-panics with its
 `Value` on its own goroutine. The agent logs neither a panic nor a turn
 error it delivers in `TurnFinished`. `ForgetSession(key)` (the root

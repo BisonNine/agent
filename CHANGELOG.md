@@ -319,6 +319,23 @@ project uses [Semantic Versioning](https://semver.org/).
   a longer name shortened to end in `…`) and `spawnllm.WithAccounting` to
   set it on a `Worker`. Records carry the name as `agent_name` (`"-"` when
   not set); grouping and pricing use the agent.
+- `accounting.CheckProject` and `ErrInvalidProject`: a project a host lets
+  someone choose is 1 to 64 ASCII letters, digits, `.`, `_` or `-`,
+  case-sensitive. `accounting.Start` takes options; `WithFileModes` sets the
+  modes of the directory and file it creates (default 0700 and 0600, as
+  before), set with chmod so the umask does not alter them.
+- A project per turn: `loop.Spec.TurnProject` (`agent.WithTurnProject`) is
+  asked as a turn is set up and before each model call; a non-empty answer
+  replaces the scope's project from then on (model calls, compaction, tool
+  calls, tasks started from the turn, events), an empty one keeps the
+  agent's, and one `CheckProject` refuses ends the turn with an error
+  wrapping `ErrInvalidProject`. The agent's summary caller takes its project
+  from the scope on its context, and the compaction after a turn asks
+  `TurnProject` too.
+- `memory.CompactionState.Project`: a session's project, stored for the
+  host in the session state (new column `project`, added to an older file
+  when it is opened for writing, read as `""` from one opened read-only)
+  and kept across a reset, like the host's other per-session fields.
 - `DispatchStatus.Reported` and `TaskUsage.Reported`, which say which token
   counts, seconds, characters and tool call counts a response actually
   carried, and `DispatchStatus.ToolCalls`: the tool calls in an API response,
@@ -479,6 +496,9 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- `loop`: a panic in the host's `Spec.TurnLimits` as a turn was set up was
+  not recovered; it now ends the run with an `*EnginePanicError` (`SetUp`),
+  as one in `TurnModels` does.
 - `openai_responses`: a user message whose attachments cannot be sent is no
   longer sent with an empty content list.
 - `examples/chat`: the example stopped at once with "base_url is required";

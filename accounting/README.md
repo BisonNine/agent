@@ -6,15 +6,19 @@ through spawnllm: one `Record` per launch, refused launches included.
 ## Use
 
 ```go
-if err := accounting.Start("/var/lib/example/accounting"); err != nil {
+if err := accounting.Start("/var/lib/example/accounting",
+	accounting.WithFileModes(fsmode.Modes{Dir: 0o750, File: 0o640})); err != nil {
 	return err
 }
 defer accounting.Close()
 ```
 
-- `Start(dir)` creates `dir` (mode 0700) and appends to `dir/accounting.log`
-  (mode 0600). It fails while a sink is already running; after `Close` it can
-  be called again.
+- `Start(dir, opts...)` creates `dir` (mode 0700) and appends to
+  `dir/accounting.log` (mode 0600 when it creates it). `WithFileModes` sets
+  other modes for what it creates (a zero field keeps the default); they are
+  set with chmod, so the umask does not alter them, and an existing directory
+  or file keeps its mode. It fails while a sink is already running; after
+  `Close` it can be called again.
 - `Report(r)` queues one record. It never drops a record: it blocks while the
   queue is full, so a log file on a stalled device blocks the callers.
   spawnllm calls it; a host rarely needs to.
@@ -36,6 +40,14 @@ agent (`ErrAgentRequired`), refuses an agent or project longer than 64
 characters (`ErrNameTooLong`), shortens a longer name to 64 characters
 ending in `…`, and sets an empty project to `default`. The name is a label
 only: records are grouped and priced by agent.
+
+A project is what a host bills work to (it may call it a billing code).
+`CheckProject(code)` is the rule for one a person or a model chooses: 1 to
+64 characters, each an ASCII letter, digit, `.`, `_` or `-`; case-sensitive,
+nothing trimmed. Anything else is an error wrapping `ErrInvalidProject`.
+`Normalize` does not apply it. The agent loop applies it to the project a
+host returns per turn (`loop.Spec.TurnProject`): a refused one ends the turn
+with that error, so it never reaches a record.
 
 ## Record
 

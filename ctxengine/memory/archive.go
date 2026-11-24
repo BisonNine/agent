@@ -115,9 +115,17 @@ CREATE TABLE IF NOT EXISTS session_state (
     active_model_index             INTEGER NOT NULL DEFAULT 0,
     expose_reasoning               INTEGER NOT NULL DEFAULT 0,
     show_tool_activity             INTEGER NOT NULL DEFAULT 0,
-    pending_turn                   INTEGER NOT NULL DEFAULT 0
+    pending_turn                   INTEGER NOT NULL DEFAULT 0,
+    project                        TEXT    NOT NULL DEFAULT ''
 );
 `
+
+// addedColumns are the session_state columns added after the table was
+// first released, each with its definition: a writable open adds those a
+// file lacks (addMissingColumns).
+var addedColumns = []struct{ name, def string }{
+	{"project", "TEXT NOT NULL DEFAULT ''"},
+}
 
 // SummaryCheckpoint is one record of the legacy <base>.summaries.jsonl
 // checkpoint log, imported into the summaries table when an archive is opened.
@@ -487,6 +495,15 @@ func openArchive(path, key string, opts []OpenOption) (*ArchiveStore, error) {
 		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
 	}
 
+	// Columns added since the file was made: checked and added in one
+	// transaction, so two connections opening the file do not both add one.
+	if err := retryBusy(start, func() error { return addMissingColumns(db) }); err != nil {
+		iox.CloseQuietly(log, db)
+		log.Warn("archive schema upgrade failed",
+			"path", path, "error", err.Error())
+		return &ArchiveStore{path: path, unavailable: true}, ErrArchiveUnavailable
+	}
+
 	// FTS5 integrity check; rebuild if needed.
 	if err := exec("INSERT INTO messages_fts(messages_fts) VALUES ('integrity-check')"); err != nil {
 		log.Warn("archive FTS5 integrity check failed, rebuilding",
@@ -507,6 +524,32 @@ func openArchive(path, key string, opts []OpenOption) (*ArchiveStore, error) {
 	store.importLegacySummaries()
 
 	return store, nil
+}
+
+// addMissingColumns adds to session_state each of addedColumns it lacks,
+// in one write transaction (db has a single connection).
+func addMissingColumns(db *sql.DB) (err error) {
+	if _, err = db.Exec("BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_, _ = db.Exec("ROLLBACK") //nolint:errcheck // the first error is the one returned
+		}
+	}()
+	for _, c := range addedColumns {
+		var ok bool
+		if ok, err = hasStateColumn(db, c.name); err != nil {
+			return err
+		}
+		if !ok {
+			if _, err = db.Exec("ALTER TABLE session_state ADD COLUMN " + c.name + " " + c.def); err != nil {
+				return err
+			}
+		}
+	}
+	_, err = db.Exec("COMMIT")
+	return err
 }
 
 // legacySummariesPath derives the sibling <base>.summaries.jsonl path from the

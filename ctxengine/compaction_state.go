@@ -29,6 +29,12 @@ type CompactionCommitter interface {
 // (which would create a circular import). Go's structural typing means
 // session.SQLiteStore satisfies CompactionStateStore without an explicit
 // declaration.
+//
+// A host reads and writes its own per-session values kept in the state
+// (ActiveModelIndex, ExposeReasoning, ShowToolActivity, Project) through it:
+// GetCompactionState, change the field, SetCompactionState. The Manager
+// changes only its counters, and a reset (TruncateHistory with keepLast <= 0)
+// keeps the host's values.
 type CompactionStateStore interface {
 	GetCompactionState(sessionKey string) (memory.CompactionState, error)
 	SetCompactionState(sessionKey string, state memory.CompactionState) error

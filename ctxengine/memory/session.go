@@ -53,6 +53,11 @@ type CompactionState struct {
 	// ShowToolActivity, when true, posts a one-line breadcrumb for each tool call
 	// to the user for this session (toggled via /tools). Default false.
 	ShowToolActivity bool `json:"show_tool_activity,omitempty"`
+	// Project is the project the host accounts the session's work to (a
+	// billing code), kept for the host; the SDK does not read it. "" when
+	// none was set. Like the fields above it survives a reset of the
+	// counters (TruncateHistory with keepLast <= 0).
+	Project string `json:"project,omitempty"`
 }
 
 // sanitizeKey converts a session key to a safe filename component.
@@ -302,16 +307,24 @@ func readState(q queryRower) (SessionState, error) {
 		createdAt, updatedAt, summaryGeneratedAt                int64
 		cooling, exposeReasoning, showToolActivity, pendingTurn bool
 	)
+	// A file an older version wrote has no project column until a writable
+	// open adds it (addMissingColumns); a read-only open reads it as "".
+	project := "project"
+	if ok, err := hasStateColumn(q, "project"); err != nil {
+		return SessionState{}, err
+	} else if !ok {
+		project = "''"
+	}
 	err := q.QueryRowContext(context.Background(),
 		`SELECT key, summary, next_seq, created_at, updated_at,
 		        meaningful_count, compressed_at_meaningful_count, cooling, cooling_since_count,
 		        summary_generated_at, summary_model, active_model_index,
-		        expose_reasoning, show_tool_activity, pending_turn
+		        expose_reasoning, show_tool_activity, pending_turn, `+project+`
 		 FROM session_state WHERE id = 1`).Scan(
 		&st.Key, &st.Summary, &st.NextSeq, &createdAt, &updatedAt,
 		&st.Compaction.MeaningfulCount, &st.Compaction.CompressedAtMeaningfulCount, &cooling, &st.Compaction.CoolingSinceCount,
 		&summaryGeneratedAt, &st.Compaction.SummaryModel, &st.Compaction.ActiveModelIndex,
-		&exposeReasoning, &showToolActivity, &pendingTurn,
+		&exposeReasoning, &showToolActivity, &pendingTurn, &st.Compaction.Project,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionState{}, nil
@@ -327,6 +340,15 @@ func readState(q queryRower) (SessionState, error) {
 	st.Compaction.ExposeReasoning = exposeReasoning
 	st.Compaction.ShowToolActivity = showToolActivity
 	return st, nil
+}
+
+// hasStateColumn reports whether the session_state table has the column
+// name.
+func hasStateColumn(q queryRower, name string) (bool, error) {
+	var n int
+	err := q.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM pragma_table_info('session_state') WHERE name = ?`, name).Scan(&n)
+	return n > 0, err
 }
 
 // execer is the subset of *sql.DB and txConn the state and window writers use.
@@ -354,12 +376,12 @@ func writeState(ex execer, st SessionState) error {
 		    (id, key, summary, next_seq, created_at, updated_at,
 		     meaningful_count, compressed_at_meaningful_count, cooling, cooling_since_count,
 		     summary_generated_at, summary_model, active_model_index,
-		     expose_reasoning, show_tool_activity, pending_turn)
-		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		     expose_reasoning, show_tool_activity, pending_turn, project)
+		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.Key, st.Summary, st.NextSeq, unixNano(st.CreatedAt), unixNano(st.UpdatedAt),
 		st.Compaction.MeaningfulCount, st.Compaction.CompressedAtMeaningfulCount, st.Compaction.Cooling, st.Compaction.CoolingSinceCount,
 		unixNano(st.Compaction.SummaryGeneratedAt), st.Compaction.SummaryModel, st.Compaction.ActiveModelIndex,
-		st.Compaction.ExposeReasoning, st.Compaction.ShowToolActivity, st.PendingTurn,
+		st.Compaction.ExposeReasoning, st.Compaction.ShowToolActivity, st.PendingTurn, st.Compaction.Project,
 	)
 	return err
 }
