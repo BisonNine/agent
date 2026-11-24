@@ -71,6 +71,7 @@ func TestOptions_SetTheirField(t *testing.T) {
 		agent.WithUnqueued(),
 		agent.WithLimits(limits),
 		agent.WithProject("support"),
+		agent.WithTurnProject(func(_ context.Context, sc agent.Scope) string { return "billing-" + sc.Session }),
 		agent.WithClock(clk),
 		agent.WithLogger(logger),
 		agent.WithLogContent(true),
@@ -96,6 +97,9 @@ func TestOptions_SetTheirField(t *testing.T) {
 	}
 	if !s.Unqueued || s.Limits != limits || s.Project != "support" {
 		t.Fatalf("Unqueued, Limits, Project = %v, %+v, %q", s.Unqueued, s.Limits, s.Project)
+	}
+	if s.TurnProject == nil || s.TurnProject(context.Background(), hook.Scope{Session: "s1"}) != "billing-s1" {
+		t.Fatal("WithTurnProject did not set the callback")
 	}
 	if s.Clock != clock.Clock(clk) || s.Logger != logger {
 		t.Fatal("WithClock or WithLogger did not set its value")

@@ -110,8 +110,12 @@ type engineSpec struct {
 	// agentID names the agent in logs and is the prompt cache key.
 	agentID string
 	// scope is the turn's scope; its Identity is the accounting identity of
-	// every model call.
+	// every model call. The loop changes its Project when project says so.
 	scope hook.Scope
+	// project, when set, is asked before each dispatch for the turn's
+	// project (Spec.TurnProject, resolved): a change is put in scope and on
+	// the turn's context; an error ends the turn.
+	project func(ctx context.Context, s hook.Scope) (string, error)
 	// message is what the turn answers, and options the run's options, as
 	// TurnStarted reports them.
 	message hook.Message
@@ -196,6 +200,8 @@ type engineTurn struct {
 
 	// pending: the pending-turn marker was set.
 	pending bool
+	// rescoped: the model loop changed the scope's project.
+	rescoped bool
 	// textDeltas: the turn's model calls ask for partial text, as the
 	// BeforeLoop callbacks left hook.Loop.TextDeltas.
 	textDeltas bool
@@ -403,6 +409,8 @@ func (e *engineTurn) run(ctx context.Context) (res engineResult, err error) {
 		}
 		if err == nil {
 			res, err = e.loop(ctx)
+			// What follows the loop sees the project its last dispatch had.
+			ctx = e.scoped(ctx)
 		}
 		e.releaseCompressionManagers()
 		tr = e.turnResult(ctx, err)
@@ -501,6 +509,10 @@ func (e *engineTurn) loop(ctx context.Context) (engineResult, error) {
 		if ctx.Err() != nil {
 			return engineResult{iterations: e.iteration}, e.stopped(ctx)
 		}
+		var perr error
+		if ctx, perr = e.refreshProject(ctx); perr != nil {
+			return engineResult{iterations: e.iteration}, perr
+		}
 		e.iteration++
 		done, ierr := e.iterate(ctx)
 		if ierr != nil {
@@ -521,6 +533,34 @@ func (e *engineTurn) loop(ctx context.Context) (engineResult, error) {
 		replyLines:   e.replyLines,
 		notes:        e.pendingNotes,
 	}, nil
+}
+
+// refreshProject asks spec.project for the turn's project before a
+// dispatch. A change is put in the turn's scope, and ctx is returned
+// carrying it; an error ends the turn.
+func (e *engineTurn) refreshProject(ctx context.Context) (context.Context, error) {
+	if e.spec.project == nil {
+		return ctx, nil
+	}
+	p, err := e.spec.project(ctx, e.spec.scope)
+	if err != nil {
+		return ctx, err
+	}
+	if p != e.spec.scope.Project {
+		e.spec.scope.Project = p
+		e.rescoped = true
+		ctx = hook.WithScope(ctx, e.spec.scope)
+	}
+	return ctx, nil
+}
+
+// scoped is ctx carrying the turn's scope as it is now, when the model loop
+// changed its project.
+func (e *engineTurn) scoped(ctx context.Context) context.Context {
+	if !e.rescoped {
+		return ctx
+	}
+	return hook.WithScope(ctx, e.spec.scope)
 }
 
 // storeReply stores tr.Stored and saves the session, when there is a reply

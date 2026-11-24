@@ -53,6 +53,28 @@ type Spec struct {
 	// models of Models in the session's selection scope. A turn whose chain
 	// is nil or empty fails with an error matching hook.ErrNoModelAvailable.
 	TurnModels func(ctx context.Context, s hook.Scope) TurnModels
+	// TurnProject, when set, chooses the project the turn is accounted to
+	// (Scope.Project), so a host can bill each session, or each run, to its
+	// own project. It is called once as the turn is set up, before
+	// TurnLimits, TurnModels, Session and TurnStarted, with the context given
+	// to Run and the turn's scope; and again before each dispatch of the
+	// model loop, with the turn's context and its current scope, so a change
+	// takes effect from the next model call. A non-empty result replaces the
+	// scope's Project and the scope is put on the turn's context again: what
+	// follows (model calls, InstructionLayers, compaction, tool calls, tasks
+	// started from the turn, events, AfterTurn, TurnFinished) sees it. An
+	// empty result means Identity.Project. A result accounting.CheckProject
+	// refuses ends the turn with OutcomeError and an error wrapping
+	// accounting.ErrInvalidProject, so no record is made under it. The
+	// compaction the agent's own session context runs after a turn (no
+	// Session) asks it too, with the run's context values (not its
+	// cancellation) and the session's scope without a turn; a result refused
+	// there skips that compaction, logged as an error. A panic in it ends
+	// the turn with an *EnginePanicError (SetUp when it was at set-up); one
+	// before that compaction skips it, logged as an error. A served-tools
+	// credential (Served) is issued once per turn, with the project of the
+	// turn's set-up. Nil means Identity.Project throughout.
+	TurnProject func(ctx context.Context, s hook.Scope) string
 	// Tools are the agent's tools, read once per model call; nil means none.
 	Tools toolkit.Registry
 	// Allow, when set, is asked again when a tool is executed, so a call of a

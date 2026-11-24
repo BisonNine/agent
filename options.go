@@ -79,6 +79,15 @@ func WithLimits(l Limits) Option { return func(s *loop.Spec) { s.Limits = l } }
 // WithProject sets the project the agent's accounting records go to.
 func WithProject(p string) Option { return func(s *loop.Spec) { s.Project = p } }
 
+// WithTurnProject sets how each turn chooses its project, asked as the turn
+// is set up and before each model call: a non-empty result replaces the
+// agent's project from then on, "" keeps it, and one
+// accounting.CheckProject refuses ends the turn with an error (see
+// loop.Spec.TurnProject).
+func WithTurnProject(fn func(ctx context.Context, s Scope) string) Option {
+	return func(s *loop.Spec) { s.TurnProject = fn }
+}
+
 // WithClock sets the agent's clock.
 func WithClock(c clock.Clock) Option { return func(s *loop.Spec) { s.Clock = c } }
 

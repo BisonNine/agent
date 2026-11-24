@@ -174,7 +174,7 @@ func (a *Agent) Run(ctx context.Context, sessionKey string, msg hook.Message, op
 	if a.spec.Unqueued && !s.busy { // busy: being forgotten; the run waits for it
 		a.startLocked(s, r)
 		a.wg.Add(1)
-		go a.serveOne(s, r) //nolint:contextcheck // the run's goroutine runs it on its own context
+		go a.serveOne(s, r)
 		a.mu.Unlock()
 		return r
 	}
@@ -182,7 +182,7 @@ func (a *Agent) Run(ctx context.Context, sessionKey string, msg hook.Message, op
 	if !s.busy {
 		s.busy = true
 		a.wg.Add(1)
-		go a.serve(s) //nolint:contextcheck // the session's goroutine serves runs of many contexts, each on its own
+		go a.serve(s)
 	}
 	a.mu.Unlock()
 	return r
@@ -253,7 +253,7 @@ func (a *Agent) runStarted(s *sessionState, r *run) {
 	// The run stays among the session's running ones until its deferred
 	// compaction is done, so ForgetSession cannot close the manager under it.
 	if a.spec.Session == nil {
-		a.compactIfDue(s)
+		a.compactIfDue(r.ctx, s)
 	}
 	a.mu.Lock()
 	s.running = slices.DeleteFunc(s.running, func(x *run) bool { return x == r })
@@ -308,18 +308,6 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	if from, ok := hook.ScopeOf(ctx); ok {
 		scope.Task = from.Task
 	}
-	limits := a.limits(ctx, scope)
-	budget := limits.TurnBudget
-	if r.opts.TurnBudget > 0 {
-		budget = r.opts.TurnBudget
-	}
-	if budget > 0 {
-		var stopBudget context.CancelFunc
-		ctx, stopBudget = a.clock.WithTimeout(ctx, budget)
-		defer stopBudget()
-	}
-	env := &agentEnv{a: a, s: s, scope: scope, text: r.msg.Text}
-	hooks := a.forRun(r, env)
 	engineRan := false
 	defer func() {
 		// A panic in the engine itself (not in a callback) has already ended
@@ -333,6 +321,25 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 			}
 		}
 	}()
+	project, err := a.turnProject(ctx, scope)
+	if err != nil {
+		engineRan = true
+		a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: err})
+		return
+	}
+	scope.Project = project
+	limits := a.limits(ctx, scope)
+	budget := limits.TurnBudget
+	if r.opts.TurnBudget > 0 {
+		budget = r.opts.TurnBudget
+	}
+	if budget > 0 {
+		var stopBudget context.CancelFunc
+		ctx, stopBudget = a.clock.WithTimeout(ctx, budget)
+		defer stopBudget()
+	}
+	env := &agentEnv{a: a, s: s, scope: scope, text: r.msg.Text}
+	hooks := a.forRun(r, env)
 	ctx = beginTurnContext(ctx, scope, hooks, a.clock)
 	// A turn on a task's context (a sub-agent's) keeps the registrar the task
 	// was started from, so its tasks are that task's children there. With a
@@ -375,6 +382,7 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	spec := engineSpec{
 		agentID: a.id,
 		scope:   scope,
+		project: a.turnProject,
 		message: r.msg,
 		options: r.opts,
 
@@ -408,6 +416,24 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	engineRan = true
 	// The run's TurnFinished (and Wait) carry the turn's error.
 	_, _ = newEngineTurn(spec, nil).run(ctx) //nolint:errcheck // delivered in TurnFinished
+}
+
+// turnProject is the project of a turn in scope: the host's choice
+// (Spec.TurnProject) when it names one, else the agent's identity's. A
+// project accounting.CheckProject refuses is an error wrapping
+// accounting.ErrInvalidProject.
+func (a *Agent) turnProject(ctx context.Context, scope hook.Scope) (string, error) {
+	if a.spec.TurnProject == nil {
+		return a.identity.Project, nil
+	}
+	p := a.spec.TurnProject(ctx, scope)
+	if p == "" {
+		return a.identity.Project, nil
+	}
+	if err := accounting.CheckProject(p); err != nil {
+		return "", fmt.Errorf("agent %q, session %q: turn project: %w", a.id, scope.Session, err)
+	}
+	return p, nil
 }
 
 // limits are the turn's limits, with their defaults.
@@ -479,7 +505,7 @@ func (a *Agent) openSession(ctx context.Context, s *sessionState, scope hook.Sco
 		opts := make([]ctxengine.Option, 0, 3+len(a.spec.Context))
 		opts = append(opts, ctxengine.WithLogger(a.log), ctxengine.WithCompactionStartFunc(CompactionStart))
 		if a.spec.Models != nil {
-			opts = append(opts, ctxengine.WithModelCaller(a.spec.Models.Caller(models.Summarize, a.identity, "")))
+			opts = append(opts, ctxengine.WithModelCaller(summaryCaller{a: a}))
 		}
 		s.cm = ctxengine.New(s.key, a.sessions, append(opts, a.spec.Context...)...)
 	}
@@ -588,21 +614,59 @@ func (a *Agent) endServed(r *run) {
 	}
 }
 
+// summaryCaller is the agent's summary model (purpose models.Summarize),
+// accounted to the project of the scope on the call's context: the turn's
+// project for a compaction inside a turn, the one compactIfDue chose after
+// it. Without a scope, or with no project on it, the identity's.
+type summaryCaller struct{ a *Agent }
+
+func (c summaryCaller) Complete(ctx context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
+	id := c.a.identity
+	if s, ok := hook.ScopeOf(ctx); ok && s.Project != "" {
+		id.Project = s.Project
+	}
+	return c.a.spec.Models.Caller(models.Summarize, id, "").Complete(ctx, req)
+}
+
 // compactIfDue runs the compaction the session's adds deferred, after a
 // turn, outside any turn: its report reaches OnCompaction and OnEvent only.
-func (a *Agent) compactIfDue(s *sessionState) {
+// Its context has the values of runCtx, the context the run was given, and
+// ends with the agent's life; its project is Spec.TurnProject's.
+func (a *Agent) compactIfDue(runCtx context.Context, s *sessionState) {
 	a.mu.Lock()
 	cm := s.cm
 	a.mu.Unlock()
 	if cm == nil {
 		return
 	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(runCtx))
+	defer cancel()
+	stop := context.AfterFunc(a.life, cancel) //nolint:contextcheck // the compaction ends with the agent's life, not with the run
+	defer stop()
 	scope := a.scopeOf(s.key)
-	ctx := beginTurnContext(a.life, scope, a.hooks, a.clock)
+	project, err := a.compactionProject(ctx, scope)
+	if err != nil {
+		a.log.Error("deferred compaction skipped", "component", "agent", "agent_id", a.id,
+			"session", s.key, "error", a.redact(err.Error()))
+		return
+	}
+	scope.Project = project
+	ctx = beginTurnContext(ctx, scope, a.hooks, a.clock)
 	if _, err := cm.CompactIfDue(ctx); err != nil && a.life.Err() == nil {
 		a.log.Warn("deferred compaction failed", "component", "agent", "agent_id", a.id,
 			"session", s.key, "error", a.redact(err.Error()))
 	}
+}
+
+// compactionProject is turnProject for a compaction outside a turn: a
+// panic in Spec.TurnProject is an error, since no turn is there to end.
+func (a *Agent) compactionProject(ctx context.Context, scope hook.Scope) (project string, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("turn project: panic: %v", p)
+		}
+	}()
+	return a.turnProject(ctx, scope)
 }
 
 // stopRun stops one run: drops it from its queue, or cancels its turn with
