@@ -55,6 +55,13 @@ func TestNewCLIProviderWithTimeout(t *testing.T) {
 				return built{p, p.command, p.timeout, p.extraArgs, p.env}
 			},
 		},
+		{
+			name: "opencode", wantDefault: "opencode",
+			build: func(c string) built {
+				p := NewOpenCodeCliProviderWithTimeout(c, "/ws", time.Minute, args, env)
+				return built{p, p.command, p.timeout, p.extraArgs, p.env}
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

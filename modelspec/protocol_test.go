@@ -12,7 +12,7 @@ func TestProtocols_BuiltIn(t *testing.T) {
 	want := []string{
 		"anthropic", "anthropic-messages", "antigravity-cli", "azure",
 		"claude-cli", "codex-cli", "cursor-cli", "elevenlabs", "gemini",
-		"gemini-cli", "openai-chat", "openai-responses",
+		"gemini-cli", "openai-chat", "openai-responses", "opencode-cli",
 	}
 	got := Protocols()
 	for _, p := range want {
@@ -64,7 +64,7 @@ func TestRegisterProtocol(t *testing.T) {
 }
 
 func TestIsCLIProtocol(t *testing.T) {
-	for _, p := range []string{"claude-cli", "codex-cli", "antigravity-cli", "gemini-cli", "cursor-cli"} {
+	for _, p := range []string{"claude-cli", "codex-cli", "antigravity-cli", "gemini-cli", "cursor-cli", "opencode-cli"} {
 		if !IsCLIProtocol(p) {
 			t.Errorf("%s is not a CLI protocol", p)
 		}

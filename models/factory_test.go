@@ -53,6 +53,7 @@ func TestBuildClientProtocols(t *testing.T) {
 		{"antigravity-cli", &spawnllm.AntigravityCliProvider{}},
 		{"gemini-cli", &spawnllm.AntigravityCliProvider{}},
 		{"cursor-cli", &spawnllm.CursorCliProvider{}},
+		{"opencode-cli", &spawnllm.OpenCodeCliProvider{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.protocol, func(t *testing.T) {
@@ -311,8 +312,8 @@ func TestDeclinedMessageFormatter(t *testing.T) {
 }
 
 func TestFilterEnv(t *testing.T) {
-	environ := []string{"PATH=/bin", "HOME=/h", "SECRET_TOKEN=x", "LC_ALL=C", "ANTHROPIC_API_KEY=k", "Path=w", "AGENCY_HOME=/x"}
-	if got, want := filterEnv(environ, "linux"), []string{"ANTHROPIC_API_KEY=k", "HOME=/h", "LC_ALL=C", "PATH=/bin"}; !slices.Equal(got, want) {
+	environ := []string{"PATH=/bin", "HOME=/h", "SECRET_TOKEN=x", "LC_ALL=C", "ANTHROPIC_API_KEY=k", "Path=w", "AGENCY_HOME=/x", "OPENCODE_API_KEY=o"}
+	if got, want := filterEnv(environ, "linux"), []string{"ANTHROPIC_API_KEY=k", "HOME=/h", "LC_ALL=C", "OPENCODE_API_KEY=o", "PATH=/bin"}; !slices.Equal(got, want) {
 		t.Errorf("linux = %v, want %v", got, want)
 	}
 	if got := filterEnv(environ, "windows"); !slices.Contains(got, "Path=w") {
@@ -382,6 +383,8 @@ func TestCLICommandLineAndEnvironment(t *testing.T) {
 		{"antigravity-cli", false, []string{"--dangerously-skip-permissions"}, []string{"--input-format", "text", "--output-format", "json", "--model", "sonnet"}, nil},
 		{"gemini-cli", true, nil, []string{"--input-format", "text", "--output-format", "json", "--dangerously-skip-permissions", "--model", "sonnet"}, nil},
 		{"cursor-cli", true, nil, []string{"-p", "--output-format", "json", "--yolo", "--model", "sonnet"}, nil},
+		{"opencode-cli", true, nil, []string{"run", "--format", "json", "--auto", "--standalone", "--model", "sonnet"}, nil},
+		{"opencode-cli", false, []string{"--auto"}, []string{"run", "--format", "json", "--standalone", "--model", "sonnet"}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.protocol, func(t *testing.T) {

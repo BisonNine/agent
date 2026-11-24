@@ -98,6 +98,12 @@ func TestCLIBaseArgs_MatchTheInvocation(t *testing.T) {
 			envelope: `{"type":"result","subtype":"success","is_error":false,"result":"ok"}`,
 			build:    func(c string) LLMProvider { return NewCursorCliProvider(c, ".", nil, nil) },
 		},
+		{
+			name:     "opencode",
+			base:     OpenCodeCliBaseArgs(),
+			envelope: `{"type":"text","part":{"id":"t","text":"ok"}}`,
+			build:    func(c string) LLMProvider { return NewOpenCodeCliProvider(c, ".", nil, nil) },
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -35,6 +35,12 @@ func CursorCliBaseArgs() []string {
 	return []string{"-p", "--output-format", "json"}
 }
 
+// OpenCodeCliBaseArgs are the arguments the OpenCode CLI is always invoked
+// with. The prompt is read from stdin, which needs no marker.
+func OpenCodeCliBaseArgs() []string {
+	return []string{"run", "--format", "json"}
+}
+
 // StdinArg is the trailing argument the Claude and Codex CLIs take to read the
 // prompt from stdin.
 const StdinArg = "-"

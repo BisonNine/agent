@@ -37,8 +37,8 @@ if err := p.ValidateProtocol(); err != nil { ... }
 
 The SDK knows `openai-chat`, `openai-responses`, `azure`, `anthropic`,
 `anthropic-messages`, the CLIs (`claude-cli`, `codex-cli`,
-`antigravity-cli`, `cursor-cli`, and `gemini-cli`, kept as an alias of
-Antigravity) and the task-only `gemini` and `elevenlabs`. A host adds its
+`antigravity-cli`, `cursor-cli`, `opencode-cli`, and `gemini-cli`, kept as
+an alias of Antigravity) and the task-only `gemini` and `elevenlabs`. A host adds its
 own at start-up:
 
 ```go

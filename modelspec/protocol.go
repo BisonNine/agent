@@ -46,6 +46,7 @@ var (
 		// Antigravity, and a released config naming this must keep validating.
 		"gemini-cli":       {Keyless: true},
 		"cursor-cli":       {Keyless: true},
+		"opencode-cli":     {Keyless: true},
 		GeminiProtocol:     {TaskOnly: true},
 		ElevenLabsProtocol: {TaskOnly: true},
 	}
@@ -89,7 +90,7 @@ func IsCLIProtocol(protocol string) bool {
 	// "gemini-cli" is retained as an alias for "antigravity-cli": Google
 	// deprecated the Gemini CLI, and a config still naming it must keep
 	// working.
-	case "claude-cli", "codex-cli", "antigravity-cli", "gemini-cli", "cursor-cli":
+	case "claude-cli", "codex-cli", "antigravity-cli", "gemini-cli", "cursor-cli", "opencode-cli":
 		return true
 	default:
 		return false

@@ -12,7 +12,7 @@ type Provider struct {
 	Name string `json:"name"` // Unique identifier referenced by Model.Provider
 	// Protocol is the wire format: openai-chat, openai-responses, azure,
 	// anthropic, anthropic-messages, claude-cli, codex-cli, antigravity-cli,
-	// cursor-cli, gemini, elevenlabs, or one a host registered with
+	// cursor-cli, opencode-cli, gemini, elevenlabs, or one a host registered with
 	// RegisterProtocol. "anthropic" and "anthropic-messages" are the same
 	// thing: Anthropic speaks one wire format. "gemini" and "elevenlabs" serve
 	// task models only (speech; see TaskOnlyProtocol).

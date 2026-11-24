@@ -3,7 +3,7 @@
 `go.bison9.com/agent/spawnllm` holds the provider clients and the types they
 share: one model call each.
 
-- **CLI providers** (claude-cli, codex-cli, cursor-cli, antigravity-cli; gemini-cli is an alias for antigravity-cli): run the subprocess, return the result.
+- **CLI providers** (claude-cli, codex-cli, cursor-cli, antigravity-cli, opencode-cli; gemini-cli is an alias for antigravity-cli): run the subprocess, return the result.
 - **API providers** (OpenAI-chat/responses, Azure, Anthropic): one HTTP request per call.
 
 The tool loop, fallback and cooldown are not here: the agent loop

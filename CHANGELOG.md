@@ -422,6 +422,17 @@ project uses [Semantic Versioning](https://semver.org/).
   `Redactor`; `Truncator` and its default `Truncate`, which shorten the
   request content the engine logs. `hook/DESIGN.md` maps a
   host's existing turn loop onto it.
+- OpenCode CLI provider (`opencode-cli`, binary `opencode`):
+  `spawnllm.NewOpenCodeCliProvider` and `NewOpenCodeCliProviderWithTimeout`,
+  a `modelspec.CLIAgents` row (`run --format json`, required
+  `--standalone` so the run happens in the CLI process rather than
+  OpenCode's shared background service, bypass flag `--auto`) and its client
+  in `models`. The prompt is piped on stdin; the text, tool calls, denied
+  tool calls, session id and the tokens and cost of every step (summed;
+  reasoning counted as output) are read from the JSON event stream, and an
+  error event becomes an error `ClassifyError` can classify. `OPENCODE_`
+  variables are in the CLIs' default environment allowlist, and OpenCode's
+  "Model unavailable" classifies as an unavailable model.
 
 ### Changed
 

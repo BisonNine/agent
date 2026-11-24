@@ -25,6 +25,15 @@ func TestCLIArgs(t *testing.T) {
 		{name: "antigravity on", protocol: "antigravity-cli", bypass: true, want: []string{"--dangerously-skip-permissions"}},
 		{name: "cursor off", protocol: "cursor-cli", want: nil},
 		{name: "cursor on", protocol: "cursor-cli", bypass: true, want: []string{"--yolo"}},
+		{name: "opencode off", protocol: "opencode-cli", want: []string{"--standalone"}},
+		{name: "opencode on", protocol: "opencode-cli", bypass: true, want: []string{"--auto", "--standalone"}},
+		{
+			name:        "opencode's --auto is stripped when bypass is off",
+			protocol:    "opencode-cli",
+			extra:       []string{"--auto", "--thinking"},
+			want:        []string{"--standalone", "--thinking"},
+			wantIgnored: []string{"--auto"},
+		},
 		{
 			name:     "model args are appended, not substituted",
 			protocol: "antigravity-cli",
@@ -129,12 +138,36 @@ func TestCLIAgents_CatalogueIsComplete(t *testing.T) {
 			t.Errorf("%s sentinel = %q", c.Protocol, c.SentinelModel())
 		}
 	}
-	for _, protocol := range []string{"claude-cli", "codex-cli", "antigravity-cli", "cursor-cli", "gemini-cli"} {
+	for _, protocol := range []string{"claude-cli", "codex-cli", "antigravity-cli", "cursor-cli", "gemini-cli", "opencode-cli"} {
 		if CLIAgentByProtocol(protocol) == nil {
 			t.Errorf("%s is an accepted CLI protocol with no catalogue row", protocol)
 		}
 	}
 	if CLIAgentByProtocol("openai-chat") != nil {
 		t.Error("an HTTP protocol resolved to a CLI agent")
+	}
+}
+
+// The OpenCode row: JSON events, the prompt on stdin (no trailing marker), a
+// private server (--standalone) and --auto as the bypass flag.
+func TestCLIAgents_OpenCode(t *testing.T) {
+	c := CLIAgentByProtocol("opencode-cli")
+	if c == nil {
+		t.Fatal("no opencode-cli row")
+	}
+	if c.Label != "OpenCode CLI" || c.Binary != "opencode" || c.RequestTimeout != 3600 {
+		t.Errorf("row = %+v", *c)
+	}
+	if want := []string{"run", "--format", "json"}; !slices.Equal(c.BaseArgs, want) {
+		t.Errorf("base args = %v, want %v", c.BaseArgs, want)
+	}
+	if !slices.Equal(c.RequiredArgs, []string{"--standalone"}) {
+		t.Errorf("required args = %v, want --standalone", c.RequiredArgs)
+	}
+	if len(c.TrailingArgs) != 0 || len(c.Env) != 0 {
+		t.Errorf("trailing %v, env %v; want none", c.TrailingArgs, c.Env)
+	}
+	if !slices.Equal(c.BypassArgs, []string{"--auto"}) || c.SentinelModel() != "opencode-cli" {
+		t.Errorf("bypass %v, sentinel %q", c.BypassArgs, c.SentinelModel())
 	}
 }

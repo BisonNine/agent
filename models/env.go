@@ -18,7 +18,7 @@ import (
 //   - the proxy variables, in both cases.
 //   - the login and key variables of the CLIs themselves (ANTHROPIC_,
 //     OPENAI_, GOOGLE_, GEMINI_, CLAUDE_, CODEX_, CURSOR_, AGY_,
-//     ANTIGRAVITY_).
+//     ANTIGRAVITY_, OPENCODE_).
 //   - on macOS, what launchd sets for Foundation-based tools; on Windows, the
 //     system variables any executable relies on.
 var (
@@ -30,6 +30,7 @@ var (
 	envPrefixes = []string{
 		"LC_", "XDG_",
 		"ANTHROPIC_", "OPENAI_", "GOOGLE_", "GEMINI_", "CLAUDE_", "CODEX_", "CURSOR_", "AGY_", "ANTIGRAVITY_",
+		"OPENCODE_",
 	}
 	envDarwin  = []string{"__CF_USER_TEXT_ENCODING", "XPC_FLAGS", "XPC_SERVICE_NAME"}
 	envWindows = []string{

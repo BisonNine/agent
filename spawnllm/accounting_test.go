@@ -115,6 +115,18 @@ var cliCases = []struct {
 		wantModel: "gemini-test",
 		want:      tokens{input: known(5), output: known(2), cacheRead: known(1)},
 	},
+	{
+		provider: "opencode-cli",
+		build:    func(s string) LLMProvider { return NewOpenCodeCliProvider(s, "", nil, nil) },
+		stdout: `{"type":"tool_use","part":{"type":"tool","id":"c1","tool":"example_echo","state":{"status":"completed"}}}` + "\n" +
+			`{"type":"text","part":{"id":"t1","text":"hi"}}` + "\n" +
+			`{"type":"step_finish","part":{"reason":"stop","cost":0.004,"tokens":{"input":9,"output":3,"reasoning":1,"cache":{"read":4,"write":2}}}}` + "\n",
+		model:     "opencode/test-model",
+		wantModel: "opencode/test-model",
+		// Reasoning is billed as output.
+		want:      tokens{known(9), known(4), known(4), known(2), accounting.KnownFloat(0.004)},
+		wantTools: known(1),
+	},
 }
 
 func TestCLIProvidersRejectInvalidIdentity(t *testing.T) {

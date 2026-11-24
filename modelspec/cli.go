@@ -106,6 +106,19 @@ var CLIAgents = []CLIAgent{
 		BypassArgs:     []string{"--yolo"},
 		RequestTimeout: 3600,
 	},
+	{
+		// OpenCode reads the prompt from stdin without a marker.
+		// --standalone runs the session in the CLI process instead of
+		// OpenCode's shared background service, so the run has the model's
+		// environment and workspace and stops when the CLI is stopped.
+		Protocol:       "opencode-cli",
+		Label:          "OpenCode CLI",
+		Binary:         "opencode",
+		BaseArgs:       []string{"run", "--format", "json"},
+		RequiredArgs:   []string{"--standalone"},
+		BypassArgs:     []string{"--auto"},
+		RequestTimeout: 3600,
+	},
 }
 
 // CLIAgentByProtocol returns the CLI agent for a protocol, or nil if the

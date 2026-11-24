@@ -241,6 +241,12 @@ func launchCLI(s *settings, spec cliSpec) spawnllm.LLMProvider {
 		} else {
 			c = spawnllm.NewCursorCliProvider(spec.command, spec.workspace, spec.args, spec.env)
 		}
+	case "opencode-cli":
+		if spec.timeout > 0 {
+			c = spawnllm.NewOpenCodeCliProviderWithTimeout(spec.command, spec.workspace, spec.timeout, spec.args, spec.env)
+		} else {
+			c = spawnllm.NewOpenCodeCliProvider(spec.command, spec.workspace, spec.args, spec.env)
+		}
 	default:
 		panic("models: no CLI client for protocol " + spec.protocol)
 	}

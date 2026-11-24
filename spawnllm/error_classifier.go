@@ -126,6 +126,8 @@ var (
 		substr("no endpoints found"),
 		substr("model_not_found"),
 		rxp(`model .* does not exist`),
+		// OpenCode's provider.no-route: "Model unavailable: <provider/model>".
+		substr("model unavailable"),
 	}
 
 	// Parse-error patterns: a malformed upstream response should not stop the
