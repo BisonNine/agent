@@ -10,6 +10,7 @@ package proc_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -628,4 +629,104 @@ func TestNewRejectsBadOptions(t *testing.T) {
 			t.Errorf("New(%+v) accepted", opts)
 		}
 	}
+}
+
+// Records name a working directory inside Root relative to it, so the root
+// can be moved: a manager opened on the new location names the new one.
+func TestRecordsFollowMovedRoot(t *testing.T) {
+	base := t.TempDir()
+	oldRoot := filepath.Join(base, "data")
+	work := filepath.Join(oldRoot, "work")
+	outside := t.TempDir()
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first, clk := newManager(t, proc.Options{Dir: filepath.Join(oldRoot, "state", "shell"), Root: oldRoot})
+	running := start(t, first, proc.Spec{Command: "echo up; read x", Dir: work, Input: true, Notify: true})
+	waitMatch(t, first, running.ID, "up")
+	atRoot := start(t, first, proc.Spec{Command: "true", Dir: oldRoot})
+	waitEnd(t, first, atRoot.ID)
+	away := start(t, first, proc.Spec{Command: "true", Dir: outside})
+	waitEnd(t, first, away.ID)
+	noDir := start(t, first, proc.Spec{Command: "true"})
+	waitEnd(t, first, noDir.ID)
+	closeManager(t, first, clk) // the service stops; the running job is stopped
+
+	newRoot := filepath.Join(base, "moved")
+	if err := os.Rename(oldRoot, newRoot); err != nil {
+		t.Fatal(err)
+	}
+	var announced []proc.Info
+	second, _ := newManager(t, proc.Options{
+		Dir:   filepath.Join(newRoot, "state", "shell"),
+		Root:  newRoot,
+		OnEnd: func(i proc.Info) { announced = append(announced, i) },
+	})
+	wantDir := map[string]string{
+		running.ID: filepath.Join(newRoot, "work"),
+		atRoot.ID:  newRoot,
+		away.ID:    outside,
+		noDir.ID:   "",
+	}
+	for id, dir := range wantDir {
+		if got, ok := second.Get(id); !ok || got.Dir != dir {
+			t.Errorf("job %s dir = %q (found %v), want %q", id, got.Dir, ok, dir)
+		}
+	}
+	if len(announced) != 1 || announced[0].ID != running.ID || announced[0].Dir != wantDir[running.ID] {
+		t.Fatalf("announced = %+v, want %s in %s", announced, running.ID, wantDir[running.ID])
+	}
+
+	stored := map[string]string{running.ID: "work", atRoot.ID: ".", away.ID: outside, noDir.ID: ""}
+	for id, dir := range stored {
+		data, err := os.ReadFile(filepath.Join(second.Dir(), id+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(data, []byte(oldRoot)) {
+			t.Errorf("record %s names the old root:\n%s", id, data)
+		}
+		var rec struct {
+			Dir string `json:"dir"`
+		}
+		if err := json.Unmarshal(data, &rec); err != nil || rec.Dir != dir {
+			t.Errorf("record %s dir = %q (%v), want %q", id, rec.Dir, err, dir)
+		}
+	}
+}
+
+// A record written with an absolute working directory (by a manager with
+// no Root) names it as it is, and is written relative when next saved.
+func TestAbsoluteRecordLoadsUnderRoot(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "state", "shell")
+	work := filepath.Join(root, "work")
+	if err := os.MkdirAll(work, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	first, clk := newManager(t, proc.Options{Dir: dir})
+	info := start(t, first, proc.Spec{Command: "echo up; read x", Dir: work, Input: true})
+	waitMatch(t, first, info.ID, "up")
+	ended := start(t, first, proc.Spec{Command: "true", Dir: work})
+	waitEnd(t, first, ended.ID)
+	if data, err := os.ReadFile(filepath.Join(dir, ended.ID+".json")); err != nil || !bytes.Contains(data, []byte(`"dir": "`+work+`"`)) {
+		t.Fatalf("record without Root = %s, %v; want the absolute dir", data, err)
+	}
+
+	// The first manager's job is still recorded as running: the second
+	// finds it lost and saves it.
+	second, _ := newManager(t, proc.Options{Dir: dir, Root: root})
+	for _, id := range []string{info.ID, ended.ID} {
+		if got, _ := second.Get(id); got.Dir != work {
+			t.Errorf("job %s dir = %q, want %q", id, got.Dir, work)
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(dir, info.ID+".json"))
+	if err != nil || !bytes.Contains(data, []byte(`"dir": "work"`)) {
+		t.Errorf("saved record = %s, %v; want dir relative to the root", data, err)
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, ended.ID+".json")); err != nil || !bytes.Contains(data, []byte(`"dir": "`+work+`"`)) {
+		t.Errorf("unsaved record rewritten: %s, %v", data, err)
+	}
+	closeManager(t, first, clk)
 }

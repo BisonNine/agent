@@ -4,6 +4,18 @@ All notable changes to the Bison9 Agent SDK are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.1]
+
+### Fixed
+
+- `toolbox/shell/proc`: a job record no longer pins the workspace's
+  location. With the new `Options.Root` (`shell.Config.Jobs.Root`), a
+  job's working directory inside the root is recorded relative to it and
+  read back against the root the next manager is given, so a host can move
+  or rename its data directory with the records in it. A directory outside
+  the root stays absolute; a record written by 0.2.0 still loads and is
+  written relative when next saved. Without `Root` nothing changes.
+
 ## [0.2.0]
 
 ### Added

@@ -37,6 +37,11 @@ to files, and tracks them. `proc/proctest` has a fake clock for tests.
 - **Restart.** A job recorded as running when the manager starts was lost
   with the old process: it is marked `lost`, announced once, and never
   relaunched.
+- **Records.** Each job has `<id>.json` next to its log in `Jobs.Dir`. Its
+  working directory is stored relative to `Jobs.Root` when it lies inside
+  it, so the workspace can be moved or renamed with the records in it; a
+  directory outside the root, or any directory when `Root` is unset, is
+  stored as it is.
 - **Shutdown.** `Close` stops every job and delivers no notice, since the
   host is stopping. A job it stopped with `notify` on is announced once by
   the next `New` on the same directory (`StopReason` "shutdown": "Shell job
@@ -81,6 +86,7 @@ after it returns:
 tools, err := shell.New(shell.Config{
     Jobs: proc.Options{
         Dir:    filepath.Join(workspace, "state", "shell"),
+        Root:   workspace, // records name directories in it relative to it
         Limits: proc.Limits{MaxJobs: 8},
         Modes:  fsmode.Modes{Dir: 0o700, File: 0o600},
     },
