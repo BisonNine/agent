@@ -427,12 +427,14 @@ project uses [Semantic Versioning](https://semver.org/).
   a `modelspec.CLIAgents` row (`run --format json`, required
   `--standalone` so the run happens in the CLI process rather than
   OpenCode's shared background service, bypass flag `--auto`) and its client
-  in `models`. The prompt is piped on stdin; the text, tool calls, denied
-  tool calls, session id and the tokens and cost of every step (summed;
-  reasoning counted as output) are read from the JSON event stream, and an
-  error event becomes an error `ClassifyError` can classify. `OPENCODE_`
-  variables are in the CLIs' default environment allowlist, and OpenCode's
-  "Model unavailable" classifies as an unavailable model.
+  in `models`. The prompt is piped on stdin; the text, tool calls (those an
+  MCP server's Code Mode script made included), denied tool calls, session
+  id and the tokens and cost of every step (summed; reasoning counted as
+  output) are read from the JSON event stream, and an error event becomes an
+  error `ClassifyError` can classify. `OPENCODE_` variables are in the CLIs'
+  default environment allowlist, OpenCode's "Model unavailable" classifies
+  as an unavailable model, and a conversation it cannot compact to fit
+  (`compaction.failed`, `compaction.unavailable`) as a context limit.
 
 ### Changed
 

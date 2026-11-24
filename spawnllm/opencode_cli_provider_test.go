@@ -47,6 +47,35 @@ const (
 `
 	ocNoRoute = `{"type":"error","timestamp":1,"sessionID":"ses_alice","error":{"type":"provider.no-route","message":"Model unavailable: opencode/no-such-model"}}
 `
+	// ocMCPRefused is a call of the host's MCP tool (server "example",
+	// Code Mode off) that a permission rule asks about, in a run without
+	// --auto, then the model's answer.
+	ocMCPRefused = `{"type":"step_start","timestamp":1,"sessionID":"ses_alice","part":{"id":"prt_1","sessionID":"ses_alice","messageID":"msg_1","type":"step-start"}}
+{"type":"tool_use","timestamp":2,"sessionID":"ses_alice","part":{"partID":"prt_2","sessionID":"ses_alice","messageID":"msg_1","type":"tool","id":"call_1","tool":"example_add","state":{"status":"error","input":{"a":19,"b":23,"session_token":"tok_alice"},"error":"This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action.","metadata":{"providerCall":{"executed":false},"providerResult":{"executed":false},"rawInput":"{\"a\":19,\"b\":23,\"session_token\":\"tok_alice\"}"},"time":{"start":1,"end":1}}}}
+{"type":"step_finish","timestamp":3,"sessionID":"ses_alice","part":{"id":"prt_3","sessionID":"ses_alice","messageID":"msg_1","type":"step-finish","reason":"tool-calls","cost":0.00076405,"tokens":{"input":13577,"output":85,"reasoning":128,"cache":{"read":0,"write":0}}}}
+{"type":"step_start","timestamp":4,"sessionID":"ses_alice","part":{"id":"prt_4","sessionID":"ses_alice","messageID":"msg_2","type":"step-start"}}
+{"type":"text","timestamp":5,"sessionID":"ses_alice","part":{"id":"prt_5","sessionID":"ses_alice","messageID":"msg_2","type":"text","text":"REFUSED","time":{"start":1,"end":1}}}
+{"type":"step_finish","timestamp":6,"sessionID":"ses_alice","part":{"id":"prt_6","sessionID":"ses_alice","messageID":"msg_2","type":"step-finish","reason":"stop","cost":0.00018833,"tokens":{"input":141,"output":26,"reasoning":256,"cache":{"read":13696,"write":0}}}}
+`
+	// ocCodeMode is the same server in Code Mode: two execute scripts calling
+	// its add tool, the second refused as above, then the answer.
+	ocCodeMode = `{"type":"step_start","timestamp":1,"sessionID":"ses_alice","part":{"id":"prt_1","sessionID":"ses_alice","messageID":"msg_1","type":"step-start"}}
+{"type":"tool_use","timestamp":2,"sessionID":"ses_alice","part":{"partID":"prt_2","sessionID":"ses_alice","messageID":"msg_1","type":"tool","id":"call_2","tool":"execute","state":{"status":"completed","input":{"code":"return await tools.example.add({ a: 19, b: 23, session_token: \"tok_alice\" });"},"output":"sum=42 code=ZQX42","title":"execute","metadata":{"metadata":{"toolCalls":[{"tool":"example.add","status":"completed","input":{"a":19,"b":23,"session_token":"tok_alice"}}],"truncated":false},"content":[{"type":"text","text":"sum=42 code=ZQX42"}],"providerCall":{"executed":false},"providerResult":{"executed":false},"rawInput":"{\"code\":\"return await tools.example.add({ a: 19, b: 23, session_token: \\\"tok_alice\\\" });\"}"},"time":{"start":1,"end":1}}}}
+{"type":"step_finish","timestamp":3,"sessionID":"ses_alice","part":{"id":"prt_3","sessionID":"ses_alice","messageID":"msg_1","type":"step-finish","reason":"tool-calls","cost":0.00050319,"tokens":{"input":107,"output":139,"reasoning":896,"cache":{"read":16768,"write":0}}}}
+{"type":"step_start","timestamp":4,"sessionID":"ses_alice","part":{"id":"prt_4","sessionID":"ses_alice","messageID":"msg_2","type":"step-start"}}
+{"type":"tool_use","timestamp":5,"sessionID":"ses_alice","part":{"partID":"prt_5","sessionID":"ses_alice","messageID":"msg_2","type":"tool","id":"call_5","tool":"execute","state":{"status":"completed","input":{"code":"return await tools.example.add({a: 19, b: 23, session_token: \"tok_alice\"});"},"output":"This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action.","title":"execute","metadata":{"metadata":{"toolCalls":[{"tool":"example.add","status":"error","input":{"a":19,"b":23,"session_token":"tok_alice"}}],"error":true,"truncated":false},"content":[{"type":"text","text":"This non-interactive run cannot ask the user for permission, so the request was rejected. Continue without this action."}],"providerCall":{"executed":false},"providerResult":{"executed":false},"rawInput":"{\"code\":\"return await tools.example.add({a: 19, b: 23, session_token: \\\"tok_alice\\\"});\"}"},"time":{"start":1,"end":1}}}}
+{"type":"step_finish","timestamp":6,"sessionID":"ses_alice","part":{"id":"prt_6","sessionID":"ses_alice","messageID":"msg_2","type":"step-finish","reason":"tool-calls","cost":0.00034713,"tokens":{"input":237,"output":139,"reasoning":512,"cache":{"read":14976,"write":0}}}}
+{"type":"step_start","timestamp":7,"sessionID":"ses_alice","part":{"id":"prt_7","sessionID":"ses_alice","messageID":"msg_3","type":"step-start"}}
+{"type":"text","timestamp":8,"sessionID":"ses_alice","part":{"id":"prt_8","sessionID":"ses_alice","messageID":"msg_3","type":"text","text":"The add call was refused: this run cannot ask for permission.","time":{"start":1,"end":1}}}
+{"type":"step_finish","timestamp":9,"sessionID":"ses_alice","part":{"id":"prt_9","sessionID":"ses_alice","messageID":"msg_3","type":"step-finish","reason":"stop","cost":0.00071022,"tokens":{"input":150,"output":152,"reasoning":1408,"cache":{"read":15744,"write":0}}}}
+`
+	// ocCompaction is a prompt too large for the model's context.
+	ocCompaction = `{"type":"error","timestamp":1,"sessionID":"ses_alice","error":{"type":"compaction.failed","message":"Compaction summary did not match the required template"}}
+`
+	// ocFormCancelled is the end of a run whose web search asked for a
+	// choice the run cannot answer.
+	ocFormCancelled = `{"type":"error","timestamp":35,"sessionID":"ses_alice","error":{"type":"unknown","message":"Cancelled a request for input this run cannot answer: Web Search"}}
+`
 )
 
 // ocRun is what a fake opencode saw: its arguments, environment and stdin.
@@ -240,6 +269,8 @@ func TestOpenCodeCliProvider_ErrorEvents(t *testing.T) {
 		{"unknown model", ocNoRoute, "opencode cli error: Model unavailable: opencode/no-such-model (provider.no-route: model unavailable)", FailoverUnavailable},
 		{"error without detail", `{"type":"error","sessionID":""}`, "opencode cli error: run failed", ""},
 		{"unknown type", `{"type":"error","error":{"type":"unknown","message":"Agent not found"}}`, "opencode cli error: Agent not found (unknown)", ""},
+		{"context overflow", ocCompaction, "opencode cli error: Compaction summary did not match the required template (compaction.failed: maximum context length exceeded)", FailoverContextLimit},
+		{"input request cancelled", ocFormCancelled, "opencode cli error: Cancelled a request for input this run cannot answer: Web Search (unknown)", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -378,6 +409,7 @@ func TestOpenCodeCliProvider_DeniedTools(t *testing.T) {
 		denied("shell", "The user has specified a rule which prevents you from using this specific tool call") +
 		denied("edit", "rejected permission") +
 		denied("read", "File not found") +
+		`{"type":"tool_use","part":{"tool":"execute","state":{"status":"completed","output":"boom","metadata":{"metadata":{"toolCalls":[{"tool":"example.fail","status":"error"}]}}}}}` + "\n" +
 		`{"type":"text","part":{"id":"t","text":"I could not do that."}}` + "\n" +
 		`{"type":"step_finish","part":{"reason":"stop"}}` + "\n"
 	script, _ := fakeOpenCode(t, events, "")
@@ -385,8 +417,44 @@ func TestOpenCodeCliProvider_DeniedTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(resp.Status.DeniedTools, []string{"shell", "edit"}) || resp.Status.ToolCalls != 4 {
+	if !slices.Equal(resp.Status.DeniedTools, []string{"shell", "edit"}) || resp.Status.ToolCalls != 6 {
 		t.Errorf("denied = %v, tool calls %d", resp.Status.DeniedTools, resp.Status.ToolCalls)
+	}
+}
+
+// The host's MCP tools, called directly and from Code Mode scripts: every
+// call counts, a refused one is listed by the name OpenCode gives it, and
+// the steps' usage is summed.
+func TestOpenCodeCliProvider_MCPTools(t *testing.T) {
+	tests := []struct {
+		name       string
+		events     string
+		content    string
+		toolCalls  int
+		denied     []string
+		input, out int
+		cacheRead  int
+		cost       float64
+	}{
+		{"direct", ocMCPRefused, "REFUSED", 1, []string{"example_add"}, 13718, 495, 13696, 0.00095238},
+		{"code mode", ocCodeMode, "The add call was refused: this run cannot ask for permission.", 4, []string{"example.add"}, 494, 3246, 47488, 0.00156054},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			script, _ := fakeOpenCode(t, tc.events, "")
+			resp, err := NewOpenCodeCliProvider(script, "", nil, nil).Chat(context.Background(), testID, ocHello, nil, "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st := resp.Status
+			if resp.Content != tc.content || st.ToolCalls != tc.toolCalls || !slices.Equal(st.DeniedTools, tc.denied) {
+				t.Errorf("content %q, tool calls %d, denied %v", resp.Content, st.ToolCalls, st.DeniedTools)
+			}
+			if st.InputTokens != tc.input || st.OutputTokens != tc.out || st.CacheReadTokens != tc.cacheRead ||
+				st.CostUSD == nil || fmt.Sprintf("%.8f", *st.CostUSD) != fmt.Sprintf("%.8f", tc.cost) {
+				t.Errorf("status = %+v", st)
+			}
+		})
 	}
 }
 

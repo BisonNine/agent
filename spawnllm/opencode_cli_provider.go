@@ -184,7 +184,10 @@ func (p *OpenCodeCliProvider) result(ctx context.Context, model string, bytesSen
 // step_start and step_finish around each model step, text (a fragment of a
 // text part: the new text since the part's previous event), tool_use (a tool
 // call once it completed or failed), reasoning (only with --thinking),
-// retry, background_wait and, when the run fails, error.
+// retry, background_wait and, when the run fails, error. An MCP server's
+// tools are called directly (tool "<server>_<tool>") or, in Code Mode (the
+// default for a server), from a script of the execute tool, whose metadata
+// lists the calls it made.
 type openCodeEvent struct {
 	Type      string         `json:"type"`
 	SessionID string         `json:"sessionID"`
@@ -204,8 +207,20 @@ type openCodePart struct {
 }
 
 type openCodeState struct {
-	Status string `json:"status"`
-	Error  string `json:"error"`
+	Status   string `json:"status"`
+	Output   string `json:"output"`
+	Error    string `json:"error"`
+	Metadata struct {
+		Metadata struct {
+			// ToolCalls are the calls a Code Mode script made, each named
+			// "<server>.<tool>". A refused one has status "error", and the
+			// refusal is the script's output or error.
+			ToolCalls []struct {
+				Tool   string `json:"tool"`
+				Status string `json:"status"`
+			} `json:"toolCalls"`
+		} `json:"metadata"`
+	} `json:"metadata"`
 }
 
 // openCodeTokens is a step's token usage. input excludes the cached part of
@@ -264,6 +279,10 @@ var openCodeErrorHints = map[string]string{
 	"provider.model-budget-limit":      "usage limit",
 	"provider.timeout":                 "timed out",
 	"provider.no-route":                "model unavailable",
+	// OpenCode compacts a conversation that overflows the model's context;
+	// a run ends with these when it cannot.
+	"compaction.failed":      "maximum context length exceeded",
+	"compaction.unavailable": "maximum context length exceeded",
 }
 
 // describe renders the error for the returned error text: the message, then
@@ -299,7 +318,8 @@ var openCodeDenials = []string{
 }
 
 // parseOpenCodeEvents turns the JSON event stream of a run into the response.
-// Every step's tokens and cost are summed. The text of every text part is
+// Every step's tokens and cost are summed. Every tool call counts, the calls
+// a Code Mode script made included. The text of every text part is
 // joined in order, one part per line. The returned error event, if any, is
 // the run's failure. A line that is not a JSON event is skipped.
 func (p *OpenCodeCliProvider) parseOpenCodeEvents(output, model string) (*LLMResponse, *openCodeError) {
@@ -341,10 +361,17 @@ func (p *OpenCodeCliProvider) parseOpenCodeEvents(output, model string) (*LLMRes
 			}
 			parts[key] += ev.Part.Text
 		case "tool_use":
+			st := ev.Part.State
 			tools++
-			if ev.Part.State.Status == "error" && isOpenCodeDenial(ev.Part.State.Error) &&
-				ev.Part.Tool != "" && !slices.Contains(denied, ev.Part.Tool) {
-				denied = append(denied, ev.Part.Tool)
+			if st.Status == "error" && isOpenCodeDenial(st.Error) {
+				denied = addDenied(denied, ev.Part.Tool)
+			}
+			refused := isOpenCodeDenial(st.Output) || isOpenCodeDenial(st.Error)
+			for _, call := range st.Metadata.Metadata.ToolCalls {
+				tools++
+				if call.Status == "error" && refused {
+					denied = addDenied(denied, call.Tool)
+				}
 			}
 		case "step_finish":
 			steps++
@@ -453,6 +480,14 @@ func openCodeStdinPrompt(messages []Message) string {
 		return conversation
 	}
 	return strings.Join(system, "\n\n") + "\n\n---\n\n" + conversation
+}
+
+// addDenied adds tool to denied unless it is empty or already listed.
+func addDenied(denied []string, tool string) []string {
+	if tool == "" || slices.Contains(denied, tool) {
+		return denied
+	}
+	return append(denied, tool)
 }
 
 // isOpenCodeDenial reports whether a failed tool call's error is a refusal
