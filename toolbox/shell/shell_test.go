@@ -593,3 +593,38 @@ func TestWithoutJobSupport(t *testing.T) {
 	want(t, h.ctrl("alice", "list", nil), true, "shell_ctrl is not supported on this platform")
 	want(t, h.exec("alice", "exec sleep 5", map[string]any{"timeout_seconds": float64(1)}), true, "Command timed out after 1s and was stopped.")
 }
+
+// With Jobs.Root set to the workspace, the workspace can be moved while the
+// service is stopped: the tools opened on the new location list the jobs,
+// announce the one the shutdown stopped, and no record names the old path.
+func TestWorkspaceMovedWithRecords(t *testing.T) {
+	oldWS := filepath.Join(t.TempDir(), "ws")
+	first := newHarness(t, func(c *Config) {
+		c.Jobs.Dir = filepath.Join(oldWS, "state", "shell")
+		c.Jobs.Root = oldWS
+		c.Workspace = func(*toolspec.ToolCall) string { return oldWS }
+	})
+	id := jobID(t, first.exec("alice", "read x", map[string]any{"background": true}))
+	first.close()
+
+	newWS := filepath.Join(filepath.Dir(oldWS), "moved")
+	if err := os.Rename(oldWS, newWS); err != nil {
+		t.Fatal(err)
+	}
+	second := newHarness(t, func(c *Config) {
+		c.Jobs.Dir = filepath.Join(newWS, "state", "shell")
+		c.Jobs.Root = newWS
+		c.Workspace = func(*toolspec.ToolCall) string { return newWS }
+	})
+	if n := second.notice(); n.JobID != id || n.StopReason != proc.StopShutdown {
+		t.Fatalf("notice = %+v", n)
+	}
+	want(t, second.ctrl("alice", "list", nil), false, id+" stopped")
+	if info, _ := second.tools.Manager().Get(id); info.Dir != newWS {
+		t.Errorf("dir = %q, want %q", info.Dir, newWS)
+	}
+	data, err := os.ReadFile(filepath.Join(newWS, "state", "shell", id+".json"))
+	if err != nil || strings.Contains(string(data), oldWS) {
+		t.Errorf("record = %s, %v; want no old path", data, err)
+	}
+}

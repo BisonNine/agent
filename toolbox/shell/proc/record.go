@@ -22,7 +22,7 @@ type record struct {
 	ID         string    `json:"id"`
 	Owner      string    `json:"owner"`
 	Command    string    `json:"command"`
-	Dir        string    `json:"dir,omitempty"`
+	Dir        string    `json:"dir,omitempty"` // relative to Options.Root when inside it
 	State      State     `json:"state"`
 	ExitCode   int       `json:"exit_code"`
 	Signal     string    `json:"signal,omitempty"`
@@ -58,7 +58,7 @@ func (m *Manager) saveRecord(j *job) {
 		ID:           info.ID,
 		Owner:        info.Owner,
 		Command:      info.Command,
-		Dir:          info.Dir,
+		Dir:          m.recordDir(info.Dir),
 		State:        info.State,
 		ExitCode:     info.ExitCode,
 		Signal:       info.Signal,
@@ -163,7 +163,7 @@ func (m *Manager) restore(rec record) *job {
 		id:         rec.ID,
 		owner:      rec.Owner,
 		command:    rec.Command,
-		dir:        rec.Dir,
+		dir:        m.resolveDir(rec.Dir),
 		input:      rec.Input,
 		started:    rec.Started,
 		pid:        rec.PID,
@@ -193,4 +193,32 @@ func (m *Manager) restore(rec record) *job {
 	}
 	j.out = out
 	return j
+}
+
+// recordDir is the working directory as a record holds it: relative to the
+// manager's root when it lies inside it, so the two can be moved together;
+// otherwise as given.
+func (m *Manager) recordDir(dir string) string {
+	if m.root == "" || dir == "" {
+		return dir
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
+	}
+	rel, err := filepath.Rel(m.root, abs)
+	if err != nil || !filepath.IsLocal(rel) {
+		return dir
+	}
+	return rel
+}
+
+// resolveDir is the working directory a record names: a relative one is
+// read against the manager's current root. An absolute one, as records
+// written without a root hold, is itself.
+func (m *Manager) resolveDir(dir string) string {
+	if m.root == "" || dir == "" || filepath.IsAbs(dir) {
+		return dir
+	}
+	return filepath.Join(m.root, dir)
 }

@@ -13,7 +13,8 @@
 // were running when the process died are marked lost at the next start
 // (never relaunched), and jobs whose end Close kept quiet are announced
 // then. Finished jobs' logs and records are removed after the retention
-// period.
+// period. A record names a working directory inside Options.Root relative to
+// it, so the root and the log directory can be moved together.
 //
 // Jobs need Unix process groups. On other platforms New works but Start
 // returns ErrUnsupported (see Supported).
@@ -112,7 +113,14 @@ const (
 // Options configure a Manager.
 type Options struct {
 	// Dir holds each job's <id>.log and <id>.json. Required; created if missing.
-	Dir    string
+	Dir string
+	// Root is the directory that is moved together with Dir (a host's
+	// workspace or data directory). A job's working directory inside it is
+	// recorded relative to it and read back against the Root of the manager
+	// that loads the record, so Root and Dir can be moved or renamed
+	// together. A directory outside Root is recorded as it is. "": every
+	// working directory is recorded as it is.
+	Root   string
 	Limits Limits
 	// Modes are the permissions of the log directory and of the files in
 	// it. A zero field takes its default (fsmode.DefaultDir, DefaultFile).
@@ -210,6 +218,7 @@ type WaitResult struct {
 // Manager runs and tracks jobs. Its methods are safe for concurrent use.
 type Manager struct {
 	dir   string
+	root  string // Options.Root, absolute; "" for none
 	modes fsmode.Modes
 	grace time.Duration
 	clock Clock
@@ -251,6 +260,12 @@ func New(opts Options) (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("proc: %w", err)
 	}
+	var root string
+	if opts.Root != "" {
+		if root, err = filepath.Abs(opts.Root); err != nil {
+			return nil, fmt.Errorf("proc: %w", err)
+		}
+	}
 	if err = os.MkdirAll(dir, modes.Dir); err != nil {
 		return nil, fmt.Errorf("proc: create log directory: %w", err)
 	}
@@ -259,6 +274,7 @@ func New(opts Options) (*Manager, error) {
 	}
 	m := &Manager{
 		dir:        dir,
+		root:       root,
 		modes:      modes,
 		grace:      opts.Grace,
 		clock:      opts.Clock,
