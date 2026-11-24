@@ -566,8 +566,6 @@ func TestVerify(t *testing.T) {
 	files := map[string]string{
 		"good.md":                       "---\ntype: Note\ntitle: t\n---\n",
 		"README.md":                     "# not a concept\n",
-		"Case/a.md":                     "---\ntype: Note\n---\n",
-		"case/b.md":                     "---\ntype: Note\n---\n",
 		"dup.md":                        "---\ntype: a\ntype: b\n---\n",
 		"nosource.md":                   "---\ntype: Note\nsources: [{id: x}]\n---\n",
 		"ruled/x.md":                    "---\ntype: Note\n---\n",
@@ -580,6 +578,14 @@ func TestVerify(t *testing.T) {
 		"x.md.md":                       "---\ntype: Note\n---\n",
 		strings.Repeat("s", 31) + ".md": "---\ntype: Note\n---\n",
 	}
+	// Two folders that differ only in case are one folder on a
+	// case-insensitive file system, so the collision exists only elsewhere.
+	_, statErr := os.Stat(filepath.Join(f.notes, "RULES"))
+	caseSensitive := statErr != nil
+	if caseSensitive {
+		files["Case/a.md"] = "---\ntype: Note\n---\n"
+		files["case/b.md"] = "---\ntype: Note\n---\n"
+	}
 	for rel, content := range files {
 		writeFile(t, filepath.Join(f.notes, filepath.FromSlash(rel)), content)
 	}
@@ -589,7 +595,6 @@ func TestVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]string{
-		"case/b":                "concept_id",
 		"dup":                   "frontmatter.type",
 		"nosource":              "frontmatter.sources[0].resource",
 		"ruled/x":               "frontmatter",
@@ -601,6 +606,9 @@ func TestVerify(t *testing.T) {
 		"huge":                  "concept_id",
 		"x.md":                  "concept_id",
 		strings.Repeat("s", 31): "concept_id",
+	}
+	if caseSensitive {
+		want["case/b"] = "concept_id"
 	}
 	got := map[string]string{}
 	for _, fe := range fields {

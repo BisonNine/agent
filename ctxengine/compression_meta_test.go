@@ -143,7 +143,11 @@ func TestLoadCompressionProfile_PrefersUppercase(t *testing.T) {
 	if got := loadCompressionProfile(dir); got != "upper rules" {
 		t.Errorf("uppercase only = %q, want %q", got, "upper rules")
 	}
-	// Both present: uppercase wins.
+	// Both present: uppercase wins. The two names are one file on a
+	// case-insensitive file system, so there is nothing to prefer.
+	if _, err := os.Stat(filepath.Join(dir, "compression.md")); err == nil {
+		t.Skip("case-insensitive file system")
+	}
 	if err := os.WriteFile(filepath.Join(dir, "compression.md"), []byte("lower rules"), 0o644); err != nil {
 		t.Fatal(err)
 	}
