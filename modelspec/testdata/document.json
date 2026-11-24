@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "name": "example-gateway",
+      "protocol": "openai-chat",
+      "base_url": "https://api.example.com/v1",
+      "api_key": "env:EXAMPLE_GATEWAY_KEY",
+      "no_parallel_tool_calls": true
+    },
+    {
+      "name": "anthropic",
+      "protocol": "anthropic",
+      "base_url": "https://anthropic.example.com",
+      "api_key": "file:/etc/example/anthropic.key",
+      "proxy": "http://proxy.example.com:3128"
+    },
+    {
+      "name": "deepseek",
+      "protocol": "openai-chat",
+      "base_url": "https://deepseek.example.com/v1",
+      "api_key": "sk-test-not-a-real-key",
+      "require_reasoning_content": true,
+      "response_format_json": true
+    },
+    {
+      "name": "strict-gateway",
+      "protocol": "openai-responses",
+      "base_url": "https://strict.example.com/v1",
+      "api_key": "test-key",
+      "strict_compat": true
+    },
+    {
+      "name": "claude-cli",
+      "protocol": "claude-cli",
+      "command": "/usr/local/bin/claude",
+      "bypass_restrictions": true
+    },
+    {
+      "name": "codex-cli",
+      "protocol": "codex-cli"
+    },
+    {
+      "name": "gemini",
+      "protocol": "gemini",
+      "api_key": "env:EXAMPLE_GEMINI_KEY"
+    }
+  ],
+  "models": [
+    {
+      "model_name": "sonnet",
+      "model": "claude-sonnet-5-5",
+      "provider": "anthropic",
+      "max_tokens": 16384,
+      "context_window": 200000,
+      "thinking_level": "adaptive",
+      "vision": "user_message",
+      "enabled": true
+    },
+    {
+      "model_name": "grok",
+      "model": "grok-4",
+      "provider": "example-gateway",
+      "request_timeout": 300,
+      "vision": "tool_response",
+      "enabled": true,
+      "reasoning_effort": "high",
+      "extra_body": {
+        "search_parameters": {
+          "mode": "auto",
+          "sources": [
+            "web",
+            "news"
+          ]
+        },
+        "top_k": 40
+      },
+      "drop_params": [
+        "temperature"
+      ]
+    },
+    {
+      "model_name": "deepseek",
+      "model": "deepseek-v4",
+      "provider": "deepseek",
+      "max_tokens_field": "max_completion_tokens",
+      "enabled": false,
+      "response_log_file": "/var/log/example/deepseek.jsonl"
+    },
+    {
+      "model_name": "gemma",
+      "model": "gemma-3-27b",
+      "provider": "strict-gateway",
+      "no_tools": true,
+      "enabled": true,
+      "strict_alternation": true
+    },
+    {
+      "model_name": "claude-cli",
+      "model": "claude-cli",
+      "provider": "claude-cli",
+      "workspace": "/home/alice/work",
+      "request_timeout": 3600,
+      "extra_args": [
+        "--verbose"
+      ],
+      "env": {
+        "ALICE_TOKEN": "env:ALICE_TOKEN",
+        "LANG": "C.UTF-8"
+      },
+      "enabled": true
+    },
+    {
+      "model_name": "codex",
+      "model": "gpt-5.5-codex",
+      "provider": "codex-cli",
+      "enabled": true
+    },
+    {
+      "model_name": "gemini-tts",
+      "model": "gemini-2.5-flash-tts",
+      "provider": "gemini",
+      "enabled": true
+    }
+  ],
+  "assignments": {
+    "alice": {
+      "chat": [
+        {
+          "model": "sonnet"
+        },
+        {
+          "model": "grok",
+          "enabled": true
+        }
+      ],
+      "summarize": [
+        {
+          "model": "gemma"
+        }
+      ]
+    },
+    "bob": {
+      "chat": [
+        {
+          "model": "claude-cli"
+        },
+        {
+          "model": "deepseek",
+          "enabled": false
+        }
+      ],
+      "worker": [
+        {
+          "model": "codex"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,67 @@
+// spawnllm
+// License: MIT
+//
+// Copyright (c) 2026 PicoClaw contributors
+
+package spawnllm
+
+import (
+	"encoding/json"
+	"log/slog"
+)
+
+// NormalizeToolCall normalizes a ToolCall to ensure all fields are properly populated.
+// It handles cases where Name/Arguments might be in different locations (top-level vs Function)
+// and ensures both are populated consistently. Arguments that cannot be encoded
+// are logged at debug level on log (nil discards). It returns a copy: tc and
+// its Function are not changed.
+func NormalizeToolCall(tc ToolCall, log *slog.Logger) ToolCall {
+	normalized := tc
+	if tc.Function != nil {
+		fn := *tc.Function
+		normalized.Function = &fn
+	}
+
+	// Ensure Name is populated from Function if not set
+	if normalized.Name == "" && normalized.Function != nil {
+		normalized.Name = normalized.Function.Name
+	}
+
+	// Ensure Arguments is not nil
+	if normalized.Arguments == nil {
+		normalized.Arguments = map[string]any{}
+	}
+
+	// Parse Arguments from Function.Arguments if not already set
+	if len(normalized.Arguments) == 0 && normalized.Function != nil && normalized.Function.Arguments != "" {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(normalized.Function.Arguments), &parsed); err == nil && parsed != nil {
+			normalized.Arguments = parsed
+		}
+	}
+
+	// Ensure Function is populated with consistent values
+	argsJSON, err := json.Marshal(normalized.Arguments)
+	if err != nil {
+		if log == nil {
+			log = discard()
+		}
+		log.With("component", component).Debug("tool call arguments are not JSON-encodable",
+			"tool", normalized.Name, "error", err.Error())
+	}
+	if normalized.Function == nil {
+		normalized.Function = &FunctionCall{
+			Name:      normalized.Name,
+			Arguments: string(argsJSON),
+		}
+	} else {
+		if normalized.Function.Name == "" {
+			normalized.Function.Name = normalized.Name
+		}
+		if normalized.Function.Arguments == "" {
+			normalized.Function.Arguments = string(argsJSON)
+		}
+	}
+
+	return normalized
+}

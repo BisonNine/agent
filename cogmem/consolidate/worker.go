@@ -1,0 +1,561 @@
+// cogmem - Cognitive Memory
+// License: MIT
+
+package consolidate
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+
+	"go.bison9.com/agent/cogmem/store"
+	"go.bison9.com/agent/fsmode"
+	"go.bison9.com/agent/hook"
+)
+
+// leaseTTL bounds how long a single RunOnce may hold the per-archive lease.
+const leaseTTL = 10 * time.Minute
+
+// Observe records one conversation message into the store's inbox so the next
+// consolidation run can read it. It is the host's per-message call: the host
+// appends the message to its own transcript, gets a seq, and hands a copy here.
+// Only meaningful roles (user, assistant) are kept — tool plumbing never reaches
+// the model — and the text is capped at perMessageChars (0 = uncapped) so the
+// inbox holds what a run would send, not whole file dumps. Returns whether the
+// message was stored.
+func Observe(ctx context.Context, st *store.Store, seq int64, role, text string, perMessageChars int) (bool, error) {
+	if !MeaningfulRole(role) {
+		return false, nil
+	}
+	text, _ = TruncateText(text, perMessageChars)
+	if err := st.AppendInbox(ctx, st.DB(), seq, role, text); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// maxModelAttempts bounds how many replies one run will ask for before giving
+// up. Each unusable reply adds its model to Exclude for the next attempt.
+const maxModelAttempts = 4
+
+// errInvalidOutput is what callModel returns when every attempt produced text
+// that did not parse as an Output. Its text is the clean, human-readable
+// message recorded on the run; the raw JSON-parser errors only reach the log.
+var errInvalidOutput = errors.New("memory model output was not valid JSON")
+
+// Worker runs the consolidation "sleep cycle" against one store: it drains the
+// store's inbox into memory operations.
+type Worker struct {
+	st    *store.Store
+	model hook.Caller
+
+	batchOpts  BatchOptions
+	debugDump  string
+	modelName  string
+	folderMode os.FileMode
+	fileMode   os.FileMode
+	logger     *slog.Logger // the host's logger; nil discards
+	log        *slog.Logger // logger tagged with the component "cogmem"
+
+	// Retention windows in days; 0 means keep forever. Applied on each run,
+	// because consolidation is already the regular sweep over a store and a
+	// second scheduler for a delete this cheap would earn nothing.
+	eventDays   int
+	retiredDays int
+}
+
+// Option configures a Worker (functional-options pattern, per dev standards).
+type Option func(*Worker)
+
+// WithBatchOptions sets the batching levers (count/token/char budgets).
+func WithBatchOptions(o BatchOptions) Option { return func(w *Worker) { w.batchOpts = o } }
+
+// WithDebugDump writes the system/user/raw payloads of each run to dir.
+func WithDebugDump(dir string) Option { return func(w *Worker) { w.debugDump = dir } }
+
+// WithRetention sets how long event and retired memories are kept, in days.
+// 0 for either means keep forever.
+func WithRetention(eventDays, retiredDays int) Option {
+	return func(w *Worker) { w.eventDays, w.retiredDays = eventDays, retiredDays }
+}
+
+// WithModelName sets the model name recorded on a run when the host's reply
+// carries none.
+func WithModelName(name string) Option { return func(w *Worker) { w.modelName = name } }
+
+// WithLogger sets the logger the Worker writes to; its records carry the
+// attribute component "cogmem". Without it, or with nil, nothing is logged.
+func WithLogger(l *slog.Logger) Option { return func(w *Worker) { w.logger = l } }
+
+// componentLog returns l, the host's logger, tagged with the component
+// "cogmem"; a nil l gives a logger that discards.
+func componentLog(l *slog.Logger) *slog.Logger {
+	if l == nil {
+		return slog.New(slog.DiscardHandler)
+	}
+	return l.With("component", "cogmem")
+}
+
+// WithFileModes sets the modes of the debug dump directory when it is created
+// (Dir) and of the debug dump files (File). Each defaults to the store's mode;
+// a zero field keeps it (see fsmode.Modes).
+func WithFileModes(m fsmode.Modes) Option {
+	return func(w *Worker) {
+		r := m.Or(fsmode.Modes{Dir: w.folderMode, File: w.fileMode})
+		w.folderMode, w.fileMode = r.Dir, r.File
+	}
+}
+
+// NewWorker builds a Worker over a store and a model caller. The debug dump
+// modes default to the store's; WithFileModes overrides them.
+func NewWorker(st *store.Store, model hook.Caller, opts ...Option) *Worker {
+	w := &Worker{
+		st:         st,
+		model:      model,
+		batchOpts:  DefaultBatchOptions(),
+		folderMode: store.DefaultFolderPermissions,
+		fileMode:   store.DefaultFilePermissions,
+	}
+	if st != nil {
+		w.folderMode, w.fileMode = st.FolderPermissions(), st.FilePermissions()
+	}
+	for _, o := range opts {
+		o(w)
+	}
+	w.log = componentLog(w.logger)
+	return w
+}
+
+// RunParams identifies one consolidation run.
+type RunParams struct {
+	ID        string // label for logs and run records
+	Dir       string // the memory's directory
+	Workspace string // where the curated files and COGMEM.md are read from
+	Trigger   string // message, idle, nightly, manual
+}
+
+// RunResult reports the outcome of a single RunOnce.
+type RunResult struct {
+	Applied  int
+	More     bool
+	Status   string // busy, idle, ok, error, invalid_json, aborted
+	SeqStart int64
+	SeqEnd   int64
+	// DroppedKeywords are the keyword phrases Apply refused on an ok run.
+	DroppedKeywords []DroppedKeyword
+}
+
+// leaseName guards a store against two concurrent runs. One store, one lease.
+const leaseName = "consolidate:" + store.InboxStateKey
+
+// RunOnce performs one consolidation pass: it leases the store, selects the
+// next batch of inbox messages past the watermark, asks the model to propose
+// memory operations, validates them against the contract, and applies the
+// valid result and advances the watermark in one transaction, so the batch is
+// never applied without being marked consolidated. Only then is the covered
+// part of the inbox deleted.
+func (w *Worker) RunOnce(ctx context.Context, p RunParams) (RunResult, error) {
+	owner := w.leaseOwner(p.ID)
+	ok, err := w.st.AcquireLease(ctx, w.st.DB(), leaseName, owner, leaseTTL)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("consolidate: acquire lease: %w", err)
+	}
+	if !ok {
+		return RunResult{Status: "busy"}, nil
+	}
+	defer func() { _ = w.st.ReleaseLease(ctx, w.st.DB(), leaseName, owner) }()
+
+	state, err := w.st.GetState(ctx, w.st.DB(), store.InboxStateKey)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("consolidate: get state: %w", err)
+	}
+	consolidated := state.ConsolidatedSeq
+
+	_, maxSeq, err := w.st.InboxBounds(ctx, w.st.DB())
+	if err != nil {
+		return RunResult{}, fmt.Errorf("consolidate: inbox bounds: %w", err)
+	}
+	if maxSeq <= consolidated {
+		return RunResult{Status: "idle", SeqStart: consolidated + 1}, nil
+	}
+
+	src, err := w.st.InboxRange(ctx, w.st.DB(), consolidated+1, maxSeq)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("consolidate: inbox range: %w", err)
+	}
+	msgs := make([]Message, 0, len(src))
+	for _, m := range src {
+		// Observe already filtered roles; a row written by an older host is
+		// filtered again here so the model never sees plumbing.
+		if !MeaningfulRole(m.Role) {
+			continue
+		}
+		msgs = append(msgs, Message{Seq: m.Seq, Role: m.Role, Text: m.Text})
+	}
+
+	batch, lastSeq, more := SelectBatch(msgs, w.batchOpts)
+	if len(batch) == 0 {
+		return RunResult{Status: "idle", SeqStart: consolidated + 1}, nil
+	}
+
+	// Cleanup before the model sees current_state: retire exact-duplicate active
+	// memories (e.g. a runaway loop that wrote the same fact repeatedly). Cheap
+	// and idempotent; best-effort so a dedup error never blocks consolidation.
+	if n, derr := w.st.DedupeActiveMemories(ctx); derr != nil {
+		w.log.WarnContext(ctx, "dedupe active memories failed",
+			"id", p.ID, "error", derr.Error(),
+		)
+	} else if n > 0 {
+		w.log.InfoContext(ctx, "consolidation: retired duplicate memories",
+			"id", p.ID, "retired", n,
+		)
+	}
+
+	w.applyRetention(ctx, p.ID)
+
+	// Without the current state the model would see an empty store and could
+	// recreate every domain and memory, so a failed read fails the run.
+	current, err := w.currentState(ctx)
+	if err != nil {
+		err = fmt.Errorf("consolidate: current state: %w", err)
+		w.recordRun(ctx, p, w.modelName, "error", 0, consolidated+1, lastSeq, 0, 0, err.Error(), "", time.Now())
+		return RunResult{Status: "error", More: more, SeqStart: consolidated + 1, SeqEnd: lastSeq}, err
+	}
+	in := Input{
+		Curated:      ReadCurated(p.Workspace),
+		CurrentState: current,
+		NewMessages:  batch,
+	}
+
+	promptPath := PromptPath(p.Workspace)
+	system, prompt := BuildPrompt(promptPath)
+	if prompt.Ignored {
+		w.log.WarnContext(ctx, "Ignoring per-agent consolidation instructions: "+prompt.Reason,
+			"path", promptPath)
+	}
+	userJSON, err := json.Marshal(in)
+	if err != nil {
+		return RunResult{}, fmt.Errorf("consolidate: marshal input: %w", err)
+	}
+
+	result := RunResult{More: more, SeqStart: consolidated + 1, SeqEnd: lastSeq}
+	started := time.Now()
+	inputTokens := EstimateTokens(system + string(userJSON))
+
+	out, reply, err := w.callModel(ctx, p.ID, system, string(userJSON))
+	model := w.modelLabel(reply.Model)
+	raw := reply.Content
+	outputTokens := EstimateTokens(raw)
+	if err != nil {
+		if errors.Is(err, errInvalidOutput) {
+			// Every attempt came back unusable. Record the clean message, never
+			// the parser's ("unexpected end of JSON input"), and keep the inbox
+			// for the next run.
+			w.recordRun(ctx, p, model, "invalid_json", 0, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), "", started)
+			w.dump(p, system, string(userJSON), raw, 0)
+			result.Status = "invalid_json"
+			return result, nil
+		}
+		// The host had no model left to try (or a transport failure it could
+		// not route around).
+		w.recordRun(ctx, p, model, "error", 0, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), "", started)
+		result.Status = "error"
+		return result, fmt.Errorf("consolidate: model call: %w", err)
+	}
+
+	if verr := out.Validate(in); verr != nil {
+		w.recordRun(ctx, p, model, "aborted", 0, consolidated+1, lastSeq, inputTokens, outputTokens, verr.Error(), "", started)
+		w.dump(p, system, string(userJSON), raw, 0)
+		result.Status = "aborted"
+		return result, nil
+	}
+
+	// The watermark advances inside Apply's transaction: either the batch is
+	// applied and marked consolidated, or neither happens and the next run
+	// retries the same batch.
+	applyRes, err := Apply(ctx, w.st, out, ApplyContext{
+		Actor:     actorSleepCycle,
+		Model:     model,
+		Watermark: &Watermark{ConsolidatedSeq: lastSeq, LastSeenSeq: maxSeq},
+	})
+	applied := applyRes.Applied
+	if err != nil {
+		w.recordRun(ctx, p, model, "error", applied, consolidated+1, lastSeq, inputTokens, outputTokens, err.Error(), "", started)
+		result.Status = "error"
+		return result, fmt.Errorf("consolidate: apply: %w", err)
+	}
+
+	// The watermark is the source of truth; the inbox rows behind it are now
+	// just weight. Best-effort: a delete failure is recorded on the run but the
+	// run itself stands, and the next run's delete covers the same rows again.
+	drainErr := ""
+	if _, err := w.st.DeleteInboxThrough(ctx, w.st.DB(), lastSeq); err != nil {
+		drainErr = "drain inbox: " + err.Error()
+	}
+	// drainErr is a real error — the run itself was fine, but the cleanup
+	// genuinely failed — so it stays in Error. Generic keywords the model
+	// proposed are dropped, not failed on: they are a NOTE.
+	runNote := ""
+	if len(applyRes.DroppedKeywords) > 0 {
+		runNote = "keywords not added: " + droppedKeywordsText(applyRes.DroppedKeywords, 0)
+	}
+	w.recordRun(ctx, p, model, "ok", applied, consolidated+1, lastSeq, inputTokens, outputTokens, drainErr, runNote, started)
+	w.dump(p, system, string(userJSON), raw, applied)
+
+	result.Applied = applied
+	result.Status = "ok"
+	result.DroppedKeywords = applyRes.DroppedKeywords
+	return result, nil
+}
+
+// droppedKeywordsText renders dropped keywords for an operator, naming each
+// domain by name, e.g. `travel "today" (too common), "home office" "desk"
+// (already used by 3 domains)`. limit > 0 lists at most that many and ends
+// with "and N more"; 0 lists all.
+func droppedKeywordsText(dropped []DroppedKeyword, limit int) string {
+	shown := dropped
+	if limit > 0 && len(dropped) > limit {
+		shown = dropped[:limit]
+	}
+	parts := make([]string, len(shown), len(shown)+1)
+	for i, d := range shown {
+		parts[i] = fmt.Sprintf("%s %q (%s)", domainLabel(d.DomainName, d.DomainID), d.Phrase, d.Reason)
+	}
+	if more := len(dropped) - len(shown); more > 0 {
+		parts = append(parts, fmt.Sprintf("and %d more", more))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// domainLabel names a domain for an operator: its name, quoted when it has
+// spaces or characters that would blur the message, or its ID when the name
+// is unknown.
+func domainLabel(name, id string) string {
+	if name == "" {
+		return id
+	}
+	if strings.ContainsAny(name, " \t\n\",()") {
+		return fmt.Sprintf("%q", name)
+	}
+	return name
+}
+
+// callModel asks the host for a reply and validates it as a consolidation
+// Output. An empty or unparseable reply is logged, its model is added to
+// Exclude, and the host is asked again, up to maxModelAttempts in total. On
+// success reply is the accepted answer; on failure it is the last one tried,
+// so its Model still names the model to record. A host error is returned as
+// is; exhausting the attempts returns errInvalidOutput.
+func (w *Worker) callModel(ctx context.Context, runID, system, user string) (Output, hook.CompleteReply, error) {
+	req := hook.CompleteRequest{System: system, User: user, JSONObject: true}
+	var last hook.CompleteReply
+	for attempt := 1; attempt <= maxModelAttempts; attempt++ {
+		reply, err := w.model.Complete(ctx, req)
+		if err != nil {
+			if reply.Model == "" {
+				reply.Model = last.Model
+			}
+			return Output{}, reply, err
+		}
+		last = reply
+
+		out, perr := ParseOutput(reply.Content)
+		if perr == nil {
+			return out, reply, nil
+		}
+		reason := "not valid JSON"
+		if strings.TrimSpace(reply.Content) == "" {
+			reason = "empty"
+		}
+		w.log.WarnContext(ctx, "consolidation: model reply unusable",
+			"id", runID,
+			"model", w.modelLabel(reply.Model),
+			"attempt", attempt,
+			"max_attempts", maxModelAttempts,
+			"reason", reason,
+			"parse_error", perr.Error(),
+			"finish_reason", reply.FinishReason,
+			"content_chars", len(reply.Content),
+		)
+		if reply.Model != "" && !slices.Contains(req.Exclude, reply.Model) {
+			req.Exclude = append(req.Exclude, reply.Model)
+		}
+	}
+	return Output{}, last, fmt.Errorf("%w after %d attempts", errInvalidOutput, maxModelAttempts)
+}
+
+// modelLabel names a model for run records and logs: the reply's own name, or
+// the configured WithModelName when the reply carried none.
+func (w *Worker) modelLabel(name string) string {
+	if name != "" {
+		return name
+	}
+	return w.modelName
+}
+
+// currentState projects the active domains and their active memories into the
+// compact view the model sees. A read error is returned, never an empty or
+// partial view.
+func (w *Worker) currentState(ctx context.Context) (CurrentState, error) {
+	cs := CurrentState{}
+	domains, err := w.st.ListDomains(ctx, w.st.DB(), store.StatusActive)
+	if err != nil {
+		return CurrentState{}, fmt.Errorf("list domains: %w", err)
+	}
+	for _, d := range domains {
+		// Consolidation's own list goes in keyword_triggers, the field its ops
+		// write; the agent's and the blocked lists are read-only context.
+		dv := DomainView{
+			ID:                   d.ID,
+			Sticky:               d.Sticky(),
+			Name:                 d.Name,
+			Status:               string(d.Status),
+			Version:              d.Version,
+			Summary:              d.Summary,
+			State:                d.State,
+			Triggers:             d.Triggers,
+			KeywordTriggers:      d.AutoKeywords,
+			AgentKeywordTriggers: d.KeywordTriggers,
+			BlockedKeywords:      d.BlockedKeywords,
+		}
+		// Prompt memories only: the model de-duplicates against what it sees, and
+		// a domain holding hundreds of event memories would crowd out everything
+		// else in the state view.
+		hooks, err := w.st.ListPromptMemories(ctx, w.st.DB(), d.ID)
+		if err != nil {
+			return CurrentState{}, fmt.Errorf("memories of domain %s: %w", d.ID, err)
+		}
+		for _, h := range hooks {
+			dv.Memories = append(dv.Memories, MemoryView{
+				ID:         h.ID,
+				Type:       string(h.Type),
+				Text:       h.Text,
+				Confidence: h.Confidence,
+				AgeDays:    int(time.Since(h.CreatedAt).Hours() / 24),
+			})
+		}
+		cs.Domains = append(cs.Domains, dv)
+	}
+	return cs, nil
+}
+
+// applyRetention deletes memories that have aged out.
+//
+// Events go because they stop being useful long before they stop accumulating —
+// an hourly "nothing changed" note reached 300 rows on one agent. Retired
+// memories go because retiring leaves the row behind, so a store that retires
+// steadily grows forever while showing nothing for it.
+//
+// Best-effort and non-fatal: a purge failure must never stop the consolidation
+// run that was actually asked for.
+func (w *Worker) applyRetention(ctx context.Context, id string) {
+	if n, err := w.st.PurgeExpiredEvents(ctx, w.st.DB(), w.eventDays); err != nil {
+		w.log.WarnContext(ctx, "purge expired events failed",
+			"id", id, "error", err.Error(),
+		)
+	} else if n > 0 {
+		w.log.InfoContext(ctx, "consolidation: deleted expired event memories",
+			"id", id, "deleted", n, "older_than_days", w.eventDays,
+		)
+	}
+	if n, err := w.st.PurgeRetiredMemories(ctx, w.st.DB(), w.retiredDays); err != nil {
+		w.log.WarnContext(ctx, "purge retired memories failed",
+			"id", id, "error", err.Error(),
+		)
+	} else if n > 0 {
+		w.log.InfoContext(ctx, "consolidation: deleted retired memories",
+			"id", id, "deleted", n, "retired_more_than_days_ago", w.retiredDays,
+		)
+	}
+}
+
+// recordRun writes the run record. errMsg is why the run FAILED; note is
+// something worth reporting about a run that SUCCEEDED. They are separate
+// arguments on purpose: passing a note as an error makes the memory page show a
+// successful run in red.
+func (w *Worker) recordRun(ctx context.Context, p RunParams, model, status string, applied int, seqStart, seqEnd int64, inTok, outTok int, errMsg, note string, started time.Time) {
+	finished := time.Now()
+	_ = w.st.RecordRun(ctx, w.st.DB(), store.Run{
+		Trigger:      p.Trigger,
+		Model:        model,
+		SeqStart:     seqStart,
+		SeqEnd:       seqEnd,
+		InputTokens:  inTok,
+		OutputTokens: outTok,
+		Status:       status,
+		OpsApplied:   applied,
+		Error:        errMsg,
+		Note:         note,
+		StartedAt:    started,
+		FinishedAt:   &finished,
+	})
+}
+
+// dump writes the run payloads for offline model comparison when a debug dir is
+// configured. Best-effort: failures are ignored.
+func (w *Worker) dump(p RunParams, system, userJSON, raw string, applied int) {
+	if w.debugDump == "" {
+		return
+	}
+	if err := os.MkdirAll(w.debugDump, w.folderMode); err != nil {
+		return
+	}
+	rec := struct {
+		System   string `json:"system"`
+		UserJSON string `json:"user_json"`
+		Raw      string `json:"raw"`
+		Applied  int    `json:"applied"`
+	}{system, userJSON, raw, applied}
+	b, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return
+	}
+	name := fmt.Sprintf("%s-%s.json", time.Now().UTC().Format("20060102T150405.000"), uuid.NewString()[:8])
+	_ = os.WriteFile(filepath.Join(w.debugDump, name), b, w.fileMode)
+}
+
+func (w *Worker) leaseOwner(label string) string {
+	id := uuid.NewString()
+	if label == "" {
+		return id
+	}
+	return fmt.Sprintf("%s-%d-%s", label, os.Getpid(), id)
+}
+
+// ParseOutput trims the raw model text, strips a leading/trailing ```json fence
+// if present, and unmarshals it into an Output.
+func ParseOutput(raw string) (Output, error) {
+	s := strings.TrimSpace(raw)
+	s = stripFence(s)
+	var out Output
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return Output{}, err
+	}
+	return out, nil
+}
+
+func stripFence(s string) string {
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	// Drop the opening fence line (``` or ```json).
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[i+1:]
+	} else {
+		return s
+	}
+	// Drop a trailing closing fence.
+	if j := strings.LastIndex(s, "```"); j >= 0 {
+		s = s[:j]
+	}
+	return strings.TrimSpace(s)
+}

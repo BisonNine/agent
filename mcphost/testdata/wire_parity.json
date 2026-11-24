@@ -1,0 +1,968 @@
+[
+  {
+    "name": "internal initialize",
+    "path": "/internal",
+    "request": {
+      "id": 1,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "wire-fixture",
+          "version": "1.0.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Example\",\"version\":\"0.6.6\"}}}\n"
+  },
+  {
+    "name": "internal tools/list",
+    "path": "/internal",
+    "request": {
+      "id": 2,
+      "jsonrpc": "2.0",
+      "method": "tools/list",
+      "params": {}
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"description\":\"Only Bob has it\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"bob_only\"},{\"description\":\"Not session-scoped\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"ctx_probe\"},{\"description\":\"Always fails\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"fail_tool\"},{\"description\":\"Speaks to the user\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"foruser_tool\"},{\"description\":\"Echoes a token\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"leak_tool\"},{\"description\":\"Returns nothing\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"nil_tool\"},{\"description\":\"Free-form object\",\"inputSchema\":{\"properties\":{\"meta\":{\"additionalProperties\":true,\"type\":\"object\"},\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"open_args\"},{\"description\":\"Panics\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"panic_tool\"},{\"description\":\"Session-scoped\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"session_echo\"},{\"description\":\"Upstream read\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"srv_read\"},{\"description\":\"Upstream write\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"}},\"required\":[\"session_token\"],\"type\":\"object\"},\"name\":\"srv_write\"},{\"description\":\"Alice's clock\",\"inputSchema\":{\"properties\":{\"session_token\":{\"description\":\"Your session_token (format: 'SST\\u003c64 hex\\u003e'). Required on every mcp__host__* call. Supplied verbatim from the agent's system prompt.\",\"type\":\"string\"},\"zone\":{\"description\":\"Time zone\",\"type\":\"string\"}},\"required\":[\"zone\",\"session_token\"],\"type\":\"object\"},\"name\":\"time_now\"}]}}\n"
+  },
+  {
+    "name": "internal call success",
+    "path": "/internal",
+    "request": {
+      "id": 3,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "zone": "UTC"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"args=zone\"}]}}\n"
+  },
+  {
+    "name": "internal call open object args",
+    "path": "/internal",
+    "request": {
+      "id": 4,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "meta": {
+            "k": "v"
+          },
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "open_args"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":4,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"args=meta\"}]}}\n"
+  },
+  {
+    "name": "internal call tool error",
+    "path": "/internal",
+    "request": {
+      "id": 5,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "fail_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"boom\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call nil result",
+    "path": "/internal",
+    "request": {
+      "id": 6,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "nil_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":6,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"tool returned no result\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call panic",
+    "path": "/internal",
+    "request": {
+      "id": 7,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "panic_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32603,\"message\":\"panic recovered in panic_tool tool handler: wire fixture panic\"}}\n"
+  },
+  {
+    "name": "internal call redaction",
+    "path": "/internal",
+    "request": {
+      "id": 8,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "leak_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":8,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"token AGT[REDACTED] end\"}]}}\n"
+  },
+  {
+    "name": "internal call foruser",
+    "path": "/internal",
+    "request": {
+      "id": 9,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "foruser_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"for the model\"}]}}\n"
+  },
+  {
+    "name": "internal call session-scoped",
+    "path": "/internal",
+    "request": {
+      "id": 10,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "session_echo"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":10,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"session=agent:alice:main\"}]}}\n"
+  },
+  {
+    "name": "internal call not session-scoped",
+    "path": "/internal",
+    "request": {
+      "id": 11,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "ctx_probe"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":11,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"session=\"}]}}\n"
+  },
+  {
+    "name": "internal call external name",
+    "path": "/internal",
+    "request": {
+      "id": 12,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "srv_read"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":12,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"upstream read\"}]}}\n"
+  },
+  {
+    "name": "internal call internal name of external tool",
+    "path": "/internal",
+    "request": {
+      "id": 13,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "mcp_srv_read"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":13,\"error\":{\"code\":-32602,\"message\":\"tool 'mcp_srv_read' not found: tool not found\"}}\n"
+  },
+  {
+    "name": "internal call colliding name",
+    "path": "/internal",
+    "request": {
+      "id": 14,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "srv_write"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":14,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"upstream write\"}]}}\n"
+  },
+  {
+    "name": "internal call internal name of shadowed tool",
+    "path": "/internal",
+    "request": {
+      "id": 15,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "mcp_srv_write"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":15,\"error\":{\"code\":-32602,\"message\":\"tool 'mcp_srv_write' not found: tool not found\"}}\n"
+  },
+  {
+    "name": "internal call ACL refusal",
+    "path": "/internal",
+    "request": {
+      "id": 16,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "zone": "UTC"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":16,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Permission denied: the tool \\\"time_now\\\" is not enabled for this agent. This is a configured access restriction, not a bug or an outage. Do not retry this call, and do not attempt to work around it by other means. If this tool is needed, tell the user it must be enabled for this agent.\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call tool not granted",
+    "path": "/internal",
+    "request": {
+      "id": 17,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+        },
+        "name": "leak_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":17,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Permission denied: the tool \\\"leak_tool\\\" is not enabled for this agent. This is a configured access restriction, not a bug or an outage. Do not retry this call, and do not attempt to work around it by other means. If this tool is needed, tell the user it must be enabled for this agent.\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call other agent's same-named tool",
+    "path": "/internal",
+    "request": {
+      "id": 18,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+        },
+        "name": "fail_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":18,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"bob's fail_tool ran\"}]}}\n"
+  },
+  {
+    "name": "internal call service token",
+    "path": "/internal",
+    "request": {
+      "id": 19,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "bob-service-token"
+        },
+        "name": "bob_only"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":19,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"bob only\"}]}}\n"
+  },
+  {
+    "name": "internal call service token hash refused",
+    "path": "/internal",
+    "request": {
+      "id": 20,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "sha256:78a2d8d63b859a35a77f0ac4824661899e0fc7218269a16b059b532b2327b530"
+        },
+        "name": "bob_only"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":20,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"invalid or missing session_token; supply your assigned token (format: SST\\u003c64 hex\\u003e)\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call unknown tool",
+    "path": "/internal",
+    "request": {
+      "id": 21,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        },
+        "name": "no_such_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":21,\"error\":{\"code\":-32602,\"message\":\"tool 'no_such_tool' not found: tool not found\"}}\n"
+  },
+  {
+    "name": "internal call missing token",
+    "path": "/internal",
+    "request": {
+      "id": 22,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "zone": "UTC"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":22,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"invalid or missing session_token; supply your assigned token (format: SST\\u003c64 hex\\u003e)\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call non-string token",
+    "path": "/internal",
+    "request": {
+      "id": 23,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": 42
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":23,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"invalid or missing session_token; supply your assigned token (format: SST\\u003c64 hex\\u003e)\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call bad token",
+    "path": "/internal",
+    "request": {
+      "id": 24,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":24,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"invalid or missing session_token; supply your assigned token (format: SST\\u003c64 hex\\u003e)\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call revoked token",
+    "path": "/internal",
+    "request": {
+      "id": 25,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTc3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":25,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"invalid or missing session_token; supply your assigned token (format: SST\\u003c64 hex\\u003e)\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "internal call sub-agent token",
+    "path": "/internal",
+    "request": {
+      "id": 26,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "AGT0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":26,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"sub-agents are not granted Example MCP access; use the harness filesystem tools against your assigned working directory.\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "bearer initialize without a token",
+    "path": "/mcp",
+    "request": {
+      "id": 27,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "wire-fixture",
+          "version": "1.0.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "status": 401,
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"host-mcp\""
+    },
+    "response": "missing bearer token\n"
+  },
+  {
+    "name": "bearer initialize with a bad token",
+    "path": "/mcp",
+    "auth": "Bearer <bad>",
+    "request": {
+      "id": 28,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "wire-fixture",
+          "version": "1.0.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "status": 401,
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"host-mcp\""
+    },
+    "response": "invalid bearer token\n"
+  },
+  {
+    "name": "bearer initialize with a revoked token",
+    "path": "/mcp",
+    "auth": "Bearer <revoked>",
+    "request": {
+      "id": 29,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "wire-fixture",
+          "version": "1.0.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "status": 401,
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"host-mcp\""
+    },
+    "response": "invalid bearer token\n"
+  },
+  {
+    "name": "bearer initialize with the sub-agent token",
+    "path": "/mcp",
+    "auth": "Bearer <sub-agent>",
+    "request": {
+      "id": 30,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "wire-fixture",
+          "version": "1.0.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "status": 401,
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"host-mcp\""
+    },
+    "response": "invalid bearer token\n"
+  },
+  {
+    "name": "bearer initialize with another scheme",
+    "path": "/mcp",
+    "auth": "Basic <alice>",
+    "request": {
+      "id": 31,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "wire-fixture",
+          "version": "1.0.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "status": 401,
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"host-mcp\""
+    },
+    "response": "missing bearer token\n"
+  },
+  {
+    "name": "bearer initialize",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 32,
+      "jsonrpc": "2.0",
+      "method": "initialize",
+      "params": {
+        "capabilities": {},
+        "clientInfo": {
+          "name": "wire-fixture",
+          "version": "1.0.0"
+        },
+        "protocolVersion": "2025-03-26"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":32,\"result\":{\"protocolVersion\":\"2025-03-26\",\"capabilities\":{\"tools\":{\"listChanged\":true}},\"serverInfo\":{\"name\":\"Example\",\"version\":\"0.6.6\"}}}\n"
+  },
+  {
+    "name": "bearer tools/list alice",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 33,
+      "jsonrpc": "2.0",
+      "method": "tools/list",
+      "params": {}
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":33,\"result\":{\"tools\":[{\"description\":\"Not session-scoped\",\"inputSchema\":{},\"name\":\"ctx_probe\"},{\"description\":\"Always fails\",\"inputSchema\":{\"properties\":{},\"type\":\"object\"},\"name\":\"fail_tool\"},{\"description\":\"Speaks to the user\",\"inputSchema\":{},\"name\":\"foruser_tool\"},{\"description\":\"Echoes a token\",\"inputSchema\":{},\"name\":\"leak_tool\"},{\"description\":\"Panics\",\"inputSchema\":{},\"name\":\"panic_tool\"},{\"description\":\"Session-scoped\",\"inputSchema\":{},\"name\":\"session_echo\"},{\"description\":\"Upstream read\",\"inputSchema\":{},\"name\":\"srv_read\"},{\"description\":\"Upstream write\",\"inputSchema\":{},\"name\":\"srv_write\"},{\"description\":\"Alice's clock\",\"inputSchema\":{\"properties\":{\"zone\":{\"description\":\"Time zone\",\"type\":\"string\"}},\"required\":[\"zone\"],\"type\":\"object\"},\"name\":\"time_now\"}]}}\n"
+  },
+  {
+    "name": "bearer tools/list bob",
+    "path": "/mcp",
+    "auth": "Bearer <bob>",
+    "request": {
+      "id": 34,
+      "jsonrpc": "2.0",
+      "method": "tools/list",
+      "params": {}
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":34,\"result\":{\"tools\":[{\"description\":\"Only Bob has it\",\"inputSchema\":{},\"name\":\"bob_only\"},{\"description\":\"Bob's failing tool\",\"inputSchema\":{\"properties\":{},\"type\":\"object\"},\"name\":\"fail_tool\"}]}}\n"
+  },
+  {
+    "name": "bearer tools/list bob service token",
+    "path": "/mcp",
+    "auth": "Bearer <bob-service>",
+    "request": {
+      "id": 35,
+      "jsonrpc": "2.0",
+      "method": "tools/list",
+      "params": {}
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":35,\"result\":{\"tools\":[{\"description\":\"Only Bob has it\",\"inputSchema\":{},\"name\":\"bob_only\"},{\"description\":\"Bob's failing tool\",\"inputSchema\":{\"properties\":{},\"type\":\"object\"},\"name\":\"fail_tool\"}]}}\n"
+  },
+  {
+    "name": "bearer call success",
+    "path": "/mcp",
+    "auth": "bearer <alice>",
+    "request": {
+      "id": 36,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "zone": "UTC"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":36,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"args=zone\"}]}}\n"
+  },
+  {
+    "name": "bearer call with a session_token argument",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 37,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "session_token": "SSTb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+          "zone": "UTC"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":37,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"args=zone\"}]}}\n"
+  },
+  {
+    "name": "bearer call tool error",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 38,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "fail_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":38,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"boom\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "bearer call panic",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 39,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "panic_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":39,\"error\":{\"code\":-32603,\"message\":\"panic recovered in panic_tool tool handler: wire fixture panic\"}}\n"
+  },
+  {
+    "name": "bearer call redaction",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 40,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "leak_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":40,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"token AGT[REDACTED] end\"}]}}\n"
+  },
+  {
+    "name": "bearer call session-scoped",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 41,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "session_echo"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":41,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"session=agent:alice:main\"}]}}\n"
+  },
+  {
+    "name": "bearer call not session-scoped",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 42,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "ctx_probe"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":42,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"session=\"}]}}\n"
+  },
+  {
+    "name": "bearer call colliding name",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 43,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "srv_write"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":43,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"upstream write\"}]}}\n"
+  },
+  {
+    "name": "bearer call unpublished tool",
+    "path": "/mcp",
+    "auth": "Bearer <alice>",
+    "request": {
+      "id": 44,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "nil_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":44,\"error\":{\"code\":-32602,\"message\":\"tool 'nil_tool' not found: tool not found\"}}\n"
+  },
+  {
+    "name": "bearer call ACL refusal",
+    "path": "/mcp",
+    "auth": "Bearer <bob>",
+    "request": {
+      "id": 45,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {
+          "zone": "UTC"
+        },
+        "name": "time_now"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":45,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Permission denied: the tool \\\"time_now\\\" is not enabled for this agent. This is a configured access restriction, not a bug or an outage. Do not retry this call, and do not attempt to work around it by other means. If this tool is needed, tell the user it must be enabled for this agent.\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "bearer call tool not granted",
+    "path": "/mcp",
+    "auth": "Bearer <bob>",
+    "request": {
+      "id": 46,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "leak_tool"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":46,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"Permission denied: the tool \\\"leak_tool\\\" is not enabled for this agent. This is a configured access restriction, not a bug or an outage. Do not retry this call, and do not attempt to work around it by other means. If this tool is needed, tell the user it must be enabled for this agent.\"}],\"isError\":true}}\n"
+  },
+  {
+    "name": "bearer call service token",
+    "path": "/mcp",
+    "auth": "Bearer <bob-service>",
+    "request": {
+      "id": 47,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "bob_only"
+      }
+    },
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "response": "{\"jsonrpc\":\"2.0\",\"id\":47,\"result\":{\"content\":[{\"type\":\"text\",\"text\":\"bob only\"}]}}\n"
+  },
+  {
+    "name": "bearer call without a token",
+    "path": "/mcp",
+    "request": {
+      "id": 48,
+      "jsonrpc": "2.0",
+      "method": "tools/call",
+      "params": {
+        "arguments": {},
+        "name": "time_now"
+      }
+    },
+    "status": 401,
+    "headers": {
+      "Content-Type": "text/plain; charset=utf-8",
+      "WWW-Authenticate": "Bearer realm=\"host-mcp\""
+    },
+    "response": "missing bearer token\n"
+  }
+]

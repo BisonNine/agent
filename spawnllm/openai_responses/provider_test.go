@@ -1,0 +1,495 @@
+// spawnllm
+// License: MIT
+
+package openai_responses
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"go.bison9.com/agent/spawnllm/protocoltypes"
+)
+
+// captureServer returns an httptest server that records the last request body
+// and replies with the given JSON, plus the constructed provider pointed at it.
+func captureServer(t *testing.T, reply string, opts ...Option) (*Provider, *map[string]any) {
+	t.Helper()
+	captured := map[string]any{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/responses" {
+			t.Errorf("path = %q, want /responses", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if _, err := w.Write([]byte(reply)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	p := NewProvider("k", srv.URL, "", opts...)
+	return p, &captured
+}
+
+// asType returns v as a T, failing the test when it has another type. what
+// names the value in the failure message.
+func asType[T any](t *testing.T, v any, what string) T {
+	t.Helper()
+	got, ok := v.(T)
+	if !ok {
+		t.Fatalf("%s is %T, want %T", what, v, got)
+	}
+	return got
+}
+
+func TestChat_TextResponse(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello world"}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}`
+	p, body := captureServer(t, reply)
+
+	msgs := []Message{
+		{Role: "system", Content: "be brief"},
+		{Role: "user", Content: "hi"},
+	}
+	out, err := p.Chat(context.Background(), testID, msgs, nil, "gpt-5", map[string]any{"max_tokens": 256})
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if out.Content != "hello world" {
+		t.Errorf("Content = %q", out.Content)
+	}
+	if out.FinishReason != "stop" || !out.Normal {
+		t.Errorf("finish=%q normal=%v", out.FinishReason, out.Normal)
+	}
+	if out.Usage == nil || out.Usage.PromptTokens != 10 || out.Usage.CompletionTokens != 5 {
+		t.Errorf("usage = %+v", out.Usage)
+	}
+
+	// Request mapping: system hoisted to instructions, user in input, max_output_tokens set.
+	if (*body)["instructions"] != "be brief" {
+		t.Errorf("instructions = %v", (*body)["instructions"])
+	}
+	if _, ok := (*body)["messages"]; ok {
+		t.Error("must not send chat-style 'messages'")
+	}
+	input := asType[[]any](t, (*body)["input"], "input")
+	if len(input) != 1 {
+		t.Fatalf("input len = %d, want 1 (user only)", len(input))
+	}
+	first := asType[map[string]any](t, input[0], "input[0]")
+	if first["role"] != "user" || first["content"] != "hi" {
+		t.Errorf("input[0] = %v", first)
+	}
+	if mot, ok := (*body)["max_output_tokens"].(float64); !ok || mot != 256 {
+		t.Errorf("max_output_tokens = %v, want 256", (*body)["max_output_tokens"])
+	}
+}
+
+func TestChat_ToolCallResponse(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{\"city\":\"NYC\"}"}]}`
+	p, body := captureServer(t, reply)
+
+	tools := []ToolDefinition{{
+		Type: "function",
+		Function: protocoltypes.ToolFunctionDefinition{
+			Name:        "get_weather",
+			Description: "weather",
+			Parameters:  map[string]any{"type": "object"},
+		},
+	}}
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "weather?"}}, tools, "gpt-5", nil)
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if out.FinishReason != "tool_calls" {
+		t.Errorf("finish = %q, want tool_calls", out.FinishReason)
+	}
+	if len(out.ToolCalls) != 1 {
+		t.Fatalf("tool calls = %d", len(out.ToolCalls))
+	}
+	tc := out.ToolCalls[0]
+	if tc.ID != "call_1" || tc.Function == nil || tc.Function.Name != "get_weather" || tc.Function.Arguments != `{"city":"NYC"}` {
+		t.Errorf("tool call = %+v / fn=%+v", tc, tc.Function)
+	}
+
+	// Tools flattened to Responses shape (no nested "function" wrapper).
+	toolsBody := asType[[]any](t, (*body)["tools"], "tools")
+	if len(toolsBody) != 1 {
+		t.Fatalf("tools len = %d", len(toolsBody))
+	}
+	td := asType[map[string]any](t, toolsBody[0], "tools[0]")
+	if td["type"] != "function" || td["name"] != "get_weather" {
+		t.Errorf("tool def = %v", td)
+	}
+	if _, nested := td["function"]; nested {
+		t.Error("tool def must be flattened (no nested 'function')")
+	}
+}
+
+func TestChat_ToolHistoryReplay(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`
+	p, body := captureServer(t, reply)
+
+	msgs := []Message{
+		{Role: "user", Content: "weather?"},
+		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "call_1", Type: "function", Function: &FunctionCall{Name: "get_weather", Arguments: `{"city":"NYC"}`}}}},
+		{Role: "tool", ToolCallID: "call_1", Content: "sunny"},
+	}
+	if _, err := p.Chat(context.Background(), testID, msgs, nil, "gpt-5", nil); err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+
+	input := asType[[]any](t, (*body)["input"], "input")
+	// user message, function_call item, function_call_output item
+	if len(input) != 3 {
+		t.Fatalf("input len = %d, want 3; got %v", len(input), input)
+	}
+	fc := asType[map[string]any](t, input[1], "input[1]")
+	if fc["type"] != "function_call" || fc["call_id"] != "call_1" || fc["name"] != "get_weather" {
+		t.Errorf("function_call item = %v", fc)
+	}
+	fco := asType[map[string]any](t, input[2], "input[2]")
+	if fco["type"] != "function_call_output" || fco["call_id"] != "call_1" || fco["output"] != "sunny" {
+		t.Errorf("function_call_output item = %v", fco)
+	}
+}
+
+func TestChat_JSONObjectFormat(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"{}"}]}]}`
+	// protocol "openai-responses" is JSON-capable by default.
+	p, body := captureServer(t, reply, WithProtocol("openai-responses"))
+
+	_, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5",
+		map[string]any{ResponseFormatJSONObjectOption: true})
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	text := asType[map[string]any](t, (*body)["text"], "text")
+	format := asType[map[string]any](t, text["format"], "text.format")
+	if format["type"] != "json_object" {
+		t.Errorf("text.format = %v, want json_object", text)
+	}
+	if _, ok := (*body)["response_format"]; ok {
+		t.Error("must not send chat-style top-level 'response_format'")
+	}
+}
+
+func TestChat_JSONObjectDroppedWhenNotCapable(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"{}"}]}]}`
+	p, body := captureServer(t, reply, WithProtocol("xai")) // not capable, not opted in
+
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "grok",
+		map[string]any{ResponseFormatJSONObjectOption: true}); err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if _, ok := (*body)["text"]; ok {
+		t.Error("text.format must be dropped when protocol is not JSON-capable")
+	}
+}
+
+func TestChat_ReasoningEffort(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`
+	p, body := captureServer(t, reply, WithReasoningEffort("high"))
+
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil); err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	reasoning := asType[map[string]any](t, (*body)["reasoning"], "reasoning")
+	if reasoning["effort"] != "high" {
+		t.Errorf("reasoning = %v, want effort=high", reasoning)
+	}
+}
+
+func TestChat_IncompleteIsLength(t *testing.T) {
+	reply := `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"partial"}]}]}`
+	p, _ := captureServer(t, reply)
+
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil)
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if out.FinishReason != "length" || out.Normal {
+		t.Errorf("finish=%q normal=%v, want length/false", out.FinishReason, out.Normal)
+	}
+	if out.Content != "partial" {
+		t.Errorf("content = %q", out.Content)
+	}
+}
+
+func TestChat_DropParams(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}]}`
+	p, body := captureServer(t, reply, WithDropParams([]string{"temperature"}))
+
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5",
+		map[string]any{"temperature": 0.7}); err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if _, ok := (*body)["temperature"]; ok {
+		t.Error("temperature should have been dropped by drop_params")
+	}
+}
+
+func TestChat_HTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		if _, err := w.Write([]byte(`{"error":{"message":"bad"}}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+	p := NewProvider("k", srv.URL, "")
+
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "x"}}, nil, "gpt-5", nil)
+	if err == nil {
+		t.Fatal("expected error on non-200")
+	}
+	if out == nil || out.Status == nil || out.Status.Success {
+		t.Errorf("expected failed dispatch status, got %+v", out)
+	}
+}
+
+func TestChat_StoreAlwaysFalse(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}]}`
+	p, body := captureServer(t, reply)
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if store, ok := (*body)["store"].(bool); !ok || store {
+		t.Errorf("store = %v, want false", (*body)["store"])
+	}
+}
+
+func TestChat_TemperatureGatedByReasoning(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}]}`
+
+	// Non-reasoning: temperature sent, no include.
+	p, body := captureServer(t, reply)
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if _, ok := (*body)["temperature"]; !ok {
+		t.Error("non-reasoning: temperature should be sent")
+	}
+	if _, ok := (*body)["include"]; ok {
+		t.Error("non-reasoning: include should not be sent")
+	}
+
+	// Reasoning level: temperature dropped, encrypted reasoning requested.
+	p, body = captureServer(t, reply, WithReasoningEffort("high"))
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "o3", map[string]any{"temperature": 0.7}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if _, ok := (*body)["temperature"]; ok {
+		t.Error("reasoning: temperature must be dropped")
+	}
+	inc := asType[[]any](t, (*body)["include"], "include")
+	if len(inc) != 1 || inc[0] != "reasoning.encrypted_content" {
+		t.Errorf("reasoning: include = %v", (*body)["include"])
+	}
+
+	// effort "none" = reasoning disabled: temperature kept, no include.
+	p, body = captureServer(t, reply, WithReasoningEffort("none"))
+	if _, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", map[string]any{"temperature": 0.7}); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if _, ok := (*body)["temperature"]; !ok {
+		t.Error(`effort "none": temperature should be sent`)
+	}
+	if _, ok := (*body)["include"]; ok {
+		t.Error(`effort "none": include should not be sent`)
+	}
+}
+
+func TestChat_CapturesReasoningItems(t *testing.T) {
+	reply := `{"status":"completed","output":[` +
+		`{"type":"reasoning","id":"rs_1","encrypted_content":"ENC","summary":[]},` +
+		`{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}]}`
+	p, _ := captureServer(t, reply, WithReasoningEffort("high"))
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "o3", nil)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if len(out.ResponsesReasoning) != 1 {
+		t.Fatalf("captured reasoning items = %d, want 1", len(out.ResponsesReasoning))
+	}
+	if !strings.Contains(string(out.ResponsesReasoning[0]), "ENC") {
+		t.Errorf("reasoning item missing encrypted_content: %s", out.ResponsesReasoning[0])
+	}
+}
+
+func TestBuildInput_ReplaysReasoningBeforeToolCall(t *testing.T) {
+	ri := json.RawMessage(`{"type":"reasoning","id":"rs_1","encrypted_content":"ENC"}`)
+	msgs := []Message{
+		{Role: "user", Content: "q"},
+		{
+			Role: "assistant", ResponsesReasoning: []json.RawMessage{ri},
+			ToolCalls: []ToolCall{{ID: "call_1", Function: &FunctionCall{Name: "f", Arguments: "{}"}}},
+		},
+		{Role: "tool", ToolCallID: "call_1", Content: "result"},
+	}
+	_, input := buildInput(msgs, nil, nil)
+
+	reasoningIdx, fcIdx := -1, -1
+	for i, it := range input {
+		if rm, ok := it.(json.RawMessage); ok && strings.Contains(string(rm), "ENC") {
+			reasoningIdx = i
+		}
+		if m, ok := it.(map[string]any); ok && m["type"] == "function_call" {
+			fcIdx = i
+		}
+	}
+	if reasoningIdx == -1 {
+		t.Fatal("reasoning item not replayed in input")
+	}
+	if fcIdx == -1 {
+		t.Fatal("function_call not in input")
+	}
+	if reasoningIdx > fcIdx {
+		t.Fatalf("reasoning (%d) must precede function_call (%d)", reasoningIdx, fcIdx)
+	}
+}
+
+func TestChat_IncompleteContentFilter(t *testing.T) {
+	reply := `{"status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[]}`
+	p, _ := captureServer(t, reply)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5", nil)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if out.FinishReason != "content_filter" || out.Normal {
+		t.Errorf("finish=%q normal=%v, want content_filter / false", out.FinishReason, out.Normal)
+	}
+}
+
+func TestFunctionCallOutput_Image(t *testing.T) {
+	// Text-only tool result → plain string output (unchanged).
+	if got := functionCallOutput(Message{Content: "sunny"}); got != "sunny" {
+		t.Errorf("text output = %v, want %q", got, "sunny")
+	}
+
+	// Tool result with an image → content-part array with input_image, so a
+	// Responses vision model gets the image directly from the tool result.
+	m := Message{Content: "Screenshot:", Media: []string{"data:image/png;base64,AAA"}}
+	parts, ok := functionCallOutput(m).([]map[string]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("image output = %#v, want a 2-part array", functionCallOutput(m))
+	}
+	if parts[0]["type"] != "input_text" || parts[0]["text"] != "Screenshot:" {
+		t.Errorf("part[0] = %v, want input_text", parts[0])
+	}
+	if parts[1]["type"] != "input_image" || parts[1]["image_url"] != "data:image/png;base64,AAA" {
+		t.Errorf("part[1] = %v, want input_image with image_url", parts[1])
+	}
+}
+
+func TestChat_ToolHistoryReplay_DirectNameAndArguments(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`
+	tests := []struct {
+		name     string
+		call     ToolCall
+		wantArgs string
+	}{
+		{"with arguments", ToolCall{ID: "call_1", Name: "get_weather", Arguments: map[string]any{"city": "NYC"}}, `{"city":"NYC"}`},
+		{"without arguments", ToolCall{ID: "call_1", Name: "get_weather"}, `{}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p, body := captureServer(t, reply)
+			msgs := []Message{
+				{Role: "user", Content: "weather?"},
+				{Role: "assistant", ToolCalls: []ToolCall{tt.call}},
+				{Role: "tool", ToolCallID: "call_1", Content: "sunny"},
+			}
+			if _, err := p.Chat(context.Background(), testID, msgs, nil, "gpt-5", nil); err != nil {
+				t.Fatalf("Chat error: %v", err)
+			}
+			input := asType[[]any](t, (*body)["input"], "input")
+			if len(input) != 3 {
+				t.Fatalf("input len = %d, want 3; got %v", len(input), input)
+			}
+			fc := asType[map[string]any](t, input[1], "input[1]")
+			if fc["type"] != "function_call" || fc["call_id"] != "call_1" ||
+				fc["name"] != "get_weather" || fc["arguments"] != tt.wantArgs {
+				t.Errorf("function_call item = %v", fc)
+			}
+		})
+	}
+}
+
+func TestChat_CacheUsageDetails(t *testing.T) {
+	reply := `{"status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}],` +
+		`"usage":{"input_tokens":1000,"output_tokens":5,"total_tokens":1005,` +
+		`"input_tokens_details":{"cached_tokens":700,"cache_write_tokens":200}}}`
+	p, _ := captureServer(t, reply)
+	out, err := p.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5.6", nil)
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if out.Status.CacheReadTokens != 700 || out.Status.CacheCreationTokens != 200 {
+		t.Errorf("cache read/creation = %d/%d, want 700/200",
+			out.Status.CacheReadTokens, out.Status.CacheCreationTokens)
+	}
+	if out.Status.CostUSD != nil {
+		t.Errorf("CostUSD = %v, want nil (no cost reported)", *out.Status.CostUSD)
+	}
+	// input_tokens already includes the cached and written tokens.
+	if out.Usage.PromptTokens != 1000 {
+		t.Errorf("PromptTokens = %d, want 1000", out.Usage.PromptTokens)
+	}
+	// InputTokens is only the uncached part; the three add up to the prompt.
+	if out.Status.InputTokens != 100 {
+		t.Errorf("InputTokens = %d, want 100 (1000 less 700 read, 200 written)", out.Status.InputTokens)
+	}
+	if sum := out.Status.InputTokens + out.Status.CacheReadTokens + out.Status.CacheCreationTokens; sum != out.Usage.PromptTokens {
+		t.Errorf("input+read+write = %d, want PromptTokens %d", sum, out.Usage.PromptTokens)
+	}
+
+	p2, _ := captureServer(t, `{"status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}`)
+	out2, err := p2.Chat(context.Background(), testID, []Message{{Role: "user", Content: "hi"}}, nil, "gpt-5.6", nil)
+	if err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	if out2.Status.CacheReadTokens != 0 || out2.Status.CacheCreationTokens != 0 {
+		t.Errorf("no details: cache read/creation = %d/%d, want 0/0",
+			out2.Status.CacheReadTokens, out2.Status.CacheCreationTokens)
+	}
+	if out2.Status.InputTokens != 3 {
+		t.Errorf("no details: InputTokens = %d, want 3", out2.Status.InputTokens)
+	}
+}
+
+func TestChat_ReferencedDeferredToolsSentAndReferencesAsText(t *testing.T) {
+	p, body := captureServer(t, `{"status":"completed","output":[]}`)
+	tools := []ToolDefinition{
+		{Type: "function", Function: protocoltypes.ToolFunctionDefinition{Name: "search_tools"}},
+		{Type: "function", Function: protocoltypes.ToolFunctionDefinition{Name: "read_file"}, Deferred: true},
+		{Type: "function", Function: protocoltypes.ToolFunctionDefinition{Name: "get_weather"}, Deferred: true},
+	}
+	msgs := []Message{
+		{Role: "user", Content: "weather?"},
+		{Role: "assistant", ToolCalls: []ToolCall{{ID: "c1", Name: "search_tools", Arguments: map[string]any{}}}},
+		{Role: "tool", ToolCallID: "c1", Content: "1 match", ToolReferences: []string{"get_weather"}},
+	}
+	if _, err := p.Chat(context.Background(), testID, msgs, tools, "gpt-5", nil); err != nil {
+		t.Fatalf("Chat error: %v", err)
+	}
+	// read_file was never referenced: left out. get_weather was: an ordinary
+	// function after the loaded tools.
+	sent := asType[[]any](t, (*body)["tools"], "tools")
+	if len(sent) != 2 || asType[map[string]any](t, sent[0], "tools[0]")["name"] != "search_tools" ||
+		asType[map[string]any](t, sent[1], "tools[1]")["name"] != "get_weather" {
+		t.Fatalf("tools = %v, want search_tools, get_weather", sent)
+	}
+	if _, set := asType[map[string]any](t, sent[1], "tools[1]")["defer_loading"]; set {
+		t.Error("get_weather carries defer_loading")
+	}
+	input := asType[[]any](t, (*body)["input"], "input")
+	out := asType[map[string]any](t, input[len(input)-1], "last input")
+	if out["type"] != "function_call_output" || out["output"] != "1 match\n\nTools found: get_weather" {
+		t.Errorf("last input = %v", out)
+	}
+}

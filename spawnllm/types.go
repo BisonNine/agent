@@ -1,0 +1,168 @@
+package spawnllm
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"go.bison9.com/agent/accounting"
+	"go.bison9.com/agent/spawnllm/protocoltypes"
+)
+
+type (
+	ToolCall               = protocoltypes.ToolCall
+	FunctionCall           = protocoltypes.FunctionCall
+	LLMResponse            = protocoltypes.LLMResponse
+	UsageInfo              = protocoltypes.UsageInfo
+	DispatchStatus         = protocoltypes.DispatchStatus
+	Message                = protocoltypes.Message
+	MessageAttachment      = protocoltypes.MessageAttachment
+	ToolDefinition         = protocoltypes.ToolDefinition
+	ToolFunctionDefinition = protocoltypes.ToolFunctionDefinition
+	ExtraContent           = protocoltypes.ExtraContent
+	GoogleExtra            = protocoltypes.GoogleExtra
+	ContentBlock           = protocoltypes.ContentBlock
+	CacheControl           = protocoltypes.CacheControl
+	GeneratedImage         = protocoltypes.GeneratedImage
+)
+
+// LLMProvider is a chat model. Chat checks id before launching anything: an
+// identity without an agent, or with a name too long, is refused with an
+// error wrapping accounting.ErrAgentRequired or accounting.ErrNameTooLong.
+// Every call, refused or not, is reported to the accounting package once.
+type LLMProvider interface {
+	Chat(
+		ctx context.Context,
+		id accounting.Identity,
+		messages []Message,
+		tools []ToolDefinition,
+		model string,
+		options map[string]any,
+	) (*LLMResponse, error)
+	GetDefaultModel() string
+}
+
+type StatefulProvider interface {
+	LLMProvider
+	Close()
+}
+
+// ThinkingCapable is an optional interface for providers that support
+// extended thinking (e.g. Anthropic). Used by the agent loop to warn
+// when thinking_level is configured but the active provider cannot use it.
+type ThinkingCapable interface {
+	SupportsThinking() bool
+}
+
+// DeferredToolsCapable is an optional interface for providers that can load
+// deferred tools natively for a model: ToolDefinition.Deferred tools are sent
+// with the request but enter the model's context only when a tool result names
+// them in Message.ToolReferences, so the tool list (part of every prompt-cache
+// prefix) can stay the same for a whole conversation. When a provider does not
+// implement it, or reports false for the model, it leaves deferred tools out of
+// the request and renders tool references as text; the host then has to reveal
+// tools by adding them to the list itself.
+type DeferredToolsCapable interface {
+	SupportsDeferredTools(model string) bool
+}
+
+// CLIProvider is an optional interface implemented by subprocess-based providers
+// (claude-cli, codex-cli, antigravity-cli, cursor-cli). CLI providers do not accept HTTP request
+// parameters such as temperature — options are passed as prompt context only.
+type CLIProvider interface {
+	IsCLI() bool
+}
+
+// FailoverReason classifies why an LLM request failed for fallback decisions.
+type FailoverReason string
+
+const (
+	FailoverAuth         FailoverReason = "auth"
+	FailoverRateLimit    FailoverReason = "rate_limit"
+	FailoverBilling      FailoverReason = "billing"
+	FailoverTimeout      FailoverReason = "timeout"
+	FailoverFormat       FailoverReason = "format"
+	FailoverOverloaded   FailoverReason = "overloaded"
+	FailoverUnknown      FailoverReason = "unknown"
+	FailoverContextLimit FailoverReason = "context_limit"
+	// FailoverUnavailable: the endpoint cannot serve this model at all (HTTP 404;
+	// OpenRouter's "No endpoints found", a model id that no longer exists). No
+	// retry of the same model fixes it; the chain moves on and the model cools.
+	FailoverUnavailable FailoverReason = "unavailable"
+)
+
+// ReasonText returns a short human phrase for a FailoverReason, for user-facing
+// messages. The precise signal is the HTTP status code shown alongside it.
+func ReasonText(r FailoverReason) string {
+	switch r {
+	case FailoverBilling:
+		return "out of credits"
+	case FailoverAuth:
+		return "auth failed"
+	case FailoverRateLimit:
+		return "rate limited"
+	case FailoverTimeout:
+		return "timeout"
+	case FailoverOverloaded:
+		return "overloaded"
+	case FailoverContextLimit:
+		return "context too large"
+	case FailoverFormat:
+		return "bad response format"
+	case FailoverUnavailable:
+		return "model not available"
+	default:
+		return "error"
+	}
+}
+
+// CoolsDown reports whether a failure of this kind means the model is unusable
+// for a while (so callers should put it in cooldown rather than hammering it):
+// billing exhaustion, auth failure, rate limiting, or provider overload. Format,
+// context-limit, timeout, and unknown errors do not (they are per-request or
+// transient).
+func (r FailoverReason) CoolsDown() bool {
+	switch r {
+	case FailoverBilling, FailoverAuth, FailoverRateLimit, FailoverOverloaded, FailoverUnavailable:
+		return true
+	default:
+		return false
+	}
+}
+
+// FailoverError wraps an LLM provider error with classification metadata.
+// RetryAfter, when non-zero, is the server-supplied hint (parsed from the
+// Retry-After header) telling callers how long to wait before retrying.
+type FailoverError struct {
+	Reason     FailoverReason
+	Provider   string
+	Model      string
+	Status     int
+	RetryAfter time.Duration
+	Wrapped    error
+}
+
+func (e *FailoverError) Error() string {
+	return fmt.Sprintf("failover(%s): provider=%s model=%s status=%d: %v",
+		e.Reason, e.Provider, e.Model, e.Status, e.Wrapped)
+}
+
+func (e *FailoverError) Unwrap() error {
+	return e.Wrapped
+}
+
+// IsRetriable reports whether this error should trigger fallback to the next
+// candidate. All classified failover errors are retriable: in a multi-provider
+// chain even a 400 "format" error is usually provider-specific (e.g. a model's
+// thinking-mode request contract that another provider does not impose), so the
+// next candidate may well accept the request. Genuinely model-independent format
+// errors that must not fan out across the chain (image dimension/size) are
+// short-circuited in the image fallback path itself, not here.
+func (e *FailoverError) IsRetriable() bool {
+	return true
+}
+
+// ModelConfig holds an ordered list of models, tried in order (index 0 first).
+type ModelConfig struct {
+	Models []string
+}

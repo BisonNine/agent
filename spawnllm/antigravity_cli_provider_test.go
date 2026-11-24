@@ -1,0 +1,239 @@
+package spawnllm
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// argCaptureScript builds a mock CLI that records the arguments it was invoked
+// with, then prints the given envelope. Used to assert on the command line
+// rather than only on the parsed result.
+func argCaptureScript(t *testing.T, envelopeJSON string) (script, argsFile string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("mock CLI scripts not supported on Windows")
+	}
+	dir := t.TempDir()
+	argsFile = filepath.Join(dir, "args.txt")
+	script = filepath.Join(dir, "cli")
+	body := fmt.Sprintf(`#!/bin/sh
+echo "$@" > '%s'
+cat - > /dev/null
+cat <<'EOFMOCK'
+%s
+EOFMOCK
+`, argsFile, envelopeJSON)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return script, argsFile
+}
+
+// --- Compile-time interface check ---
+
+var _ LLMProvider = (*AntigravityCliProvider)(nil)
+
+func TestNewAntigravityCliProvider_DefaultCommand(t *testing.T) {
+	p := NewAntigravityCliProvider("", "/ws", nil, nil)
+	if p.command != "agy" {
+		t.Errorf("command = %q, want agy", p.command)
+	}
+	if p.workspace != "/ws" {
+		t.Errorf("workspace = %q, want /ws", p.workspace)
+	}
+	if got := NewAntigravityCliProvider("/opt/agy", "", nil, nil).command; got != "/opt/agy" {
+		t.Errorf("explicit command = %q, want /opt/agy", got)
+	}
+}
+
+func TestAntigravityCliProvider_GetDefaultModel(t *testing.T) {
+	if got := NewAntigravityCliProvider("", "", nil, nil).GetDefaultModel(); got != "antigravity-cli" {
+		t.Errorf("GetDefaultModel = %q, want antigravity-cli", got)
+	}
+}
+
+// The prompt goes on stdin, and -p / --print must NEVER be passed.
+//
+// agy accepts both flags, but with either one it expects the prompt as a
+// command-line ARGUMENT and stops reading stdin — so the conversation would be
+// silently dropped and the model would answer an empty question. This is the
+// one invocation detail that fails quietly rather than loudly, so it is pinned.
+func TestAntigravityCliProvider_NeverPassesPrintFlag(t *testing.T) {
+	script, argsFile := argCaptureScript(t,
+		`{"conversation_id":"c","status":"SUCCESS","response":"ok"}`)
+	p := NewAntigravityCliProvider(script, t.TempDir(), []string{"--dangerously-skip-permissions"}, nil)
+
+	if _, err := p.Chat(context.Background(), testID,
+		[]Message{{Role: "user", Content: "hi"}}, nil, "", nil); err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("read args: %v", err)
+	}
+	args := strings.Fields(string(raw))
+	for _, a := range args {
+		if a == "-p" || a == "--print" || a == "--prompt" {
+			t.Fatalf("passed %q — agy then reads the prompt from argv and ignores stdin.\nargs: %v", a, args)
+		}
+	}
+	joined := strings.Join(args, " ")
+	for _, want := range []string{"--input-format text", "--output-format json", "--dangerously-skip-permissions"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("args missing %q: %v", want, args)
+		}
+	}
+}
+
+// The flat envelope, and the token accounting that differs from the other CLIs:
+// cached reads are prompt tokens served from cache, and thinking tokens are
+// billed output.
+func TestAntigravityCliProvider_Chat_ParsesResponse(t *testing.T) {
+	const out = `{"conversation_id":"b2d93f9e","status":"SUCCESS","response":"ok\n","duration_seconds":0.895,"num_turns":1,"usage":{"input_tokens":5356,"output_tokens":27,"thinking_tokens":26,"cache_read_tokens":8129,"total_tokens":5383}}`
+	script := createMockCLI(t, out, "", 0)
+	p := NewAntigravityCliProvider(script, t.TempDir(), nil, nil)
+
+	resp, err := p.Chat(context.Background(), testID,
+		[]Message{{Role: "user", Content: "say ok"}}, nil, "", nil)
+	if err != nil {
+		t.Fatalf("Chat: %v", err)
+	}
+	if resp.Content != "ok" {
+		t.Errorf("Content = %q, want %q (trailing newline trimmed)", resp.Content, "ok")
+	}
+	if resp.Usage == nil {
+		t.Fatal("Usage is nil")
+	}
+	if want := 5356 + 8129; resp.Usage.PromptTokens != want {
+		t.Errorf("PromptTokens = %d, want %d (input + cache_read)", resp.Usage.PromptTokens, want)
+	}
+	if want := 27; resp.Usage.CompletionTokens != want {
+		t.Errorf("CompletionTokens = %d, want %d (output, which already includes thinking)", resp.Usage.CompletionTokens, want)
+	}
+	if resp.Usage.TotalTokens != 5383 {
+		t.Errorf("TotalTokens = %d, want the reported 5383", resp.Usage.TotalTokens)
+	}
+	if resp.Status == nil || !resp.Status.Success {
+		t.Errorf("Status = %+v, want success", resp.Status)
+	}
+	if resp.Status.NumTurns != 1 {
+		t.Errorf("NumTurns = %d, want 1", resp.Status.NumTurns)
+	}
+	if resp.Status.DurationMs != 895 {
+		t.Errorf("DurationMs = %d, want 895 (from duration_seconds)", resp.Status.DurationMs)
+	}
+	if resp.Status.CostUSD != nil {
+		t.Errorf("CostUSD = %v, want nil (no cost reported)", *resp.Status.CostUSD)
+	}
+}
+
+// Success is carried by status, not an is_error flag. Anything that is not
+// SUCCESS is a failure — including a status this build has never seen, which
+// must surface rather than be reported as a completed turn.
+func TestAntigravityCliProvider_NonSuccessStatusIsAnError(t *testing.T) {
+	for _, status := range []string{"ERROR", "CANCELLED", "SOMETHING_NEW"} {
+		out := `{"conversation_id":"c","status":"` + status + `","response":"it went wrong"}`
+		script := createMockCLI(t, out, "", 0)
+		p := NewAntigravityCliProvider(script, t.TempDir(), nil, nil)
+
+		resp, err := p.Chat(context.Background(), testID,
+			[]Message{{Role: "user", Content: "hi"}}, nil, "", nil)
+		if err == nil {
+			t.Errorf("status %q: no error returned", status)
+			continue
+		}
+		if !strings.Contains(err.Error(), status) {
+			t.Errorf("status %q: error does not name the status: %v", status, err)
+		}
+		if resp != nil && resp.Status != nil && resp.Status.Success {
+			t.Errorf("status %q: DispatchStatus reports success", status)
+		}
+	}
+}
+
+// A model name is forwarded, but the protocol's own placeholders are not — they
+// are spawnllm's identifier for the provider, not something agy would recognise.
+func TestAntigravityCliProvider_ModelFlag(t *testing.T) {
+	for _, tc := range []struct {
+		model string
+		want  bool
+	}{
+		{"gemini-3-pro", true},
+		{"antigravity-cli", false},
+		{"agy", false},
+		{"", false},
+	} {
+		script, argsFile := argCaptureScript(t,
+			`{"conversation_id":"c","status":"SUCCESS","response":"ok"}`)
+		p := NewAntigravityCliProvider(script, t.TempDir(), nil, nil)
+		if _, err := p.Chat(context.Background(), testID,
+			[]Message{{Role: "user", Content: "hi"}}, nil, tc.model, nil); err != nil {
+			t.Fatalf("model %q: Chat: %v", tc.model, err)
+		}
+		raw, err := os.ReadFile(argsFile)
+		if err != nil {
+			t.Fatalf("read %s: %v", argsFile, err)
+		}
+		got := strings.Contains(string(raw), "--model")
+		if got != tc.want {
+			t.Errorf("model %q: --model passed = %v, want %v (args: %s)", tc.model, got, tc.want, raw)
+		}
+	}
+}
+
+// A turn whose tool calls were refused comes back as status SUCCESS with an
+// empty response. Reported as success it reaches the user as an assistant that
+// answered nothing, with no error and nothing in the log to explain it — the
+// exact shape of a CLI missing --dangerously-skip-permissions.
+func TestParseAntigravityCliResponse_DeniedToolCallIsAnError(t *testing.T) {
+	p := NewAntigravityCliProvider("agy", ".", nil, nil)
+	output := `{"conversation_id":"x","status":"SUCCESS","response":"",` +
+		`"duration_seconds":3.4,"num_turns":1,` +
+		`"usage":{"input_tokens":5363,"output_tokens":499,"total_tokens":5862},` +
+		`"denied_actions":[{"action":"command","display_name":"RunCommand"}]}`
+
+	_, err := p.parseAntigravityCliResponse(output)
+	if err == nil {
+		t.Fatal("a denied tool call was reported as a successful empty answer")
+	}
+	for _, want := range []string{"RunCommand", "--dangerously-skip-permissions"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+}
+
+// A denial alongside real text is not a failure: the CLI answered, having
+// worked around whatever it could not do.
+func TestParseAntigravityCliResponse_DeniedButAnsweredIsNotAnError(t *testing.T) {
+	p := NewAntigravityCliProvider("agy", ".", nil, nil)
+	output := `{"conversation_id":"x","status":"SUCCESS","response":"here is the answer",` +
+		`"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2},` +
+		`"denied_actions":[{"action":"command","display_name":"RunCommand"}]}`
+
+	resp, err := p.parseAntigravityCliResponse(output)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp.Content != "here is the answer" {
+		t.Errorf("content = %q", resp.Content)
+	}
+}
+
+// An empty answer with no denials stays a successful empty turn — it is warned
+// about, not turned into an error, and that behaviour predates this check.
+func TestParseAntigravityCliResponse_EmptyWithoutDenialIsStillSuccess(t *testing.T) {
+	p := NewAntigravityCliProvider("agy", ".", nil, nil)
+	output := `{"conversation_id":"x","status":"SUCCESS","response":"",` +
+		`"usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+
+	if _, err := p.parseAntigravityCliResponse(output); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

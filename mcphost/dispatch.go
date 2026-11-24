@@ -1,0 +1,365 @@
+package mcphost
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"runtime/debug"
+	"time"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
+
+	"go.bison9.com/agent/hook"
+	"go.bison9.com/agent/toolkit"
+)
+
+// callFor returns the mcp-go handler of the tool published under the
+// internal name internal.
+func (e *Endpoint) callFor(internal string) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return e.call(ctx, req, internal)
+	}
+}
+
+// call handles one tools/call: it takes the credential out of the
+// arguments, finds the caller and runs the call.
+func (e *Endpoint) call(ctx context.Context, req mcp.CallToolRequest, internal string) (*mcp.CallToolResult, error) {
+	e.inflight.Add(1)
+	defer e.inflight.Add(-1)
+
+	args := maps.Clone(req.GetArguments())
+	if args == nil {
+		args = map[string]any{}
+	}
+	token, isString := args[TokenArgument].(string)
+	if !isString {
+		token = "" // absent or not a string: no token given
+	}
+	// Removed on both transports: no tool ever sees a credential.
+	delete(args, TokenArgument)
+
+	var caller Caller
+	if e.cfg.Transport == Argument {
+		var c Caller
+		var err error
+		// No caller yet: a panic in the Authenticator is answered as the
+		// call's, with no callback or event.
+		if pe := e.guard(ctx, "Authenticate", "", req.Params.Name, func() { c, err = e.authenticate(ctx, token) }); pe != nil {
+			if e.cfg.PanicAsProtocolError {
+				panic(pe.Value)
+			}
+			return mcp.NewToolResultError(internalErrorResult(req.Params.Name).ForLLM), nil
+		}
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		caller = c
+	} else {
+		c, ok := CallerOf(ctx) // ServeHTTP authenticated the request
+		if !ok {
+			return mcp.NewToolResultError("invalid bearer token"), nil
+		}
+		caller = c
+	}
+
+	res, panicked := e.dispatch(ctx, caller, req.Params.Name, internal, args)
+	if panicked != nil && e.cfg.PanicAsProtocolError {
+		// Raised again for mcp-go's recovery to answer, as a server without
+		// mcphost's own recovery does: the tool's panic or a host
+		// callback's.
+		panic(panicked)
+	}
+	if res.IsError {
+		return mcp.NewToolResultError(res.ForLLM), nil
+	}
+	return mcp.NewToolResultText(res.ForLLM), nil
+}
+
+// target is the tool a call resolved to.
+type target struct {
+	info  toolkit.Info
+	found bool // the caller's set holds the tool
+}
+
+// Target is the tool a call names, as the endpoint resolved it. It is on
+// the context of the call's CallContext, ToolContext, Gate, callbacks,
+// events and AsyncResult (TargetOf). A name the endpoint does not publish
+// never reaches them: MCP answers it with "tool not found".
+type Target struct {
+	// Published is the name the call used.
+	Published string
+	// Internal is the internal name of the tool the call runs: Info.Name
+	// when Held, else the tool the endpoint's catalogue publishes under
+	// Published.
+	Internal string
+	// Held reports that the caller's set holds the tool (granted, enabled
+	// or not); Info is then that tool. A published tool the caller's set
+	// does not hold is refused as not enabled.
+	Held bool
+	Info toolkit.Info
+}
+
+type targetKey struct{}
+
+// TargetOf returns the tool the call on ctx names.
+func TargetOf(ctx context.Context) (Target, bool) {
+	t, ok := ctx.Value(targetKey{}).(Target)
+	return t, ok
+}
+
+// dispatch runs one call for caller: the scope, the caller and the host's
+// values on its context; the tool the published name resolves to and its
+// ToolContext; ToolCallStarted; BeforeTool; the tool through the caller's
+// set and the Gate; OnToolError; AfterTool; ToolCallFinished. panicked is
+// the value a panicking tool or host callback raised, nil otherwise.
+//
+// A panic in CallContext or ToolContext fails the call as a BeforeTool
+// panic does: the tool and the call's callbacks do not run, and the events
+// carry the internal-error result with a *hook.PanicError.
+func (e *Endpoint) dispatch(ctx context.Context, caller Caller, name, internal string, args map[string]any) (res *toolkit.Result, panicked any) {
+	ctx = hook.WithScope(ctx, caller.Scope)
+	ctx = withCaller(ctx, caller)
+	if caller.revoked() {
+		return revokedResult(), nil
+	}
+	var tgt target
+	tgt.info, tgt.found = e.resolve(caller, name, internal)
+	if tgt.found {
+		internal = tgt.info.Name
+	}
+	ctx = context.WithValue(ctx, targetKey{}, Target{Published: name, Internal: internal, Held: tgt.found, Info: tgt.info})
+	if !tgt.found {
+		// Refused by the called name, so that no other agent's internal
+		// name reaches the caller, or by the internal one.
+		tgt.info.Name = name
+		if e.cfg.RefuseWithInternalName {
+			tgt.info.Name = internal
+		}
+	}
+	var setUp *hook.PanicError // a panic in CallContext or ToolContext
+	if e.cfg.CallContext != nil {
+		ctx, setUp = e.hostContext(ctx, "CallContext", name, func(ctx context.Context) context.Context {
+			return e.cfg.CallContext(ctx, caller)
+		})
+	}
+	ctx, stop := cancelOnDone(ctx, caller.Done)
+	defer stop()
+	if setUp == nil && tgt.found && e.cfg.ToolContext != nil {
+		ctx, setUp = e.hostContext(ctx, "ToolContext", name, func(ctx context.Context) context.Context {
+			return e.cfg.ToolContext(ctx, caller, tgt.info)
+		})
+	}
+
+	call := hook.ToolCall{ID: newCallID(), Name: name, Arguments: args}
+	// The gate and the tool can name what was called, as in the turn engine.
+	ctx = hook.WithToolCall(ctx, call)
+	e.logger.InfoContext(ctx, "MCP tool call", "agent", caller.Scope.AgentID, "session", caller.Scope.Session, "tool", name)
+	e.emit(ctx, hook.ToolCallStarted{EventHeader: header(caller), Call: copyCall(call)})
+
+	start := time.Now()
+	var answered bool
+	if setUp != nil {
+		res, answered, panicked = panicResult(name, setUp), true, setUp.Value
+	} else {
+		res, answered, panicked = e.run(ctx, caller, &call, tgt)
+	}
+	e.emit(ctx, hook.ToolCallFinished{
+		EventHeader: header(caller),
+		Call:        copyCall(call),
+		Result:      copyResult(res),
+		Elapsed:     time.Since(start),
+		Answered:    answered,
+	})
+
+	// The credential stopped working while the call ran: nothing more goes
+	// to the client. The callbacks and events above saw the real result.
+	if errors.Is(context.Cause(ctx), ErrRevoked) {
+		e.logger.WarnContext(ctx, "MCP tool call ended by a revoked credential", "agent", caller.Scope.AgentID, "tool", name)
+		return revokedResult(), nil
+	}
+	return res, panicked
+}
+
+// run is the call's steps from BeforeTool to AfterTool. answered reports a
+// call BeforeTool answered or refused, or one whose BeforeTool panicked:
+// the tool did not run. A panic in a callback fails the call with the
+// engine's internal-error result and skips the call's later callbacks.
+// panicked is the value of the last panic, the tool's or a callback's.
+func (e *Endpoint) run(ctx context.Context, caller Caller, call *hook.ToolCall, tgt target) (res *toolkit.Result, answered bool, panicked any) {
+	for _, p := range e.cfg.Plugins {
+		if p.BeforeTool == nil {
+			continue
+		}
+		var r *toolkit.Result
+		var err error
+		if pe := e.guard(ctx, "BeforeTool", p.Name, call.Name, func() { r, err = p.BeforeTool(ctx, call) }); pe != nil {
+			return panicResult(call.Name, pe), true, pe.Value
+		}
+		if err != nil {
+			res, answered = toolkit.ErrorResult(err.Error()).WithError(err), true
+			break
+		}
+		if r != nil {
+			res, answered = r, true
+			break
+		}
+	}
+	if !answered {
+		res, panicked = e.execute(ctx, caller, *call, tgt)
+	}
+	// The callbacks work on the call's own copy: never on a result the tool
+	// or a callback may still hold.
+	res = copyResult(res)
+
+	if res.IsError || res.Err != nil {
+		for _, p := range e.cfg.Plugins {
+			if p.OnToolError == nil {
+				continue
+			}
+			var r *toolkit.Result
+			if pe := e.guard(ctx, "OnToolError", p.Name, call.Name, func() { r = p.OnToolError(ctx, call, res) }); pe != nil {
+				return panicResult(call.Name, pe), answered, pe.Value
+			}
+			if r != nil {
+				res = copyResult(r)
+			}
+		}
+	}
+	for _, p := range e.cfg.Plugins {
+		if p.AfterTool == nil {
+			continue
+		}
+		if pe := e.guard(ctx, "AfterTool", p.Name, call.Name, func() { p.AfterTool(ctx, call, res) }); pe != nil {
+			return panicResult(call.Name, pe), answered, pe.Value
+		}
+	}
+	return res, answered, panicked
+}
+
+// execute runs the resolved tool, by its internal name, through the
+// caller's set with the Gate, so exactly the tool published under the
+// called name runs and the Gate sees it. A tool the caller's set does not
+// hold is refused as one it is not granted. A panic in the tool fails the
+// call as the engine fails it (its OnToolError and AfterTool still run) and
+// is returned as panicked.
+//
+// With DetachBackground, a background tool (an AsyncExecutor, run when
+// AsyncResult is set) gets the call's context without its cancellation.
+func (e *Endpoint) execute(ctx context.Context, caller Caller, call hook.ToolCall, tgt target) (res *toolkit.Result, panicked any) {
+	if !tgt.found {
+		return toolkit.ErrorResult(toolkit.NotEnabledMessage(tgt.info.Name)).
+			WithError(toolkit.Refusal(fmt.Errorf("tool not permitted: %s", tgt.info.Name))), nil
+	}
+	var cb toolkit.AsyncCallback
+	if e.cfg.AsyncResult != nil {
+		// The late result is delivered on the call's own context, as the
+		// tool ran on it, without its cancellation: every value the host
+		// put there at call time is still there.
+		ran, callCtx, info := copyCall(call), context.WithoutCancel(ctx), tgt.info
+		cb = func(_ context.Context, r *toolkit.Result) { e.cfg.AsyncResult(callCtx, caller, ran, info, r) }
+		if _, async := tgt.info.Tool.(toolkit.AsyncExecutor); async && e.cfg.DetachBackground {
+			ctx = context.WithoutCancel(ctx)
+		}
+	}
+	defer func() {
+		if v := recover(); v != nil {
+			e.logger.ErrorContext(ctx, "MCP tool panicked", "agent", caller.Scope.AgentID, "tool", call.Name,
+				"panic", fmt.Sprint(v), "stack", string(debug.Stack()))
+			res = internalErrorResult(call.Name).WithError(&hook.ToolPanicError{Tool: call.Name, Value: v})
+			panicked = v
+		}
+	}()
+	return caller.Set.ExecuteGated(ctx, tgt.info.Name, call.Arguments, cb, e.cfg.Gate), nil
+}
+
+// guard runs fn, recovering a panic as a *hook.PanicError, which it logs.
+func (e *Endpoint) guard(ctx context.Context, kind, plugin, tool string, fn func()) (pe *hook.PanicError) {
+	defer func() {
+		if v := recover(); v != nil {
+			pe = e.recovered(ctx, kind, plugin, tool, v)
+		}
+	}()
+	fn()
+	return nil
+}
+
+// hostContext returns fn(ctx), the call's context as a host callback of
+// kind derives it; on a panic, ctx and the panic as a *hook.PanicError,
+// which it logs.
+func (e *Endpoint) hostContext(ctx context.Context, kind, tool string, fn func(context.Context) context.Context) (out context.Context, pe *hook.PanicError) {
+	defer func() {
+		if v := recover(); v != nil {
+			out, pe = ctx, e.recovered(ctx, kind, "", tool, v)
+		}
+	}()
+	return fn(ctx), nil
+}
+
+// recovered returns the panic value v of a callback as a *hook.PanicError,
+// and logs it. Call it from the deferred function that recovered v.
+func (e *Endpoint) recovered(ctx context.Context, kind, plugin, tool string, v any) *hook.PanicError {
+	pe := &hook.PanicError{Callback: kind, Plugin: plugin, Value: v, Stack: debug.Stack()}
+	e.logger.ErrorContext(ctx, "MCP tool callback panicked", "tool", tool, "error", pe.Error(), "stack", string(pe.Stack))
+	return pe
+}
+
+// emit gives ev to every plugin's OnEvent, on the call's goroutine. A panic
+// in an observer is logged and changes nothing.
+func (e *Endpoint) emit(ctx context.Context, ev hook.Event) {
+	for _, p := range e.cfg.Plugins {
+		if p.OnEvent == nil {
+			continue
+		}
+		if pe := e.guard(ctx, "OnEvent", p.Name, "", func() { p.OnEvent(ctx, ev) }); pe != nil {
+			continue // logged; an observer's panic changes nothing
+		}
+	}
+}
+
+func header(c Caller) hook.EventHeader {
+	return hook.EventHeader{Scope: c.Scope, At: time.Now()}
+}
+
+// copyCall returns call with its own argument map, for an event: a later
+// change of the call's arguments does not reach it.
+func copyCall(call hook.ToolCall) hook.ToolCall {
+	call.Arguments = maps.Clone(call.Arguments)
+	return call
+}
+
+// copyResult returns a shallow copy of r, or an error result for nil. Its
+// slices (Media, Images, ToolReferences) are shared: a callback replaces
+// them rather than editing them in place.
+func copyResult(r *toolkit.Result) *toolkit.Result {
+	if r == nil {
+		return toolkit.ErrorResult("tool returned no result")
+	}
+	c := *r
+	return &c
+}
+
+func internalErrorResult(tool string) *toolkit.Result {
+	return toolkit.ErrorResult(fmt.Sprintf("Tool %s failed with an internal error.", tool))
+}
+
+func panicResult(tool string, pe *hook.PanicError) *toolkit.Result {
+	return internalErrorResult(tool).WithError(pe)
+}
+
+func revokedResult() *toolkit.Result {
+	return toolkit.ErrorResult(ErrRevoked.Error()).WithError(toolkit.Refusal(ErrRevoked))
+}
+
+// newCallID returns an id for one call: MCP gives a handler none.
+func newCallID() string {
+	raw := make([]byte, 8)
+	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
+		return "mcp-" + time.Now().Format("150405.000000000")
+	}
+	return "mcp-" + hex.EncodeToString(raw)
+}
