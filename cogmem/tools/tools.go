@@ -1,7 +1,7 @@
-// cogmem - Cognitive Memory
-// License: MIT
-//
-// Copyright (c) 2026 Tenebris Technologies Inc.
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
 
 // Package tools exposes the cognitive-memory store as toolspec tool definitions
 // with BARE names ("domain_get", "memory_create", ...). A host mounts them under

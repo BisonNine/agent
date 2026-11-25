@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package untrusted marks tool output that came from outside the process (web
 // pages, search results, upstream MCP servers) so the model can tell retrieved
 // data from instructions. Wrap is applied to a toolkit.Result's ForLLM text only;

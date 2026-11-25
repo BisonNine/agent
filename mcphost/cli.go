@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package mcphost
 
 // CLIConfig is how a host's CLI models reach one of its endpoints. Every

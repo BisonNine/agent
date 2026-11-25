@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package spawnllm holds the provider clients (CLI and HTTP) and the types
 // they share: messages, responses, tool definitions, error classification.
 // Each client makes one model call; the tool loop is the agent loop's

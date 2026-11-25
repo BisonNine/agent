@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 ################################################################################
+# Copyright © 2026 Bison9 Software                                             #
+# Please see LICENSE file for details.                                         #
+################################################################################
+
+################################################################################
 # Bison9 Agent SDK — the test gate for the whole module. Run it through
 # `make test`.
 #

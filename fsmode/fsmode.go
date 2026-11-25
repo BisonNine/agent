@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package fsmode holds the one type the SDK's packages take for the modes of
 // the directories and files they create. It imports only the standard
 // library, so every package can use it.

@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package models is the live model object of an agent host: every provider
 // and model, their clients and their health (the Catalog, one per process),
 // and which models each agent uses for which purpose and in what order (a

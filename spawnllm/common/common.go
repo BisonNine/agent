@@ -1,7 +1,7 @@
-// spawnllm
-// License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
 
 // Package common provides shared utilities used by multiple LLM provider
 // implementations (openai_compat, azure, etc.).

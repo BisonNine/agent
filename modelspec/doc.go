@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package modelspec is the one definition of a provider and a model that
 // hosts and the rest of the SDK share: the Provider and Model types with their
 // JSON form, protocol rules and validation, the table of supported CLI agents,

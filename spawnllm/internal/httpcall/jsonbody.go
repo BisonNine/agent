@@ -1,5 +1,5 @@
 /******************************************************************************
- * Copyright (c) 2026 Tenebris Technologies Inc.                              *
+ * Copyright © 2026 Bison9 Software                                           *
  * Please see LICENSE file for details.                                       *
  ******************************************************************************/
 

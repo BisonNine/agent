@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package mcphost serves an agent's tools over MCP (streamable HTTP), for a
 // model that runs its own tool loop: a vendor CLI reaches the host's tools
 // only through an MCP server. It is the mechanism; the host keeps the

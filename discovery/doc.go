@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package discovery is progressive tool discovery over a toolkit registry:
 // tools kept out of the model's tool list until a search finds them.
 //

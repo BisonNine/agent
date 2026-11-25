@@ -1,8 +1,7 @@
-// spawnllm
-// Inspired by and based on nanobot: https://github.com/HKUDS/nanobot
-// License: MIT
-//
-// Copyright (c) 2026 PicoClaw contributors
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
 
 package spawnllm
 

@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package hook is the contract between an agent's turn engine and the host
 // that runs it: the callback signatures, the events, the run handle, the
 // small interfaces the engine depends on, the scope a turn's context carries,

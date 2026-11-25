@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package modelstest is a scripted chat client for testing code that uses the
 // models package: register a Provider for a model with
 // Catalog.RegisterClient, script what each wire model answers, and read back

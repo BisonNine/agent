@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package clock is the time source code reads instead of the time package
 // when its timing must be testable: Real is the system clock every running
 // service uses, and Fake (fake.go) is a clock tests move by hand.

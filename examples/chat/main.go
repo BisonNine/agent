@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Command chat is the smallest host of the agent SDK: Alice, a support agent
 // with two models and two tools, talked to on stdin and stdout. Ctrl-C stops
 // her reply; Ctrl-D quits. It reads ANTHROPIC_API_KEY.

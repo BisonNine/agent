@@ -1,17 +1,7 @@
-// Package toolspec defines the shared, transport-neutral tool contract between
-// tool packages and the hosts that run them. It is deliberately dependency-free
-// (standard library only) so it can be imported by every tool package, by a
-// host's registry/bridge, and by external hosts (e.g. Maestro) without import cycles.
-//
-// A tool package implements ToolProvider and returns ToolDefinitions with BARE
-// names (e.g. "read"). The aggregator that pulls a provider in supplies the
-// namespace (e.g. "file"), and the published tool name is "<namespace>_<bare>"
-// (e.g. "file_read"). Namespacing lives in the aggregator, not the tool package,
-// so packages never collide and a package can be remounted under a new namespace
-// without touching its code.
-//
-// License: MIT
-// Copyright (c) 2026 Tenebris Technologies Inc.
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
 package toolspec
 
 import "context"

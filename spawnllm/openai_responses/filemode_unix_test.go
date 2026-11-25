@@ -1,7 +1,12 @@
+//go:build unix
+
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // spawnllm
 // License: MIT
-
-//go:build unix
 
 package openai_responses
 

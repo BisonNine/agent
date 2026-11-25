@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package ident is the agent id rule: which ids are valid, an id's identity
 // and when two ids name the same agent. It imports only the standard library,
 // so a host's configuration, a forum, a classifier and the agent loop can all

@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package agenttest is the conformance suite of the agent.Agent interface:
 // the behaviour any implementation must have, driven by a scripted model
 // (models/modelstest) and an in-memory session store. An implementation

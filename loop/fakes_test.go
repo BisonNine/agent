@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package loop
 
 // Fakes for the turn engine's own tests (engine_*_test.go). Like the engine

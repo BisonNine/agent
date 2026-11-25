@@ -1,11 +1,14 @@
 # Bison9 Agent SDK
 
-`go.bison9.com/agent` is one Go module holding an LLM agent and the building
-blocks it is made of. A host application supplies the configuration, the
-tools, a logger and the moving of messages between people and the agent;
-model fallback and cooldown, the tool loop, discovery, context assembly and
-compaction, optional memory, cancellation and accounting come from the SDK.
-The SDK never imports a host.
+`go.bison9.com/agent` is a unified Go module holding an AI agent and the building
+blocks it is made of. A host application supplies:
+
+- configuration
+- tools
+- logger
+- moving of messages between people and the agent
+
+Functionality including model fallback and cooldown, the agent loop, discovery, context management, optional memory, cancellation, and accounting are provided by this SDK.
 
 ## An agent in a few lines
 

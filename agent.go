@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 // Package agent is the front door of the Bison9 agent SDK: the Agent
 // interface a host holds, New, the options everything is supplied through,
 // and aliases of the types a host needs to talk to an agent, so ordinary use

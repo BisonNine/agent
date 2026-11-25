@@ -1,3 +1,8 @@
+/******************************************************************************
+ * Copyright © 2026 Bison9 Software                                           *
+ * Please see LICENSE file for details.                                       *
+ ******************************************************************************/
+
 package common
 
 // AnthropicThinking maps a thinking_level to Anthropic adaptive thinking.
