@@ -5,7 +5,8 @@
 
 // Command chat is the smallest host of the agent SDK: Alice, a support agent
 // with two models and two tools, talked to on stdin and stdout. Ctrl-C stops
-// her reply; Ctrl-D quits. It reads ANTHROPIC_API_KEY.
+// her reply; Ctrl-D quits (on Windows, Ctrl-Z then Enter). It reads
+// ANTHROPIC_API_KEY.
 package main
 
 import (

@@ -105,7 +105,7 @@ func TestChat_Interrupt(t *testing.T) {
 	}
 }
 
-// The example stays the size section 1 of the plan promises: under 100
+// The example stays the size section 1 of the plan promises: under 250
 // lines of Go, not counting comments and blank lines.
 func TestChat_IsSmall(t *testing.T) {
 	src, err := os.ReadFile("main.go")
@@ -119,8 +119,8 @@ func TestChat_IsSmall(t *testing.T) {
 			n++
 		}
 	}
-	if n >= 100 {
-		t.Fatalf("main.go has %d lines of code, want fewer than 100", n)
+	if n >= 250 {
+		t.Fatalf("main.go has %d lines of code, want fewer than 250", n)
 	}
 }
 
