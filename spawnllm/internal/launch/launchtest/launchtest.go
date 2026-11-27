@@ -165,6 +165,7 @@ var Rejected = []struct {
 }{
 	{Name: "missing agent", ID: accounting.Identity{Project: "garden"}, Want: accounting.ErrAgentRequired},
 	{Name: "agent too long", ID: accounting.Identity{Agent: strings.Repeat("a", accounting.MaxNameLength+1)}, Want: accounting.ErrNameTooLong},
+	{Name: "origin too long", ID: accounting.Identity{Origin: strings.Repeat("o", accounting.MaxNameLength+1), Agent: "alice"}, Want: accounting.ErrNameTooLong},
 	{Name: "project too long", ID: accounting.Identity{Agent: "alice", Project: strings.Repeat("p", accounting.MaxNameLength+1)}, Want: accounting.ErrNameTooLong},
 }
 

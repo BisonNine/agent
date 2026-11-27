@@ -4,6 +4,31 @@ All notable changes to the Bison9 Agent SDK are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Accounting records name the origin agent: the agent at the top of the
+  chain of work that caused a launch (when Alice starts a sub-agent Bob,
+  Bob's records name `alice`). `accounting.Identity.Origin` sets it;
+  `Normalize` trims it, refuses one longer than 64 characters
+  (`ErrNameTooLong`) and sets an empty one to `Agent`. Each record carries
+  it as `Record.OriginAgent`, JSON key `origin_agent`, written right after
+  `time`.
+- `hook.Scope.Origin` carries the origin through a turn; `Scope.Identity()`
+  returns it, and the scope's log group has `origin` when it names another
+  agent than `agent`. `loop.Spec.TurnOrigin` (root option
+  `WithTurnOrigin`) lets the host name it: asked once as the turn is set
+  up, after the first `TurnProject` call, and by the compaction the agent
+  runs after a turn. Without it, or when it returns "", the origin is
+  `Identity.Origin`, by default the agent itself.
+
+### Changed
+
+- **BREAKING** The accounting log's `agent` key is now `agent_id`. A host or
+  tool that reads the log must read `agent_id` (and may read
+  `origin_agent`); the Go field `Record.Agent` keeps its name.
+
 ## [0.2.3]
 
 ### Changed

@@ -93,6 +93,7 @@ func TestRecordJSON(t *testing.T) {
 	start := time.Date(2026, 3, 4, 5, 6, 7, 0, time.FixedZone("EST", -5*3600))
 	rec := Record{
 		Time:            start,
+		OriginAgent:     "bob",
 		Agent:           "alice",
 		Project:         "default",
 		Kind:            KindText,
@@ -112,7 +113,7 @@ func TestRecordJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"time":"2026-03-04T10:06:07.000000Z","agent":"alice","agent_name":"-","project":"default","kind":"text",` +
+	want := `{"time":"2026-03-04T10:06:07.000000Z","origin_agent":"bob","agent_id":"alice","agent_name":"-","project":"default","kind":"text",` +
 		`"provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":0,` +
 		`"cache_read_tokens":4,"cache_creation_tokens":"-","cost_usd":"-","cost_source":"-","tool_calls":"-","http_status":200,"duration_ms":42,` +
 		`"success":true,"audio_seconds":"-","characters":"-","images":0}`

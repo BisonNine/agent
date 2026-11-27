@@ -51,7 +51,7 @@ func TestEndChatNilResponse(t *testing.T) {
 		if err != nil && got.Error != "boom" {
 			t.Errorf("error = %q, want boom", got.Error)
 		}
-		if got.Model != "m" || got.Agent != "alice" || got.Project != accounting.DefaultProject {
+		if got.Model != "m" || got.Agent != "alice" || got.OriginAgent != "alice" || got.Project != accounting.DefaultProject {
 			t.Errorf("record = %+v", got)
 		}
 		launchtest.Unknown(t, "input_tokens", got.InputTokens)
@@ -111,11 +111,35 @@ func TestHTTPStatus(t *testing.T) {
 	HTTPStatus(context.Background(), http.StatusOK)
 }
 
+// An origin given is recorded, trimmed; none is the agent itself.
+func TestBeginOrigin(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		origin string
+		want   string
+	}{
+		{name: "defaults to agent", origin: "", want: "bob"},
+		{name: "kept", origin: " alice ", want: "alice"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rec := launchtest.Capture(t)
+			_, l, err := Begin(context.Background(), accounting.Identity{Origin: tt.origin, Agent: "bob"}, spec)
+			if err != nil {
+				t.Fatalf("Begin: %v", err)
+			}
+			l.EndChat(nil, nil)
+			if got := rec.One(); got.OriginAgent != tt.want || got.Agent != "bob" {
+				t.Errorf("origin, agent = %q, %q; want %q, bob", got.OriginAgent, got.Agent, tt.want)
+			}
+		})
+	}
+}
+
 func TestBeginRejectedIdentity(t *testing.T) {
 	rec := launchtest.Capture(t)
 	long := strings.Repeat("p", accounting.MaxNameLength+1)
 	ctx := context.Background()
-	gotCtx, l, err := Begin(ctx, accounting.Identity{Agent: " bob ", Name: " Bob ", Project: long}, spec)
+	gotCtx, l, err := Begin(ctx, accounting.Identity{Origin: " alice ", Agent: " bob ", Name: " Bob ", Project: long}, spec)
 	if !errors.Is(err, accounting.ErrNameTooLong) {
 		t.Fatalf("err = %v, want ErrNameTooLong", err)
 	}
@@ -123,8 +147,8 @@ func TestBeginRejectedIdentity(t *testing.T) {
 		t.Error("a refused Begin returned a launch or a new context")
 	}
 	got := rec.One()
-	if got.Agent != " bob " || got.AgentName != " Bob " || got.Project != long {
-		t.Errorf("identity = %q/%q/%q, want the names as given", got.Agent, got.AgentName, got.Project)
+	if got.OriginAgent != " alice " || got.Agent != " bob " || got.AgentName != " Bob " || got.Project != long {
+		t.Errorf("identity = %q/%q/%q/%q, want the names as given", got.OriginAgent, got.Agent, got.AgentName, got.Project)
 	}
 	if got.Kind != spec.Kind || got.Provider != spec.Provider || got.Transport != spec.Transport || got.Model != spec.Model {
 		t.Errorf("record = %+v", got)

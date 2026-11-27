@@ -58,14 +58,17 @@ const timeLayout = "2006-01-02T15:04:05.000000Z07:00"
 // 0; a reported 0 is a known 0.
 type Record struct {
 	// Time is when the launch started. MarshalJSON writes it first, in UTC.
-	Time      time.Time `json:"-"`
-	Agent     string    `json:"agent"`
-	AgentName string    `json:"agent_name"` // Identity.Name, a label only; "-" when empty
-	Project   string    `json:"project"`
-	Kind      Kind      `json:"kind"`
-	Provider  string    `json:"provider"`
-	Transport Transport `json:"transport"`
-	Model     string    `json:"model"`
+	Time time.Time `json:"-"`
+	// OriginAgent is Identity.Origin: the agent whose work caused the
+	// launch, the same as Agent when no other agent did.
+	OriginAgent string    `json:"origin_agent"`
+	Agent       string    `json:"agent_id"`
+	AgentName   string    `json:"agent_name"` // Identity.Name, a label only; "-" when empty
+	Project     string    `json:"project"`
+	Kind        Kind      `json:"kind"`
+	Provider    string    `json:"provider"`
+	Transport   Transport `json:"transport"`
+	Model       string    `json:"model"`
 	// InputTokens counts the input tokens neither read from nor written to
 	// the prompt cache (when the provider breaks cache tokens out).
 	InputTokens         Int `json:"input_tokens"`

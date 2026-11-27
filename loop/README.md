@@ -24,6 +24,7 @@ offered under one name.
 | `Models` | the agent's `*models.Set`: `Chat` for turns, `Summarize` for compaction | required without `TurnModels` |
 | `TurnModels` | the turn's chain (and limits), chosen by the host per turn | `Models.Begin(Chat, session scope)` |
 | `TurnProject` | the turn's accounting project, chosen by the host at set-up and again before each model call (see below) | `Identity.Project` |
+| `TurnOrigin` | the agent whose work caused the turn (`Scope.Origin`), chosen by the host once at set-up (see below) | `Identity.Origin` (the agent itself) |
 | `Session` | the turn's session context from the host (manager, memory, release, request amend, a manager for forced compaction); `Context` nil for a turn a `BeforeTurn` answers | the agent's own per session |
 | `Unqueued` | the host serialises each session's runs; `Run` never queues | queued |
 | `Tasks` | a task registry the host shares between its agents and their instances (`NewTasks`); never shut down by the agent | a registry of its own |
@@ -93,6 +94,24 @@ skips that compaction and logs an error. A served-tools credential keeps the
 project of the turn's set-up. The project a session has chosen is a host
 value; ctxengine keeps one for it in the session's state
 (`memory.CompactionState.Project`).
+
+### The turn's origin
+
+`TurnOrigin(ctx, scope)` names the agent at the top of the chain of work
+that caused the turn: a sub-agent Bob started for Alice's work answers
+`Alice`, so Bob's accounting records name Alice as their origin. It is
+asked once, as the turn is set up, right after the first `TurnProject`
+call, with the context given to `Run` and the turn's scope (its project
+chosen); never again in the turn, since an origin does not change. A
+non-empty answer is put in `Scope.Origin`, so model calls, compaction
+inside the turn, tool calls and the tasks they start, events, callbacks and
+a served-tools credential carry it. An empty answer means
+`Identity.Origin`, which is itself empty for the agent itself (a record
+then names the agent as its own origin). The loop does not check it: a
+launch refuses one longer than 64 characters (`accounting.ErrNameTooLong`).
+A panic in it ends the turn with a set-up `*EnginePanicError`. The deferred
+compaction after a turn asks it too, after `TurnProject` and with the same
+context and scope; a panic there skips that compaction and logs an error.
 
 The engine's own behaviour is unchanged from the host it came from (sticky
 model per turn, fallback per call with cooldown skips, timeout and overflow
@@ -174,7 +193,7 @@ agent's instances (a config reload, temporary clones):
 A host with its own session cache, model selection, identity and timing
 supplies them through the optional `Spec` fields above; `hook/DESIGN.md`
 section 10 is the checklist. A panic in the engine (or in the host's
-`TurnProject`/`TurnLimits`/`TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
+`TurnProject`/`TurnOrigin`/`TurnLimits`/`TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
 `TurnFinished`: a host that wants its own recovery re-panics with its
 `Value` on its own goroutine. The agent logs neither a panic nor a turn
 error it delivers in `TurnFinished`. `ForgetSession(key)` (the root

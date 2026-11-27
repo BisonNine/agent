@@ -39,6 +39,11 @@ func TestIdentityNormalize(t *testing.T) {
 		// Code points of 2 bytes each: within the limit, though twice as many bytes.
 		{name: "limit counts code points", in: Identity{Agent: strings.Repeat("é", MaxNameLength)}, want: Identity{Agent: strings.Repeat("é", MaxNameLength), Project: DefaultProject}},
 		{name: "multibyte too long", in: Identity{Agent: strings.Repeat("é", MaxNameLength+1)}, wantErr: ErrNameTooLong},
+		{name: "origin defaults to agent", in: Identity{Agent: "alice"}, want: Identity{Origin: "alice", Agent: "alice", Project: DefaultProject}},
+		{name: "origin kept", in: Identity{Origin: " bob ", Agent: "alice:1a2b3c4d"}, want: Identity{Origin: "bob", Agent: "alice:1a2b3c4d", Project: DefaultProject}},
+		{name: "blank origin is agent", in: Identity{Origin: " \t", Agent: "alice"}, want: Identity{Origin: "alice", Agent: "alice", Project: DefaultProject}},
+		{name: "origin at limit", in: Identity{Origin: strings.Repeat("o", MaxNameLength), Agent: "alice"}, want: Identity{Origin: strings.Repeat("o", MaxNameLength), Agent: "alice", Project: DefaultProject}},
+		{name: "origin too long", in: Identity{Origin: strings.Repeat("o", MaxNameLength+1), Agent: "alice"}, wantErr: ErrNameTooLong},
 		{name: "surrounding space not counted", in: Identity{Agent: "  " + strings.Repeat("a", MaxNameLength) + "  "}, want: Identity{Agent: strings.Repeat("a", MaxNameLength), Project: DefaultProject}},
 	}
 	for _, tt := range tests {
@@ -52,6 +57,10 @@ func TestIdentityNormalize(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
+			}
+			// A case that names no origin expects the agent's own id.
+			if tt.want.Origin == "" {
+				tt.want.Origin = tt.want.Agent
 			}
 			if got != tt.want {
 				t.Errorf("got %+v, want %+v", got, tt.want)
