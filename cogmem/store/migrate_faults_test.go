@@ -147,6 +147,11 @@ func TestOpenReportsUncreatablePath(t *testing.T) {
 		t.Errorf("under a file: %v", err)
 	}
 
+	// The remaining cases depend on directory modes, which root ignores.
+	if os.Geteuid() == 0 {
+		t.Skip("permissions are not enforced for root")
+	}
+
 	ro := filepath.Join(dir, "ro")
 	if err := os.Mkdir(ro, 0o500); err != nil {
 		t.Fatalf("mkdir: %v", err)
