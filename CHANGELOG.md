@@ -4,7 +4,7 @@ All notable changes to the Bison9 Agent SDK are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.2]
 
 ### Changed
 
@@ -22,6 +22,8 @@ project uses [Semantic Versioning](https://semver.org/).
   signal. `cogmem` may now import `clock`: `SessionOptions.Clock` and
   `WithClock` set the clock these are read from, and `store.TouchAt` marks
   a domain active at a given time.
+- Copyright headers on every source file, an updated README and example
+  code, and dependencies brought up to date.
 
 ## [0.2.1]
 
