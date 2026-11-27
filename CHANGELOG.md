@@ -4,6 +4,27 @@ All notable changes to the Bison9 Agent SDK are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the
 project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.2]
+
+### Changed
+
+- `cogmem`: routing is bounded in time, so an idle agent stops being shown
+  old topics as current. Recency filler loads only domains active within
+  `PromptSettings.RecencyHours` (`WithRecencyWindow`, default 72) and its
+  header gives the age ("no trigger matched; loaded because it was last
+  active 2 days ago") instead of "recently active"; with nothing inside the
+  window the routed block is empty. An earlier message or tool use keeps
+  routing its domains for `PromptSettings.CarryoverMinutes` (default 60)
+  rather than until enough other messages or tools displaced it, which a
+  repeated scheduled prompt never did. A domain is marked active only by
+  use of it now (a keyword in the current message, a tool called since the
+  previous request, `RouteRequest.UsedTools`), no longer by a carried-over
+  signal. `cogmem` may now import `clock`: `SessionOptions.Clock` and
+  `WithClock` set the clock these are read from, and `store.TouchAt` marks
+  a domain active at a given time.
+- Copyright headers on every source file, an updated README and example
+  code, and dependencies brought up to date.
+
 ## [0.2.1]
 
 ### Fixed

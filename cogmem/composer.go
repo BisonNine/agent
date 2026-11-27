@@ -14,8 +14,8 @@
 //     the store's stable_rev so the caller invalidates only on change. The
 //     caller (the agent context layer) prepends the verbatim curated .md files.
 //   - RoutedBlock: the full state + active hooks of the topic domain(s) chosen
-//     for this turn — by tool trigger, then keyword trigger, then recency. The
-//     only per-turn-varying memory.
+//     for this turn — by tool trigger, then keyword trigger, then the domains
+//     active within the recency window. The only per-turn-varying memory.
 package cogmem
 
 import (
@@ -23,7 +23,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"go.bison9.com/agent/clock"
 	"go.bison9.com/agent/cogmem/store"
 )
 
@@ -33,6 +35,12 @@ type options struct {
 	topKDomains   int     // routed domains to pre-load
 	maxChars      int     // routed block budget
 	minConfidence float64 // hide active hooks below this
+	// recencyWindow bounds the recency filler: a domain no trigger matched is
+	// loaded only when it was last active within this long.
+	recencyWindow time.Duration
+	// clock is read for the recency window and for marking a domain active;
+	// nil means the system clock.
+	clock clock.Clock
 
 	// File attachments (memories carrying a FileRef). Budgets are independent of
 	// maxChars: a referenced document is injected whole, not squeezed into the
@@ -72,6 +80,23 @@ func WithMinConfidence(c float64) Option {
 	}
 }
 
+// WithRecencyWindow sets how recently a domain must have been active to be
+// loaded when no trigger matched it. Older domains stay out of the routed
+// block however few domains there are; the topic index still lists them.
+func WithRecencyWindow(d time.Duration) Option {
+	return func(o *options) {
+		if d > 0 {
+			o.recencyWindow = d
+		}
+	}
+}
+
+// WithClock sets the clock the recency window and the last-active mark are
+// read from. Nil means the system clock.
+func WithClock(c clock.Clock) Option {
+	return func(o *options) { o.clock = c }
+}
+
 // Composer reads a session's cogmem store. A Composer instance is scoped to a
 // single session (see agent/memory_wiring.go).
 type Composer struct {
@@ -85,6 +110,7 @@ func New(st *store.Store, opts ...Option) *Composer {
 		topKDomains:       defaultTopKDomains,
 		maxChars:          defaultMaxChars,
 		minConfidence:     defaultMinConfidence,
+		recencyWindow:     defaultRecencyWindow,
 		fileMaxBytes:      defaultFileMaxBytes,
 		fileTotalMaxBytes: defaultFileTotalMaxBytes,
 	}
@@ -99,7 +125,12 @@ type RouteRequest struct {
 	RouteText   string   // latest incoming message, matched against keyword triggers
 	RecentTexts []string // previous incoming messages (newest-first); keyword matches here rank after RouteText's
 	RecentTools []string // recently-invoked tool names (newest-first) for tool-trigger activation
-	Trace       bool
+	// UsedTools are the tool names invoked since the previous request (a
+	// subset of RecentTools). A domain a tool trigger loads is marked active
+	// only when one of these matched it: a tool carried over from an earlier
+	// turn still loads its domain, but is not fresh use of it.
+	UsedTools []string
+	Trace     bool
 }
 
 // DomainSelection is one trace entry explaining a routed pre-load.
@@ -108,8 +139,9 @@ type DomainSelection struct {
 	Name string
 	// Signal is "tool:<token>" (tool trigger), "keyword:<phrases>" (keyword
 	// triggers in the latest message), "recent:<phrases>" (keyword triggers in
-	// an earlier message only), or "recency" (filler). <phrases> names up to
-	// three matched phrases, comma-separated.
+	// an earlier message only), or "recency" (no trigger matched; active
+	// within the recency window). <phrases> names up to three matched phrases,
+	// comma-separated.
 	Signal string
 }
 
@@ -204,7 +236,9 @@ func (c *Composer) stableBlock(ctx context.Context) (string, int64, []refSite, e
 }
 
 // RoutedBlock renders the topic domain(s) chosen for this turn (tool triggers,
-// then keyword triggers, then recency), up to TopKDomains and within MaxChars.
+// then keyword triggers, then the domains active within the recency window),
+// up to TopKDomains and within MaxChars. With no trigger matched and nothing
+// active lately it renders nothing.
 func (c *Composer) RoutedBlock(ctx context.Context, req RouteRequest) (RoutedResult, error) {
 	res, _, err := c.routedBlock(ctx, req)
 	return res, err
@@ -233,15 +267,25 @@ func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	// Order the candidates by signal strength: (1) domains activated by a
 	// recently-used tool, (2) domains whose keyword triggers appear in the latest
 	// message, (3) domains whose keyword triggers appeared only in one of the
-	// previous few messages, (4) the rest by recency. A single shared seen-set
-	// guarantees every domain appears at most once, so a domain matched by more
-	// than one signal is never duplicated.
+	// previous few messages, (4) the rest by recency, as long as they were
+	// active within the recency window. A single shared seen-set guarantees
+	// every domain appears at most once, so a domain matched by more than one
+	// signal is never duplicated.
+	//
+	// touch marks the candidates whose signal is use of the domain NOW: a
+	// keyword in the latest message, or a tool invoked since the previous
+	// request. A signal carried over from earlier (a tool still in the ring, a
+	// keyword in a previous message) loads the domain but does not mark it
+	// active, or a domain nobody has mentioned since would stay "active" for as
+	// long as the carry-over lasts, and the recency order with it.
+	now := clock.Or(c.opt.clock).Now()
 	seen := make(map[string]bool, len(topics))
 	var ordered []candidate
 	for _, d := range topics {
 		if tok, ok := matchAnyTool(d, req.RecentTools); ok {
+			_, used := matchAnyTool(d, req.UsedTools)
 			seen[d.ID] = true
-			ordered = append(ordered, candidate{d: d, signal: "tool:" + tok})
+			ordered = append(ordered, candidate{d: d, signal: "tool:" + tok, touch: used})
 		}
 	}
 	// Keyword triggers: activate when a phrase appears (whole-phrase, word-
@@ -253,8 +297,13 @@ func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 	for _, cand := range ordered {
 		seen[cand.d.ID] = true
 	}
+	// Recency filler stops at the window. Without the bound the most recently
+	// active domains load on every turn however long ago that was: an agent
+	// with little to do was shown the same three domains, labelled recent, for
+	// weeks. A domain with no recorded activity is never filler.
+	cutoff := now.Add(-c.opt.recencyWindow).Unix()
 	for _, d := range topics {
-		if !seen[d.ID] {
+		if !seen[d.ID] && d.LastActiveAt > 0 && d.LastActiveAt >= cutoff {
 			seen[d.ID] = true
 			ordered = append(ordered, candidate{d: d, signal: "recency"})
 		}
@@ -276,7 +325,7 @@ func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 		if err != nil {
 			return RoutedResult{}, nil, err
 		}
-		section := renderDomain(d, hooks, events, cand.signal)
+		section := renderDomain(d, hooks, events, cand.signal, now)
 		if b.Len()+len(section) > c.opt.maxChars && b.Len() > 0 {
 			break
 		}
@@ -288,13 +337,13 @@ func (c *Composer) routedBlock(ctx context.Context, req RouteRequest) (RoutedRes
 			refs = collectRef(refs, memoryRef{memoryID: h.ID, text: h.Text, ref: h.FileRef})
 		}
 		res.Loaded = append(res.Loaded, d.ID)
-		// Mark the domain active when it was loaded because it was genuinely
-		// relevant (a tool or keyword trigger, in this message or an earlier
-		// one) — not when it was only filler chosen by recency itself, which
-		// would make the recency/staleness signal self-reinforcing and never
-		// let a domain go cold. Best-effort.
-		if cand.signal != "recency" {
-			_ = c.st.Touch(ctx, db, d.ID)
+		// Mark the domain active when it was loaded by use of it now (see
+		// touch above) — not when a signal was carried over from earlier, and
+		// not when it was only filler chosen by recency itself: either would
+		// make the recency/staleness signal self-reinforcing and never let a
+		// domain go cold. Best-effort.
+		if cand.touch {
+			_ = c.st.TouchAt(ctx, db, d.ID, now)
 		}
 		if req.Trace {
 			res.Trace = append(res.Trace, DomainSelection{ID: d.ID, Name: d.Name, Signal: cand.signal})
@@ -354,6 +403,7 @@ func (c *Composer) Compose(ctx context.Context, req RouteRequest) (Result, error
 type candidate struct {
 	d      store.Domain
 	signal string // "tool:<token>", "keyword:<phrases>", "recent:<phrases>", or "recency"
+	touch  bool   // the signal is use of the domain now: loading it marks it active
 }
 
 // matchAnyTool reports the first trigger token of d that matches any recently
@@ -386,7 +436,7 @@ func keywordCandidates(topics []store.Domain, req RouteRequest, seen map[string]
 			continue
 		}
 		if p := d.MatchKeywords(req.RouteText); len(p) > 0 {
-			cur = append(cur, match{candidate{d: d, signal: "keyword:" + signalPhrases(p)}, len(p)})
+			cur = append(cur, match{candidate{d: d, signal: "keyword:" + signalPhrases(p), touch: true}, len(p)})
 			continue
 		}
 		if p := matchRecentTexts(d, req.RecentTexts); len(p) > 0 {
@@ -489,8 +539,10 @@ func injectedHeader(d store.Domain, why string) string {
 }
 
 // signalReason turns a routing signal (see routedBlock) into the reason shown
-// in the domain's header.
-func signalReason(signal string) string {
+// in the domain's header. A domain no trigger matched says how long ago it
+// was last active rather than calling itself recent: the model can judge "two
+// days ago", and cannot judge "recently".
+func signalReason(signal string, d store.Domain, now time.Time) string {
 	kind, value, _ := strings.Cut(signal, ":")
 	switch kind {
 	case "tool":
@@ -500,7 +552,7 @@ func signalReason(signal string) string {
 	case "recent":
 		return "loaded by " + keywordTriggerList(value) + " in a recent message"
 	case "recency":
-		return "loaded because it was recently active"
+		return "no trigger matched; loaded because it was last active " + agoText(d, now)
 	default:
 		return "loaded by " + signal
 	}
@@ -520,9 +572,34 @@ func keywordTriggerList(value string) string {
 	return "keyword triggers " + strings.Join(quoted, ", ")
 }
 
-func renderDomain(d store.Domain, hooks []store.Memory, events int, signal string) string {
+// agoText says how long before now d was last active, in the largest whole
+// unit: "just now", "5 minutes ago", "3 hours ago", "2 days ago".
+func agoText(d store.Domain, now time.Time) string {
+	at, ok := d.LastActive()
+	if !ok {
+		return "at an unknown time"
+	}
+	unit := func(n int64, name string) string {
+		if n == 1 {
+			return "1 " + name + " ago"
+		}
+		return fmt.Sprintf("%d %ss ago", n, name)
+	}
+	switch age := now.Sub(at); {
+	case age < time.Minute:
+		return "just now"
+	case age < time.Hour:
+		return unit(int64(age/time.Minute), "minute")
+	case age < 24*time.Hour:
+		return unit(int64(age/time.Hour), "hour")
+	default:
+		return unit(int64(age/(24*time.Hour)), "day")
+	}
+}
+
+func renderDomain(d store.Domain, hooks []store.Memory, events int, signal string, now time.Time) string {
 	var b strings.Builder
-	b.WriteString(injectedHeader(d, signalReason(signal)))
+	b.WriteString(injectedHeader(d, signalReason(signal, d, now)))
 	if s := oneLine(d.Summary); s != "" {
 		fmt.Fprintf(&b, "Summary: %s\n", s)
 	}

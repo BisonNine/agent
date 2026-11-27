@@ -12,10 +12,12 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"go.bison9.com/agent/clock"
 	"go.bison9.com/agent/cogmem/store"
 )
 
@@ -525,8 +527,8 @@ func TestRoutedBlockToolTrigger(t *testing.T) {
 }
 
 // TestRoutedBlockTouchesMatchedNotRecency verifies the recency/staleness wiring:
-// a domain loaded because it genuinely matched (a tool trigger here) is Touched,
-// while a domain pulled in only as recency filler is left alone — otherwise the
+// a domain loaded by use of it now (a tool invoked since the last request) is
+// Touched, while a domain pulled in only as recency filler is left alone — otherwise the
 // recency signal would be self-reinforcing and no domain could ever go cold.
 func TestRoutedBlockTouchesMatchedNotRecency(t *testing.T) {
 	s := newStore(t)
@@ -552,7 +554,8 @@ func TestRoutedBlockTouchesMatchedNotRecency(t *testing.T) {
 	}
 
 	c := New(s, WithTopKDomains(8)) // both fit: Email via tool, Other via recency
-	res, err := c.RoutedBlock(ctx, RouteRequest{RecentTools: []string{"mcp__fusion__google_gmail_messages_list"}, Trace: true})
+	tools := []string{"mcp__fusion__google_gmail_messages_list"}
+	res, err := c.RoutedBlock(ctx, RouteRequest{RecentTools: tools, UsedTools: tools, Trace: true})
 	if err != nil {
 		t.Fatalf("routed: %v", err)
 	}
@@ -674,17 +677,19 @@ func TestRoutedBlockKeywordWordBoundary(t *testing.T) {
 // Every routing signal becomes a plain reason in the domain's header, so the
 // model can see why a domain was injected and adjust its trigger.
 func TestSignalReason(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	d := store.Domain{LastActiveAt: now.Add(-50 * time.Hour).Unix()}
 	for signal, want := range map[string]string{
 		"tool:google_gmail":             `loaded by tool trigger "google_gmail"`,
 		"keyword:release train":         `loaded by keyword trigger "release train"`,
 		"keyword:invoice,invoices,bill": `loaded by keyword triggers "invoice", "invoices", "bill"`,
 		"recent:release train":          `loaded by keyword trigger "release train" in a recent message`,
 		"recent:invoice,bill":           `loaded by keyword triggers "invoice", "bill" in a recent message`,
-		"recency":                       "loaded because it was recently active",
+		"recency":                       "no trigger matched; loaded because it was last active 2 days ago",
 		"match:invoice":                 "loaded by match:invoice", // lexical matching is gone
 		"other":                         "loaded by other",
 	} {
-		if got := signalReason(signal); got != want {
+		if got := signalReason(signal, d, now); got != want {
 			t.Errorf("signalReason(%q) = %q, want %q", signal, got, want)
 		}
 	}
@@ -894,7 +899,7 @@ func TestRoutedBlockKeywordSignalNamesPhrases(t *testing.T) {
 // Keywords also match the previous few messages. A domain matched in the
 // current message ranks ahead of one matched only earlier, whatever their
 // phrase counts or recency; the earlier-only match has its own signal and
-// header; both kinds touch the domain, recency filler does not.
+// header; only the current match touches the domain.
 func TestRoutedBlockRecentTexts(t *testing.T) {
 	fixture := []store.CreateDomainParams{
 		{Name: "Earlier", KeywordTriggers: "kestrel,falcon"}, // most recent, two phrases
@@ -951,11 +956,13 @@ func TestRoutedBlockRecentTexts(t *testing.T) {
 				strings.Join(gotSignals, "|") != strings.Join(tc.signals, "|") {
 				t.Fatalf("trace = %+v, want %v with %v", res.Trace, tc.want, tc.signals)
 			}
-			// Keyword matches (current or earlier) are touched; filler is not.
+			// A keyword in the current message is use of the domain and
+			// touches it; one carried over from an earlier message, like
+			// filler, does not.
 			for _, sel := range res.Trace {
 				d, _ := s.GetDomain(ctx, s.DB(), ids[sel.Name], false)
 				touched := d.LastActiveAt > time.Now().Add(-time.Minute).Unix()
-				if touched != (sel.Signal != "recency") {
+				if touched != strings.HasPrefix(sel.Signal, "keyword:") {
 					t.Errorf("%s (%s): touched=%v", sel.Name, sel.Signal, touched)
 				}
 			}
@@ -1016,7 +1023,7 @@ func TestRenderDomainState(t *testing.T) {
 		},
 	}
 	hooks := []store.Memory{{ID: "h1", Type: store.TypeRule, Text: "be brief"}}
-	got := renderDomain(d, hooks, 0, "keyword:launch")
+	got := renderDomain(d, hooks, 0, "keyword:launch", time.Now())
 	want := "## Injected cogmem domain: Launch (d1) — loaded by keyword trigger \"launch\"\n" +
 		"Summary: Ship the beta.\n" +
 		"Blockers:\n- waiting on legal\n" +
@@ -1031,10 +1038,161 @@ func TestRenderDomainState(t *testing.T) {
 
 // Empty state lists produce no headings.
 func TestRenderDomainOmitsEmptyState(t *testing.T) {
-	got := renderDomain(store.Domain{ID: "d1", Name: "Launch"}, nil, 0, "recency")
+	got := renderDomain(store.Domain{ID: "d1", Name: "Launch"}, nil, 0, "recency", time.Now())
 	for _, h := range []string{"Blockers:", "Next actions:", "Constraints:"} {
 		if strings.Contains(got, h) {
 			t.Errorf("rendered %q for empty state:\n%s", h, got)
 		}
+	}
+}
+
+// setLastActive sets a domain's last_active_at.
+func setLastActive(t *testing.T, s *store.Store, id string, at time.Time) {
+	t.Helper()
+	if _, err := s.DB().ExecContext(context.Background(),
+		`UPDATE domains SET last_active_at=? WHERE id=?`, at.Unix(), id); err != nil {
+		t.Fatalf("set last_active_at of %s: %v", id, err)
+	}
+}
+
+// Recency filler stops at the window: a domain no trigger matched loads only
+// when it was active within it, its header says how long ago, and with
+// nothing inside the window the routed block is empty rather than filled
+// with whatever was active last. A trigger still loads a domain of any age.
+func TestRoutedBlockRecencyWindow(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	fake := clock.NewFake(now)
+	fresh := mustDomain(t, s, store.CreateDomainParams{Name: "Fresh"})
+	edge := mustDomain(t, s, store.CreateDomainParams{Name: "Edge"})
+	stale := mustDomain(t, s, store.CreateDomainParams{Name: "Stale", KeywordTriggers: "kestrel"})
+	never := mustDomain(t, s, store.CreateDomainParams{Name: "Never"})
+	setLastActive(t, s, fresh.ID, now.Add(-5*time.Hour))
+	setLastActive(t, s, edge.ID, now.Add(-72*time.Hour))
+	setLastActive(t, s, stale.ID, now.Add(-9*24*time.Hour))
+	if _, err := s.DB().ExecContext(ctx, `UPDATE domains SET last_active_at=NULL WHERE id=?`, never.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	c := New(s, WithTopKDomains(8), WithClock(fake))
+	res, err := c.RoutedBlock(ctx, RouteRequest{RouteText: "nothing here", Trace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{fresh.ID, edge.ID}; !slices.Equal(res.Loaded, want) {
+		t.Fatalf("loaded %v, want %v (inside the window only)", res.Loaded, want)
+	}
+	for _, h := range []string{
+		"## Injected cogmem domain: Fresh (" + fresh.ID + ") — no trigger matched; loaded because it was last active 5 hours ago",
+		"## Injected cogmem domain: Edge (" + edge.ID + ") — no trigger matched; loaded because it was last active 3 days ago",
+	} {
+		if !strings.Contains(res.Text, h) {
+			t.Errorf("routed block lacks %q:\n%s", h, res.Text)
+		}
+	}
+
+	// A week on, with nobody having used anything: nothing is "recent".
+	fake.Advance(7 * 24 * time.Hour)
+	res, err = c.RoutedBlock(ctx, RouteRequest{RouteText: "nothing here", Trace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "" || len(res.Loaded) != 0 {
+		t.Fatalf("an idle week later the routed block should be empty, got %v:\n%s", res.Loaded, res.Text)
+	}
+
+	// A trigger loads the stale domain whatever its age, and marks it active
+	// on the composer's clock.
+	res, err = c.RoutedBlock(ctx, RouteRequest{RouteText: "saw a kestrel", Trace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(res.Loaded, []string{stale.ID}) || res.Trace[0].Signal != "keyword:kestrel" {
+		t.Fatalf("loaded %v trace %+v, want the keyword-matched stale domain alone", res.Loaded, res.Trace)
+	}
+	if d, _ := s.GetDomain(ctx, s.DB(), stale.ID, false); d.LastActiveAt != fake.Now().Unix() {
+		t.Fatalf("last_active_at = %d, want the composer clock's %d", d.LastActiveAt, fake.Now().Unix())
+	}
+
+	// A wider window brings the older domains back.
+	wide := New(s, WithTopKDomains(8), WithClock(fake), WithRecencyWindow(30*24*time.Hour))
+	if res, err = wide.RoutedBlock(ctx, RouteRequest{}); err != nil || len(res.Loaded) != 3 {
+		t.Fatalf("30-day window loaded %v (err %v), want the three domains with a recorded activity", res.Loaded, err)
+	}
+}
+
+// A signal carried over from earlier loads its domain without marking it
+// active: a tool still in the ring but not invoked since the last request,
+// and a keyword only in a previous message. Otherwise the domain would be
+// "active now" on every turn of the carry-over and never go cold.
+func TestRoutedBlockCarriedSignalsDoNotTouch(t *testing.T) {
+	s := newStore(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-48 * time.Hour)
+	mail := mustDomain(t, s, store.CreateDomainParams{Name: "Mail", Triggers: "gmail"})
+	birds := mustDomain(t, s, store.CreateDomainParams{Name: "Birds", KeywordTriggers: "kestrel"})
+	setLastActive(t, s, mail.ID, old)
+	setLastActive(t, s, birds.ID, old)
+	lastActive := func(id string) int64 {
+		d, err := s.GetDomain(ctx, s.DB(), id, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.LastActiveAt
+	}
+
+	c := New(s, WithClock(clock.NewFake(now)))
+	res, err := c.RoutedBlock(ctx, RouteRequest{
+		RouteText: "and then?", RecentTexts: []string{"saw a kestrel"},
+		RecentTools: []string{"mcp_gmail_list"}, Trace: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Trace) != 2 || res.Trace[0].Signal != "tool:gmail" || res.Trace[1].Signal != "recent:kestrel" {
+		t.Fatalf("trace = %+v, want both carried signals to load their domain", res.Trace)
+	}
+	if lastActive(mail.ID) != old.Unix() || lastActive(birds.ID) != old.Unix() {
+		t.Fatalf("carried signals touched a domain: mail=%d birds=%d, want both %d",
+			lastActive(mail.ID), lastActive(birds.ID), old.Unix())
+	}
+
+	// The same tool invoked since the last request, and the keyword in the
+	// current message, are use of the domains: both are marked active.
+	if _, err := c.RoutedBlock(ctx, RouteRequest{
+		RouteText:   "another kestrel",
+		RecentTools: []string{"mcp_gmail_list"}, UsedTools: []string{"mcp_gmail_list"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if lastActive(mail.ID) != now.Unix() || lastActive(birds.ID) != now.Unix() {
+		t.Fatalf("current signals did not touch: mail=%d birds=%d, want both %d",
+			lastActive(mail.ID), lastActive(birds.ID), now.Unix())
+	}
+}
+
+func TestAgoText(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		age  time.Duration
+		want string
+	}{
+		{0, "just now"},
+		{59 * time.Second, "just now"},
+		{time.Minute, "1 minute ago"},
+		{59 * time.Minute, "59 minutes ago"},
+		{time.Hour, "1 hour ago"},
+		{23*time.Hour + 59*time.Minute, "23 hours ago"},
+		{24 * time.Hour, "1 day ago"},
+		{9*24*time.Hour + time.Hour, "9 days ago"},
+	} {
+		if got := agoText(store.Domain{LastActiveAt: now.Add(-tc.age).Unix()}, now); got != tc.want {
+			t.Errorf("agoText(%s) = %q, want %q", tc.age, got, tc.want)
+		}
+	}
+	if got := agoText(store.Domain{}, now); got != "at an unknown time" {
+		t.Errorf("agoText with no recorded activity = %q", got)
 	}
 }

@@ -48,16 +48,29 @@ two blocks for different placements to assist with prompt caching economics:
   chosen by signal strength, in this order:
 
   1. **Tool triggers.** A domain whose trigger matches a tool used in
-     this turn. Using `mcp_github_*` loads any domain that declared `github`.
+     this turn, or within the carry-over (see below). Using `mcp_github_*`
+     loads any domain that declared `github`.
   2. **Keyword triggers.** A domain whose keyword phrase appears (whole
      phrase, case-insensitive) in the incoming message, including a scheduled
      (cron) message: "morning routine" loads the workflow domain that asked
      for it. Domains matching more distinct phrases rank first; recency breaks
      ties. Keywords are also matched against the previous three incoming
-     messages, so a topic named a moment ago stays loaded; those matches rank
-     after matches in the current message.
+     messages that arrived within the carry-over, so a topic named a moment
+     ago stays loaded; those matches rank after matches in the current
+     message.
   3. **Recency.** Remaining slots are filled with the most recently active
-     topics.
+     topics, but only those active within `recency_hours` (default 72). The
+     header of such a domain says how long ago that was ("no trigger matched;
+     loaded because it was last active 2 days ago").
+
+Routing is bounded in time, not only in count. An earlier message or tool
+use routes for `carryover_minutes` (default 60) after it was last seen, and
+recency filler stops at `recency_hours`. An agent with little to do
+therefore ends up with an empty routed block rather than with the topics of
+its last busy day shown on every turn; the topic index in the STABLE block
+still lists every domain, and a trigger loads one whatever its age. A host
+that tests this passes a `clock.Clock` (`SessionOptions.Clock`,
+`WithClock`).
 
 A domain's keywords come from two places: the assistant sets its own, and
 consolidation maintains a list for every topic domain. The assistant sees and
@@ -66,9 +79,10 @@ never added back. Common words ("today", "good morning") and phrases already
 used by three other domains are rejected.
 
 A domain appears at most once even when several signals pick it. A domain
-loaded by a real signal (tool or keyword) is marked active; one loaded
-only as recency filler is not, so the recency signal cannot reinforce
-itself and a topic can go cold.
+loaded by use of it now (a tool called since the previous request, a keyword
+in the current message) is marked active. One loaded by a carried-over
+signal, or only as recency filler, is not, so the recency signal cannot
+reinforce itself and a topic can go cold.
 
 Within a rendered domain, several rules are applied:
 
