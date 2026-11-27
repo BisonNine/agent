@@ -34,7 +34,7 @@ type Spec struct {
 	// Description says what the agent is for; the agent does not read it.
 	Description string
 	// Identity is who the agent's model calls are accounted to, and the
-	// agent its Scope names (AgentID, AgentName, Project) and its tasks'
+	// agent its Scope names (AgentID, AgentName, Origin, Project) and its tasks'
 	// owner: a temporary clone of an agent bills its source. Zero means
 	// {ID, Name, Project}.
 	Identity accounting.Identity
@@ -80,6 +80,22 @@ type Spec struct {
 	// credential (Served) is issued once per turn, with the project of the
 	// turn's set-up. Nil means Identity.Project throughout.
 	TurnProject func(ctx context.Context, s hook.Scope) string
+	// TurnOrigin, when set, names the agent whose work caused the turn
+	// (Scope.Origin, accounting's Identity.Origin): the agent at the top of
+	// the chain, so a sub-agent's calls name the agent that started it. It
+	// is called once as the turn is set up, right after the first
+	// TurnProject call, with the context given to Run and the turn's scope
+	// (its Project chosen); never again in the turn, since an origin does
+	// not change. Its result is put in the scope, so what follows (model
+	// calls, compaction, tool calls, tasks started from the turn, events,
+	// callbacks, a served-tools credential) sees it. The compaction the
+	// agent's own session context runs after a turn asks it too, after
+	// TurnProject and with the same context and scope. An empty result means
+	// Identity.Origin, itself empty for the agent itself. The loop does not
+	// check it: a launch refuses one accounting.Identity.Normalize refuses.
+	// A panic in it is treated as one in TurnProject at the same place. Nil
+	// means Identity.Origin throughout.
+	TurnOrigin func(ctx context.Context, s hook.Scope) string
 	// Tools are the agent's tools, read once per model call; nil means none.
 	Tools toolkit.Registry
 	// Allow, when set, is asked again when a tool is executed, so a call of a

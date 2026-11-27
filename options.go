@@ -93,6 +93,14 @@ func WithTurnProject(fn func(ctx context.Context, s Scope) string) Option {
 	return func(s *loop.Spec) { s.TurnProject = fn }
 }
 
+// WithTurnOrigin sets how each turn names the agent whose work caused it,
+// asked once as the turn is set up: a non-empty result is the origin of
+// every call of the turn, "" keeps the agent's own (see
+// loop.Spec.TurnOrigin).
+func WithTurnOrigin(fn func(ctx context.Context, s Scope) string) Option {
+	return func(s *loop.Spec) { s.TurnOrigin = fn }
+}
+
 // WithClock sets the agent's clock.
 func WithClock(c clock.Clock) Option { return func(s *loop.Spec) { s.Clock = c } }
 

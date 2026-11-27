@@ -28,6 +28,10 @@ type Scope struct {
 	// AgentName is the agent's friendly name, for logs and records; it may
 	// be empty.
 	AgentName string
+	// Origin is the id of the agent whose work caused the turn, at the top
+	// of the chain (loop.Spec.TurnOrigin): a sub-agent Bob started for
+	// Alice's work names Alice. Empty means the agent itself (AgentID).
+	Origin string
 	// Session is the session the turn belongs to.
 	Session string
 	// TurnID names one turn, so every log line and record of it can be
@@ -48,14 +52,15 @@ type Scope struct {
 
 // Identity is the accounting identity of calls made in the scope.
 func (s Scope) Identity() accounting.Identity {
-	return accounting.Identity{Agent: s.AgentID, Name: s.AgentName, Project: s.Project}
+	return accounting.Identity{Origin: s.Origin, Agent: s.AgentID, Name: s.AgentName, Project: s.Project}
 }
 
 // LogValue renders the scope as a group of the fields that are set: agent,
-// agent_name, session, turn, depth (when not 0) and project. The engine
+// agent_name, origin (when another agent than AgentID), session, turn, depth
+// (when not 0), project and task. The engine
 // derives each turn's logger with it once, so call sites do not repeat them.
 func (s Scope) LogValue() slog.Value {
-	attrs := make([]slog.Attr, 0, 7)
+	attrs := make([]slog.Attr, 0, 8)
 	add := func(key, v string) {
 		if v != "" {
 			attrs = append(attrs, slog.String(key, v))
@@ -63,6 +68,9 @@ func (s Scope) LogValue() slog.Value {
 	}
 	add("agent", s.AgentID)
 	add("agent_name", s.AgentName)
+	if s.Origin != s.AgentID {
+		add("origin", s.Origin)
+	}
 	add("session", s.Session)
 	add("turn", s.TurnID)
 	if s.Depth != 0 {

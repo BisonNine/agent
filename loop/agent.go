@@ -293,7 +293,7 @@ func (a *Agent) forRun(r *run, env *agentEnv) *turnHooks {
 
 // scopeOf is the agent's scope for session: who it is accounted as.
 func (a *Agent) scopeOf(session string) hook.Scope {
-	return hook.Scope{AgentID: a.identity.Agent, AgentName: a.identity.Name, Session: session, Project: a.identity.Project}
+	return hook.Scope{AgentID: a.identity.Agent, AgentName: a.identity.Name, Origin: a.identity.Origin, Session: session, Project: a.identity.Project}
 }
 
 // finishUnstarted ends a run that never started: TurnFinished alone, to the
@@ -333,6 +333,7 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 		return
 	}
 	scope.Project = project
+	scope.Origin = a.turnOrigin(ctx, scope)
 	limits := a.limits(ctx, scope)
 	budget := limits.TurnBudget
 	if r.opts.TurnBudget > 0 {
@@ -439,6 +440,18 @@ func (a *Agent) turnProject(ctx context.Context, scope hook.Scope) (string, erro
 		return "", fmt.Errorf("agent %q, session %q: turn project: %w", a.id, scope.Session, err)
 	}
 	return p, nil
+}
+
+// turnOrigin is the origin of a turn in scope: the host's choice
+// (Spec.TurnOrigin) when it names one, else the agent's identity's.
+func (a *Agent) turnOrigin(ctx context.Context, scope hook.Scope) string {
+	if a.spec.TurnOrigin == nil {
+		return a.identity.Origin
+	}
+	if o := a.spec.TurnOrigin(ctx, scope); o != "" {
+		return o
+	}
+	return a.identity.Origin
 }
 
 // limits are the turn's limits, with their defaults.
@@ -620,15 +633,20 @@ func (a *Agent) endServed(r *run) {
 }
 
 // summaryCaller is the agent's summary model (purpose models.Summarize),
-// accounted to the project of the scope on the call's context: the turn's
-// project for a compaction inside a turn, the one compactIfDue chose after
-// it. Without a scope, or with no project on it, the identity's.
+// accounted to the project and origin of the scope on the call's context:
+// the turn's for a compaction inside a turn, the ones compactIfDue chose
+// after it. Without a scope, or with none on it, the identity's.
 type summaryCaller struct{ a *Agent }
 
 func (c summaryCaller) Complete(ctx context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	id := c.a.identity
-	if s, ok := hook.ScopeOf(ctx); ok && s.Project != "" {
-		id.Project = s.Project
+	if s, ok := hook.ScopeOf(ctx); ok {
+		if s.Project != "" {
+			id.Project = s.Project
+		}
+		if s.Origin != "" {
+			id.Origin = s.Origin
+		}
 	}
 	return c.a.spec.Models.Caller(models.Summarize, id, "").Complete(ctx, req)
 }
@@ -636,7 +654,8 @@ func (c summaryCaller) Complete(ctx context.Context, req hook.CompleteRequest) (
 // compactIfDue runs the compaction the session's adds deferred, after a
 // turn, outside any turn: its report reaches OnCompaction and OnEvent only.
 // Its context has the values of runCtx, the context the run was given, and
-// ends with the agent's life; its project is Spec.TurnProject's.
+// ends with the agent's life; its project is Spec.TurnProject's and its
+// origin Spec.TurnOrigin's.
 func (a *Agent) compactIfDue(runCtx context.Context, s *sessionState) {
 	a.mu.Lock()
 	cm := s.cm
@@ -649,13 +668,12 @@ func (a *Agent) compactIfDue(runCtx context.Context, s *sessionState) {
 	stop := context.AfterFunc(a.life, cancel) //nolint:contextcheck // the compaction ends with the agent's life, not with the run
 	defer stop()
 	scope := a.scopeOf(s.key)
-	project, err := a.compactionProject(ctx, scope)
+	scope, err := a.compactionScope(ctx, scope)
 	if err != nil {
 		a.log.Error("deferred compaction skipped", "component", "agent", "agent_id", a.id,
 			"session", s.key, "error", a.redact(err.Error()))
 		return
 	}
-	scope.Project = project
 	ctx = beginTurnContext(ctx, scope, a.hooks, a.clock)
 	if _, err := cm.CompactIfDue(ctx); err != nil && a.life.Err() == nil {
 		a.log.Warn("deferred compaction failed", "component", "agent", "agent_id", a.id,
@@ -663,15 +681,22 @@ func (a *Agent) compactIfDue(runCtx context.Context, s *sessionState) {
 	}
 }
 
-// compactionProject is turnProject for a compaction outside a turn: a
-// panic in Spec.TurnProject is an error, since no turn is there to end.
-func (a *Agent) compactionProject(ctx context.Context, scope hook.Scope) (project string, err error) {
+// compactionScope is scope with the project (turnProject) and origin
+// (turnOrigin) of a compaction outside a turn: a panic in Spec.TurnProject
+// or Spec.TurnOrigin is an error, since no turn is there to end.
+func (a *Agent) compactionScope(ctx context.Context, scope hook.Scope) (_ hook.Scope, err error) {
+	what := "turn project"
 	defer func() {
 		if p := recover(); p != nil {
-			err = fmt.Errorf("turn project: panic: %v", p)
+			err = fmt.Errorf("%s: panic: %v", what, p)
 		}
 	}()
-	return a.turnProject(ctx, scope)
+	if scope.Project, err = a.turnProject(ctx, scope); err != nil {
+		return scope, err
+	}
+	what = "turn origin"
+	scope.Origin = a.turnOrigin(ctx, scope)
+	return scope, nil
 }
 
 // stopRun stops one run: drops it from its queue, or cancels its turn with
