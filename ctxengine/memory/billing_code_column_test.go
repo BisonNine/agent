@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// oldSchemaFile writes a session file as a version without the project
+// oldSchemaFile writes a session file as a version without the billing_code
 // column left it: one state row, then the column dropped.
 func oldSchemaFile(t *testing.T) string {
 	t.Helper()
@@ -28,7 +28,7 @@ func oldSchemaFile(t *testing.T) string {
 	noErr(t, a.Close())
 	db, err := sql.Open("sqlite", archiveDSN(path, ""))
 	noErr(t, err)
-	if _, err := db.Exec("ALTER TABLE session_state DROP COLUMN project"); err != nil {
+	if _, err := db.Exec("ALTER TABLE session_state DROP COLUMN billing_code"); err != nil {
 		t.Fatal(err)
 	}
 	noErr(t, db.Close())
@@ -38,7 +38,7 @@ func oldSchemaFile(t *testing.T) string {
 // An old file opened read-only reads its billing code as "" and the rest as
 // written; opened writable, it gains the column, keeps its row, and stores a
 // billing code from then on. The column is added only once.
-func TestProjectColumn_OldSchema(t *testing.T) {
+func TestBillingCodeColumn_OldSchema(t *testing.T) {
 	path := oldSchemaFile(t)
 
 	ro, err := OpenReadOnly(path, nil)
@@ -77,8 +77,34 @@ func TestProjectColumn_OldSchema(t *testing.T) {
 	}
 }
 
+// A file written when the column was called project keeps that column, but
+// its value is not read: the billing code is "" until one is stored, and
+// storing one works beside the old column.
+func TestBillingCodeColumn_OldProjectColumn(t *testing.T) {
+	path := oldSchemaFile(t)
+	db, err := sql.Open("sqlite", archiveDSN(path, ""))
+	noErr(t, err)
+	_, err = db.Exec("ALTER TABLE session_state ADD COLUMN project TEXT NOT NULL DEFAULT 'garden'")
+	noErr(t, err)
+	noErr(t, db.Close())
+
+	a, err := Open(path)
+	noErr(t, err)
+	st, err := a.State()
+	noErr(t, err)
+	if st.Key != "alice" || st.Compaction.BillingCode != "" {
+		t.Fatalf("state = %+v, want the row kept and no billing code", st)
+	}
+	st.Compaction.BillingCode = "pentest-acme"
+	noErr(t, setState(a, st))
+	if st, err = a.State(); err != nil || st.Compaction.BillingCode != "pentest-acme" {
+		t.Fatalf("state = %+v, %v", st, err)
+	}
+	noErr(t, a.Close())
+}
+
 // A new file has the column, and a state row round-trips the billing code.
-func TestProjectColumn_NewFile(t *testing.T) {
+func TestBillingCodeColumn_NewFile(t *testing.T) {
 	a, err := Open(filepath.Join(t.TempDir(), "bob.archive.db"))
 	noErr(t, err)
 	defer func() { noErr(t, a.Close()) }()
@@ -92,7 +118,7 @@ func TestProjectColumn_NewFile(t *testing.T) {
 
 // A column that cannot be added fails the open, and the transaction that
 // tried is rolled back: the file opens once the column is fixed.
-func TestProjectColumn_UpgradeFails(t *testing.T) {
+func TestBillingCodeColumn_UpgradeFails(t *testing.T) {
 	path := oldSchemaFile(t)
 	saved := addedColumns
 	t.Cleanup(func() { addedColumns = saved })
@@ -114,7 +140,7 @@ func TestProjectColumn_UpgradeFails(t *testing.T) {
 
 // A database that cannot be queried fails the column upgrade and a state
 // read, before either reads a row.
-func TestProjectColumn_Closed(t *testing.T) {
+func TestBillingCodeColumn_Closed(t *testing.T) {
 	db, err := sql.Open("sqlite", archiveDSN(filepath.Join(t.TempDir(), "x.db"), ""))
 	noErr(t, err)
 	noErr(t, db.Close())

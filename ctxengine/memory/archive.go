@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS session_state (
     expose_reasoning               INTEGER NOT NULL DEFAULT 0,
     show_tool_activity             INTEGER NOT NULL DEFAULT 0,
     pending_turn                   INTEGER NOT NULL DEFAULT 0,
-    project                        TEXT    NOT NULL DEFAULT ''
+    billing_code                   TEXT    NOT NULL DEFAULT ''
 );
 `
 
@@ -124,7 +124,7 @@ CREATE TABLE IF NOT EXISTS session_state (
 // first released, each with its definition: a writable open adds those a
 // file lacks (addMissingColumns).
 var addedColumns = []struct{ name, def string }{
-	{"project", "TEXT NOT NULL DEFAULT ''"},
+	{"billing_code", "TEXT NOT NULL DEFAULT ''"},
 }
 
 // SummaryCheckpoint is one record of the legacy <base>.summaries.jsonl

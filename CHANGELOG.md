@@ -27,6 +27,10 @@ project uses [Semantic Versioning](https://semver.org/).
 
   A host renames its uses; anything that reads the accounting log reads
   `billing_code` instead of `project`.
+- **BREAKING** The session store keeps a session's billing code in the
+  column `billing_code` of `session_state` (was `project`). Nothing is
+  migrated: a session file written before this has no billing code until
+  the host sets one again.
 
 ## [0.2.4]
 

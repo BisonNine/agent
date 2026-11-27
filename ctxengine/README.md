@@ -52,7 +52,7 @@ holds four things:
   flag and the host's per-session values (model index, reasoning and
   tool-activity switches, billing code), which a host reads and writes with
   `GetCompactionState` / `SetCompactionState`. A column added since a file
-  was made (`project`, the billing code) is added when the file is opened
+  was made (`billing_code`) is added when the file is opened
   for writing, and read as empty from one opened read-only.
 
 `session.NewSQLiteStore(dir)` is the `SessionStore` the engine and the host
