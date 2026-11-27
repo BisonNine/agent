@@ -32,6 +32,20 @@ type PromptSettings struct {
 	IncludeDebugTrace bool    // append the routing trace to the routed block
 	FileMaxBytes      int     // per attached document; 0 = default
 	FileTotalMaxBytes int     // all attachments in one turn; 0 = default
+	// RecencyHours is how recently a domain must have been active to be
+	// loaded with no trigger matching it; 0 = default (72).
+	RecencyHours int
+	// CarryoverMinutes is how long a previous message or tool use keeps
+	// loading the domains its triggers match; 0 = default (60).
+	CarryoverMinutes int
+}
+
+// carryover resolves CarryoverMinutes.
+func (p PromptSettings) carryover() time.Duration {
+	if p.CarryoverMinutes > 0 {
+		return time.Duration(p.CarryoverMinutes) * time.Minute
+	}
+	return defaultCarryover
 }
 
 // ConsolidationSettings tunes the background sleep cycle.
@@ -65,6 +79,9 @@ func (s Settings) ComposerOptions() []Option {
 	}
 	if s.Prompt.MinConfidence > 0 {
 		opts = append(opts, WithMinConfidence(s.Prompt.MinConfidence))
+	}
+	if s.Prompt.RecencyHours > 0 {
+		opts = append(opts, WithRecencyWindow(time.Duration(s.Prompt.RecencyHours)*time.Hour))
 	}
 	if s.Prompt.FileMaxBytes > 0 {
 		opts = append(opts, WithFileMaxBytes(s.Prompt.FileMaxBytes))

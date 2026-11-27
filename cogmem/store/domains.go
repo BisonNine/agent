@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // ErrNotFound is returned when an addressed domain or hook does not exist.
@@ -270,6 +271,13 @@ func (s *Store) ArchiveDomain(ctx context.Context, q DBTX, id string) error {
 // bump stable_rev — recency is not part of the cached stable block.
 func (s *Store) Touch(ctx context.Context, q DBTX, id string) error {
 	_, err := q.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id=?`, now(), id)
+	return err
+}
+
+// TouchAt is Touch at a time the caller read from its own clock, so the mark
+// and the caller's later comparison against it use the same clock.
+func (s *Store) TouchAt(ctx context.Context, q DBTX, id string, at time.Time) error {
+	_, err := q.ExecContext(ctx, `UPDATE domains SET last_active_at=? WHERE id=?`, at.Unix(), id)
 	return err
 }
 

@@ -41,17 +41,17 @@ func TestSettings_ComposerOptions(t *testing.T) {
 	}{
 		{
 			name: "zero means defaults",
-			want: options{topKDomains: 3, maxChars: 4000, minConfidence: 0.65, fileMaxBytes: 256 * 1024, fileTotalMaxBytes: 512 * 1024},
+			want: options{topKDomains: 3, maxChars: 4000, minConfidence: 0.65, recencyWindow: 72 * time.Hour, fileMaxBytes: 256 * 1024, fileTotalMaxBytes: 512 * 1024},
 		},
 		{
 			name: "every field maps",
-			in:   PromptSettings{TopKDomains: 5, MaxChars: 1234, MinConfidence: 0.8, FileMaxBytes: 100, FileTotalMaxBytes: 300},
-			want: options{topKDomains: 5, maxChars: 1234, minConfidence: 0.8, fileMaxBytes: 100, fileTotalMaxBytes: 300},
+			in:   PromptSettings{TopKDomains: 5, MaxChars: 1234, MinConfidence: 0.8, RecencyHours: 12, FileMaxBytes: 100, FileTotalMaxBytes: 300},
+			want: options{topKDomains: 5, maxChars: 1234, minConfidence: 0.8, recencyWindow: 12 * time.Hour, fileMaxBytes: 100, fileTotalMaxBytes: 300},
 		},
 		{
 			name: "negative values are ignored",
-			in:   PromptSettings{TopKDomains: -1, MaxChars: -1, MinConfidence: -0.5, FileMaxBytes: -1, FileTotalMaxBytes: -1},
-			want: options{topKDomains: 3, maxChars: 4000, minConfidence: 0.65, fileMaxBytes: 256 * 1024, fileTotalMaxBytes: 512 * 1024},
+			in:   PromptSettings{TopKDomains: -1, MaxChars: -1, MinConfidence: -0.5, RecencyHours: -1, FileMaxBytes: -1, FileTotalMaxBytes: -1},
+			want: options{topKDomains: 3, maxChars: 4000, minConfidence: 0.65, recencyWindow: 72 * time.Hour, fileMaxBytes: 256 * 1024, fileTotalMaxBytes: 512 * 1024},
 		},
 	}
 	for _, tc := range cases {
@@ -60,7 +60,8 @@ func TestSettings_ComposerOptions(t *testing.T) {
 			c := New(nil, s.ComposerOptions()...)
 			got, want := c.opt, tc.want
 			if got.topKDomains != want.topKDomains || got.maxChars != want.maxChars ||
-				got.minConfidence != want.minConfidence || got.fileMaxBytes != want.fileMaxBytes ||
+				got.minConfidence != want.minConfidence || got.recencyWindow != want.recencyWindow ||
+				got.fileMaxBytes != want.fileMaxBytes ||
 				got.fileTotalMaxBytes != want.fileTotalMaxBytes {
 				t.Fatalf("options = %+v, want %+v", got, want)
 			}
@@ -68,6 +69,15 @@ func TestSettings_ComposerOptions(t *testing.T) {
 				t.Fatal("ComposerOptions must not install a loader")
 			}
 		})
+	}
+	// CarryoverMinutes is not a composer option: the session reads it.
+	for in, want := range map[int]time.Duration{0: time.Hour, -5: time.Hour, 15: 15 * time.Minute} {
+		if got := (PromptSettings{CarryoverMinutes: in}).carryover(); got != want {
+			t.Fatalf("carryover(%d) = %s, want %s", in, got, want)
+		}
+	}
+	if n := len((Settings{Prompt: PromptSettings{CarryoverMinutes: 15}}).ComposerOptions()); n != 0 {
+		t.Fatalf("CarryoverMinutes produced %d composer options, want 0", n)
 	}
 	// IncludeDebugTrace is not a composer option: it is passed per Recall.
 	s := Settings{Prompt: PromptSettings{IncludeDebugTrace: true}}

@@ -294,7 +294,7 @@ func TestEndToEnd_ObserveConsolidateRecall(t *testing.T) {
 			t.Fatalf("stable block missing %q:\n%s", want, stable)
 		}
 	}
-	if !strings.Contains(routed, "## Injected cogmem domain: Decoy ("+decoy.ID+") — loaded because it was recently active\n") || strings.Contains(routed, e2eTopicMemory) {
+	if !strings.Contains(routed, "## Injected cogmem domain: Decoy ("+decoy.ID+") — no trigger matched; loaded because it was last active just now\n") || strings.Contains(routed, e2eTopicMemory) {
 		t.Fatalf("with no signal, recency should route the decoy, not the new domain:\n%s", routed)
 	}
 

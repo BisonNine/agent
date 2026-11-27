@@ -33,7 +33,7 @@ these rules. Now the `imports_test.go` guard in each package does. Keep them:
   (`WithFileModes`).
 - `spawnllm` imports only `toolspec`, `accounting`, `fsmode`, the standard
   library, `google/uuid` and provider SDKs.
-- `cogmem` imports only `toolspec`, `fsmode`, `hook` (the one model-caller
+- `cogmem` imports only `toolspec`, `fsmode`, `clock`, `hook` (the one model-caller
   interface, and its `hook.Memory` adapter), the standard library, SQLite,
   `google/uuid` and `yaml.v3`. It never imports `spawnllm`, `models` or
   `ctxengine`.

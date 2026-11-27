@@ -13,7 +13,9 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"time"
 
+	"go.bison9.com/agent/clock"
 	"go.bison9.com/agent/cogmem/consolidate"
 	"go.bison9.com/agent/cogmem/store"
 )
@@ -43,6 +45,21 @@ const maxRecentTools = 8
 // maxRecentTexts is how many previous incoming messages keyword triggers are
 // also matched against, so a topic named a turn or two ago stays loaded.
 const maxRecentTexts = 3
+
+// recentEntry is one entry of a session's rings: a tool name or a route text,
+// and when it was last seen. An entry older than the carry-over
+// (PromptSettings.CarryoverMinutes) no longer routes anything. The rings are
+// bounded by count as well, but count alone is no bound in time: an agent
+// that receives one message a day, or the same scheduled prompt over and over
+// (a repeat moves to the front and pushes nothing out), would otherwise keep
+// loading the domains of a message or tool call from weeks ago.
+type recentEntry struct {
+	value string
+	at    time.Time
+	// fresh marks a tool invoked since the last Recall: the use that marks
+	// its domain active. Unused for texts.
+	fresh bool
+}
 
 // SessionOptions describes one memory and how the host wants it driven.
 type SessionOptions struct {
@@ -75,6 +92,9 @@ type SessionOptions struct {
 	// Logger receives the session's records, tagged with the attribute
 	// component "cogmem". Nil means silent.
 	Logger *slog.Logger
+	// Clock is read for the carry-over of earlier messages and tool uses and
+	// for the recency window. Nil means the system clock.
+	Clock clock.Clock
 }
 
 // Session is one agent session's view of cognitive memory: the host hands it a
@@ -95,12 +115,20 @@ type Session struct {
 	opened bool
 
 	recentMu    sync.Mutex
-	recentTools []string
+	recentTools []recentEntry
 	// recentTexts holds the distinct route texts of previous Recalls, newest
 	// first. It keeps one more than maxRecentTexts because the current text
 	// may already be in it (a repeated Recall), and earlierTexts leaves that
 	// one out yet should still find maxRecentTexts others.
-	recentTexts []string
+	recentTexts []recentEntry
+}
+
+// now is the session's clock reading.
+func (s *Session) now() time.Time { return clock.Or(s.opt.Clock).Now() }
+
+// live reports whether an entry last seen at at still routes at now.
+func (s *Session) live(at, now time.Time) bool {
+	return now.Sub(at) <= s.opt.Settings.Prompt.carryover()
 }
 
 // log returns the session's logger tagged with its component, or one that
@@ -141,7 +169,8 @@ func (s *Session) Store() *store.Store {
 		return nil
 	}
 	s.st = st
-	s.comp = New(st, append(s.opt.Settings.ComposerOptions(), WithAttachmentLoader(s.opt.Loader))...)
+	s.comp = New(st, append(s.opt.Settings.ComposerOptions(),
+		WithAttachmentLoader(s.opt.Loader), WithClock(s.opt.Clock))...)
 	if s.opt.OnOpen != nil && !s.opt.Ephemeral {
 		s.opt.OnOpen(context.Background(), st)
 	}
@@ -178,57 +207,84 @@ func (s *Session) Observe(ctx context.Context, seq int64, role, text string) {
 
 // RecordToolUse feeds the recent-tool ring (newest-first, deduped, capped) so
 // Recall can auto-load domains whose triggers match a tool the agent just used.
+// A tool stays in the ring for the carry-over, counted from its latest use.
 func (s *Session) RecordToolUse(names ...string) {
 	if s == nil || len(names) == 0 {
 		return
 	}
+	now := s.now()
 	s.recentMu.Lock()
 	defer s.recentMu.Unlock()
 	for _, n := range names {
 		if n == "" {
 			continue
 		}
-		out := s.recentTools[:0]
+		ring := make([]recentEntry, 0, len(s.recentTools)+1)
+		ring = append(ring, recentEntry{value: n, at: now, fresh: true})
 		for _, e := range s.recentTools {
-			if e != n {
-				out = append(out, e)
+			if e.value != n && s.live(e.at, now) {
+				ring = append(ring, e)
 			}
 		}
-		s.recentTools = append([]string{n}, out...)
+		s.recentTools = ring
 	}
 	if len(s.recentTools) > maxRecentTools {
 		s.recentTools = s.recentTools[:maxRecentTools]
 	}
 }
 
-// RecentTools returns a copy of the recent-tool ring, newest first.
+// RecentTools returns the names in the recent-tool ring, newest first: the
+// tools used within the carry-over.
 func (s *Session) RecentTools() []string {
 	if s == nil {
 		return nil
 	}
+	now := s.now()
 	s.recentMu.Lock()
 	defer s.recentMu.Unlock()
-	if len(s.recentTools) == 0 {
-		return nil
+	var out []string
+	for _, e := range s.recentTools {
+		if s.live(e.at, now) {
+			out = append(out, e.value)
+		}
 	}
-	out := make([]string, len(s.recentTools))
-	copy(out, s.recentTools)
 	return out
+}
+
+// takeTools returns RecentTools and, of those, the tools used since the
+// previous call. They are handed out as used once: a second Recall for the
+// same tool call sees the tool as carried over.
+func (s *Session) takeTools() (recent, used []string) {
+	now := s.now()
+	s.recentMu.Lock()
+	defer s.recentMu.Unlock()
+	for i, e := range s.recentTools {
+		if !s.live(e.at, now) {
+			continue
+		}
+		recent = append(recent, e.value)
+		if e.fresh {
+			used = append(used, e.value)
+			s.recentTools[i].fresh = false
+		}
+	}
+	return recent, used
 }
 
 // earlierTexts returns up to maxRecentTexts previous route texts, newest first,
 // leaving out any entry equal to routeText: the same text again (a repeated
 // Recall for one message, or the user repeating themselves) is the current
-// message, not an earlier one.
+// message, not an earlier one. Texts older than the carry-over are left out.
 func (s *Session) earlierTexts(routeText string) []string {
+	now := s.now()
 	s.recentMu.Lock()
 	defer s.recentMu.Unlock()
 	var out []string
-	for _, t := range s.recentTexts {
-		if t == routeText {
+	for _, e := range s.recentTexts {
+		if e.value == routeText || !s.live(e.at, now) {
 			continue
 		}
-		out = append(out, t)
+		out = append(out, e.value)
 		if len(out) == maxRecentTexts {
 			break
 		}
@@ -237,19 +293,20 @@ func (s *Session) earlierTexts(routeText string) []string {
 }
 
 // recordRouteText puts routeText at the front of the recent-text ring, moving
-// it there if it is already in the ring, so each text appears once. Blank text
-// is not recorded.
+// it there if it is already in the ring, so each text appears once. Texts
+// older than the carry-over are dropped. Blank text is not recorded.
 func (s *Session) recordRouteText(routeText string) {
 	if strings.TrimSpace(routeText) == "" {
 		return
 	}
+	now := s.now()
 	s.recentMu.Lock()
 	defer s.recentMu.Unlock()
-	ring := make([]string, 0, maxRecentTexts+1)
-	ring = append(ring, routeText)
-	for _, t := range s.recentTexts {
-		if t != routeText && len(ring) < maxRecentTexts+1 {
-			ring = append(ring, t)
+	ring := make([]recentEntry, 0, maxRecentTexts+1)
+	ring = append(ring, recentEntry{value: routeText, at: now})
+	for _, e := range s.recentTexts {
+		if e.value != routeText && s.live(e.at, now) && len(ring) < maxRecentTexts+1 {
+			ring = append(ring, e)
 		}
 	}
 	s.recentTexts = ring
@@ -257,9 +314,9 @@ func (s *Session) recordRouteText(routeText string) {
 
 // Recall returns the blocks to place in the next request: the STABLE block
 // (sticky domains, topic index, their attached documents) for the system
-// message, and the ROUTED block (domains selected from routeText, the previous
-// few route texts and the recent tools, with their documents) for the current
-// turn. Nil when there is nothing to inject or the store could not be opened.
+// message, and the ROUTED block (domains selected from routeText, the route
+// texts and tools of the last while, and what was active lately, with their
+// documents) for the current turn. Nil when there is nothing to inject or the store could not be opened.
 func (s *Session) Recall(ctx context.Context, routeText string) []Injection {
 	if s == nil || s.Store() == nil { //nolint:contextcheck // Store opens lazily with a background context by design (OnOpen must outlive this call); Store has no ctx parameter.
 		return nil
@@ -272,8 +329,10 @@ func (s *Session) Recall(ctx context.Context, routeText string) []Injection {
 	if comp == nil {
 		return nil
 	}
+	recentTools, usedTools := s.takeTools()
 	res, err := comp.Compose(ctx, RouteRequest{
-		RecentTools: s.RecentTools(),
+		RecentTools: recentTools,
+		UsedTools:   usedTools,
 		RouteText:   routeText,
 		RecentTexts: s.earlierTexts(routeText),
 		Trace:       s.opt.Settings.Prompt.IncludeDebugTrace,

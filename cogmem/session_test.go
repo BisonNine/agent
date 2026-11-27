@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"go.bison9.com/agent/clock"
 	"go.bison9.com/agent/cogmem/consolidate"
 	"go.bison9.com/agent/cogmem/store"
 )
@@ -175,7 +176,7 @@ func TestSession_ToolTriggerRoutesToCurrentUser(t *testing.T) {
 
 	// No tool used yet: recency fills the slot with the decoy.
 	routed, n := injectionText(s.Recall(ctx, "anything else"), PlaceCurrentUser)
-	if n != 1 || !strings.Contains(routed, "## Injected cogmem domain: Decoy ("+decoy.ID+") — loaded because it was recently active\n") || strings.Contains(routed, "Archive newsletters.") {
+	if n != 1 || !strings.Contains(routed, "## Injected cogmem domain: Decoy ("+decoy.ID+") — no trigger matched; loaded because it was last active just now\n") || strings.Contains(routed, "Archive newsletters.") {
 		t.Fatalf("before the tool use, recency should load the decoy (n=%d):\n%s", n, routed)
 	}
 
@@ -283,8 +284,15 @@ func TestSession_RecentTextsRing(t *testing.T) {
 	}
 	s.recordRouteText("")
 	s.recordRouteText("  \n")
+	ring := func() []string {
+		var out []string
+		for _, e := range s.recentTexts {
+			out = append(out, e.value)
+		}
+		return out
+	}
 	if len(s.recentTexts) != 0 {
-		t.Fatalf("blank texts were recorded: %q", s.recentTexts)
+		t.Fatalf("blank texts were recorded: %q", ring())
 	}
 	for _, m := range []string{"m1", "m2", "m2", "m3", "m4", "m5"} {
 		s.recordRouteText(m)
@@ -302,20 +310,20 @@ func TestSession_RecentTextsRing(t *testing.T) {
 			}
 		})
 	}
-	if want := []string{"m5", "m4", "m3", "m2"}; !reflect.DeepEqual(s.recentTexts, want) {
-		t.Fatalf("ring = %v, want %v (repeat not pushed, capped at %d)", s.recentTexts, want, maxRecentTexts+1)
+	if want := []string{"m5", "m4", "m3", "m2"}; !reflect.DeepEqual(ring(), want) {
+		t.Fatalf("ring = %v, want %v (repeat not pushed, capped at %d)", ring(), want, maxRecentTexts+1)
 	}
 	got := s.earlierTexts("m6")
 	got[0] = "mutated"
-	if s.recentTexts[0] != "m5" {
+	if s.recentTexts[0].value != "m5" {
 		t.Fatal("earlierTexts must return a copy")
 	}
 
 	// A text already in the ring moves to the front instead of being added
 	// again, and is never its own earlier message wherever it sits.
 	s.recordRouteText("m3")
-	if want := []string{"m3", "m5", "m4", "m2"}; !reflect.DeepEqual(s.recentTexts, want) {
-		t.Fatalf("ring after repeating m3 = %v, want %v", s.recentTexts, want)
+	if want := []string{"m3", "m5", "m4", "m2"}; !reflect.DeepEqual(ring(), want) {
+		t.Fatalf("ring after repeating m3 = %v, want %v", ring(), want)
 	}
 	if got := s.earlierTexts("m4"); !reflect.DeepEqual(got, []string{"m3", "m5", "m2"}) {
 		t.Fatalf("earlierTexts(m4) = %v, want m4 left out", got)
@@ -336,7 +344,10 @@ func TestSession_RecallRepeatedTextIsNotEarlier(t *testing.T) {
 	}
 	s.Recall(ctx, "A")
 	s.recentMu.Lock()
-	ring := slices.Clone(s.recentTexts)
+	var ring []string
+	for _, e := range s.recentTexts {
+		ring = append(ring, e.value)
+	}
 	s.recentMu.Unlock()
 	if !reflect.DeepEqual(ring, []string{"A", "B"}) {
 		t.Fatalf("ring = %v, want A and B once each", ring)
@@ -520,5 +531,144 @@ func TestSession_RecallAttachmentsFollowPlacement(t *testing.T) {
 	}
 	if got := fmt.Sprint(fl.calls); got != "[files/voice.md files/topic.md]" {
 		t.Fatalf("loads = %s, want each document once, sticky first", got)
+	}
+}
+
+// routedOf is the routed block of one Recall, "" when there is none.
+func routedOf(s *Session, text string) string {
+	routed, _ := injectionText(s.Recall(context.Background(), text), PlaceCurrentUser)
+	return routed
+}
+
+// An agent with little to do: a user names a topic and uses a tool once, and
+// after that only the same scheduled prompt arrives, once a day. The topic
+// and the tool carry over into the follow-ups of that conversation, then
+// stop routing; the domains stay as recency filler, with their true age in
+// the header, until the recency window closes; after it the routed block is
+// empty. Before the rings and the filler were bounded in time, all three
+// kept loading for as long as the agent stayed idle, since a repeated prompt
+// pushes nothing out of either ring.
+func TestSession_IdleAgentGoesQuiet(t *testing.T) {
+	fake := clock.NewFake(time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC))
+	s := NewSession(SessionOptions{ID: "alice", Dir: filepath.Join(t.TempDir(), "cogmem"), Clock: fake})
+	defer s.Close()
+	ctx := context.Background()
+	st := s.Store()
+	birds := mustDomain(t, st, store.CreateDomainParams{Name: "Birds", KeywordTriggers: "kestrel"})
+	mail := mustDomain(t, st, store.CreateDomainParams{Name: "Mail", Triggers: "gmail"})
+	lastActive := func(id string) time.Time {
+		d, err := st.GetDomain(ctx, st.DB(), id, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at, _ := d.LastActive()
+		return at
+	}
+	// The store stamps a new domain with the system clock; put both a month
+	// before the fake clock so only the session's own marks count.
+	for _, id := range []string{birds.ID, mail.ID} {
+		setLastActive(t, st, id, fake.Now().Add(-30*24*time.Hour))
+	}
+	const heartbeat = "Scheduled check: anything to do?"
+	birdsHdr := "## Injected cogmem domain: Birds (" + birds.ID + ") — "
+	mailHdr := "## Injected cogmem domain: Mail (" + mail.ID + ") — "
+
+	// The conversation: the topic is named, then a tool is used.
+	used := fake.Now()
+	if got := routedOf(s, "I saw a kestrel today"); !strings.Contains(got, birdsHdr+`loaded by keyword trigger "kestrel"`) || strings.Contains(got, mailHdr) {
+		t.Fatalf("first message:\n%s", got)
+	}
+	s.RecordToolUse("mcp_gmail_send")
+	if got := routedOf(s, "I saw a kestrel today"); !strings.Contains(got, mailHdr+`loaded by tool trigger "gmail"`) {
+		t.Fatalf("after the tool use:\n%s", got)
+	}
+	if !lastActive(birds.ID).Equal(used) || !lastActive(mail.ID).Equal(used) {
+		t.Fatalf("use did not mark the domains active: birds=%s mail=%s", lastActive(birds.ID), lastActive(mail.ID))
+	}
+
+	// A follow-up twenty minutes later still has both, as carried signals,
+	// and carrying them does not count as use.
+	fake.Advance(20 * time.Minute)
+	got := routedOf(s, "and then?")
+	if !strings.Contains(got, birdsHdr+`loaded by keyword trigger "kestrel" in a recent message`) ||
+		!strings.Contains(got, mailHdr+`loaded by tool trigger "gmail"`) {
+		t.Fatalf("follow-up lost the carried signals:\n%s", got)
+	}
+	if !lastActive(birds.ID).Equal(used) || !lastActive(mail.ID).Equal(used) {
+		t.Fatalf("carried signals marked a domain active: birds=%s mail=%s, want %s",
+			lastActive(birds.ID), lastActive(mail.ID), used)
+	}
+
+	// The next day's heartbeat: the carry-over is over. Both domains are
+	// still inside the recency window, and say how old they are.
+	fake.Set(used.Add(26 * time.Hour))
+	got = routedOf(s, heartbeat)
+	for _, h := range []string{birdsHdr, mailHdr} {
+		if !strings.Contains(got, h+"no trigger matched; loaded because it was last active 1 day ago") {
+			t.Fatalf("day 2 heartbeat should show %q as day-old filler:\n%s", h, got)
+		}
+	}
+	if len(s.RecentTools()) != 0 || len(s.earlierTexts(heartbeat)) != 0 {
+		t.Fatalf("rings still hold yesterday: tools=%v texts=%v", s.RecentTools(), s.earlierTexts(heartbeat))
+	}
+
+	// Daily heartbeats for the rest of the fortnight: once the recency
+	// window has closed nothing is routed, and nothing was ever marked active.
+	for day := 2; day <= 14; day++ {
+		fake.Set(used.Add(time.Duration(day) * 24 * time.Hour))
+		got = routedOf(s, heartbeat)
+		if want := day <= 3; (got != "") != want {
+			t.Fatalf("day %d: routed block present=%v, want %v:\n%s", day, got != "", want, got)
+		}
+	}
+	if !lastActive(birds.ID).Equal(used) || !lastActive(mail.ID).Equal(used) {
+		t.Fatalf("idle heartbeats marked a domain active: birds=%s mail=%s", lastActive(birds.ID), lastActive(mail.ID))
+	}
+
+	// The topic coming up again loads it at once, however long it has been.
+	if got = routedOf(s, "the kestrel is back"); !strings.Contains(got, birdsHdr+`loaded by keyword trigger "kestrel"`) || strings.Contains(got, mailHdr) {
+		t.Fatalf("a new mention should load Birds alone:\n%s", got)
+	}
+}
+
+// The carry-over is counted from the latest use and is configurable; a tool
+// is handed to the composer as used once per use.
+func TestSession_CarryoverWindow(t *testing.T) {
+	fake := clock.NewFake(time.Date(2026, 11, 27, 9, 0, 0, 0, time.UTC))
+	s := &Session{opt: SessionOptions{Clock: fake, Settings: Settings{Prompt: PromptSettings{CarryoverMinutes: 10}}}}
+	s.RecordToolUse("a")
+	s.recordRouteText("m1")
+	fake.Advance(6 * time.Minute)
+	s.RecordToolUse("b")
+	s.recordRouteText("m2")
+
+	if recent, used := s.takeTools(); !slices.Equal(recent, []string{"b", "a"}) || !slices.Equal(used, []string{"b", "a"}) {
+		t.Fatalf("takeTools = %v, %v; want both tools, both used", recent, used)
+	}
+	if recent, used := s.takeTools(); !slices.Equal(recent, []string{"b", "a"}) || used != nil {
+		t.Fatalf("second takeTools = %v, %v; want both tools, none used", recent, used)
+	}
+	s.RecordToolUse("a") // used again: newest, used, and its ten minutes restart
+	if recent, used := s.takeTools(); !slices.Equal(recent, []string{"a", "b"}) || !slices.Equal(used, []string{"a"}) {
+		t.Fatalf("after a second use, takeTools = %v, %v", recent, used)
+	}
+
+	fake.Advance(5 * time.Minute) // m1 is 11 minutes old, b and m2 are 5, a is 5
+	if got := s.earlierTexts("m3"); !slices.Equal(got, []string{"m2"}) {
+		t.Fatalf("earlierTexts = %v, want m2 alone (m1 has expired)", got)
+	}
+	if got := s.RecentTools(); !slices.Equal(got, []string{"a", "b"}) {
+		t.Fatalf("RecentTools = %v, want a and b", got)
+	}
+	fake.Advance(6 * time.Minute)
+	if got := s.RecentTools(); got != nil {
+		t.Fatalf("RecentTools = %v, want none after the carry-over", got)
+	}
+	if got := s.earlierTexts("m3"); got != nil {
+		t.Fatalf("earlierTexts = %v, want none after the carry-over", got)
+	}
+	s.recordRouteText("m3")
+	if len(s.recentTexts) != 1 {
+		t.Fatalf("expired texts were kept in the ring: %+v", s.recentTexts)
 	}
 }
