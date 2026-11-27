@@ -31,8 +31,8 @@ type CompactionCommitter interface {
 // declaration.
 //
 // A host reads and writes its own per-session values kept in the state
-// (ActiveModelIndex, ExposeReasoning, ShowToolActivity, Project) through it:
-// GetCompactionState, change the field, SetCompactionState. The Manager
+// (ActiveModelIndex, ExposeReasoning, ShowToolActivity, BillingCode) through
+// it: GetCompactionState, change the field, SetCompactionState. The Manager
 // changes only its counters, and a reset (TruncateHistory with keepLast <= 0)
 // keeps the host's values.
 type CompactionStateStore interface {

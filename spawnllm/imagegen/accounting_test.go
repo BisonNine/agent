@@ -77,7 +77,7 @@ func TestAccountsSuccess(t *testing.T) {
 			}
 			got := rec.One()
 			if !got.Success || got.Kind != accounting.KindImage || got.Provider != "openai" ||
-				got.Transport != accounting.TransportAPI || got.Model != "img-test" || got.Project != accounting.DefaultProject {
+				got.Transport != accounting.TransportAPI || got.Model != "img-test" || got.BillingCode != accounting.DefaultBillingCode {
 				t.Errorf("record = %+v", got)
 			}
 			if n := launchtest.Known(t, "http_status", got.HTTPStatus); n != http.StatusOK {

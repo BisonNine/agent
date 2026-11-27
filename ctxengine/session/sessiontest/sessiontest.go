@@ -376,7 +376,7 @@ func (c check) testTruncateHistory() {
 	st.CompressedAtMeaningfulCount = 3
 	st.Cooling = true
 	st.ActiveModelIndex = 2
-	st.Project = "garden"
+	st.BillingCode = "garden"
 	noErr(t, s.SetCompactionState("trunc", st))
 	noErr(t, s.TruncateHistory("trunc", 0))
 	if got := len(s.GetHistory("trunc")); got != 0 {
@@ -387,8 +387,8 @@ func (c check) testTruncateHistory() {
 	if st.MeaningfulCount != 0 || st.CompressedAtMeaningfulCount != 0 || st.Cooling {
 		t.Errorf("counters not reset: %+v", st)
 	}
-	if st.ActiveModelIndex != 2 || st.Project != "garden" {
-		t.Errorf("a reset cleared the host's model index or project: %+v", st)
+	if st.ActiveModelIndex != 2 || st.BillingCode != "garden" {
+		t.Errorf("a reset cleared the host's model index or billing code: %+v", st)
 	}
 	// Seqs keep counting after a full reset, and a negative keep is a reset.
 	if seq := mustAdd(t, s, "trunc", user("next")); seq != 11 {
@@ -717,7 +717,7 @@ func (c check) testCompactionStateRoundTrip() {
 		ActiveModelIndex:            2,
 		ExposeReasoning:             true,
 		ShowToolActivity:            true,
-		Project:                     "pentest-acme",
+		BillingCode:                 "pentest-acme",
 	}
 	noErr(t, s.SetCompactionState(key, want))
 	got, err := s.GetCompactionState(key)
@@ -740,12 +740,12 @@ func (c check) testCompactionStateRoundTrip() {
 	if got.MeaningfulCount != 8 {
 		t.Errorf("MeaningfulCount after add = %d, want 8", got.MeaningfulCount)
 	}
-	if got.Project != "pentest-acme" {
-		t.Errorf("Project after add = %q, want pentest-acme", got.Project)
+	if got.BillingCode != "pentest-acme" {
+		t.Errorf("BillingCode after add = %q, want pentest-acme", got.BillingCode)
 	}
 	// A fresh session's state can be written before any message.
-	noErr(t, s.SetCompactionState("fresh", memory.CompactionState{ActiveModelIndex: 1, Project: "garden"}))
-	if got, err := s.GetCompactionState("fresh"); err != nil || got.ActiveModelIndex != 1 || got.Project != "garden" {
+	noErr(t, s.SetCompactionState("fresh", memory.CompactionState{ActiveModelIndex: 1, BillingCode: "garden"}))
+	if got, err := s.GetCompactionState("fresh"); err != nil || got.ActiveModelIndex != 1 || got.BillingCode != "garden" {
 		t.Errorf("fresh session state = %+v, %v", got, err)
 	}
 }

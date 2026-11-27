@@ -163,10 +163,10 @@ var Rejected = []struct {
 	ID   accounting.Identity
 	Want error
 }{
-	{Name: "missing agent", ID: accounting.Identity{Project: "garden"}, Want: accounting.ErrAgentRequired},
+	{Name: "missing agent", ID: accounting.Identity{BillingCode: "garden"}, Want: accounting.ErrAgentRequired},
 	{Name: "agent too long", ID: accounting.Identity{Agent: strings.Repeat("a", accounting.MaxNameLength+1)}, Want: accounting.ErrNameTooLong},
 	{Name: "origin too long", ID: accounting.Identity{Origin: strings.Repeat("o", accounting.MaxNameLength+1), Agent: "alice"}, Want: accounting.ErrNameTooLong},
-	{Name: "project too long", ID: accounting.Identity{Agent: "alice", Project: strings.Repeat("p", accounting.MaxNameLength+1)}, Want: accounting.ErrNameTooLong},
+	{Name: "billing code too long", ID: accounting.Identity{Agent: "alice", BillingCode: strings.Repeat("p", accounting.MaxNameLength+1)}, Want: accounting.ErrNameTooLong},
 }
 
 // Server starts an HTTP server that answers every request with status,

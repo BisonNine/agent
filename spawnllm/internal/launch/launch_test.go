@@ -51,7 +51,7 @@ func TestEndChatNilResponse(t *testing.T) {
 		if err != nil && got.Error != "boom" {
 			t.Errorf("error = %q, want boom", got.Error)
 		}
-		if got.Model != "m" || got.Agent != "alice" || got.OriginAgent != "alice" || got.Project != accounting.DefaultProject {
+		if got.Model != "m" || got.Agent != "alice" || got.OriginAgent != "alice" || got.BillingCode != accounting.DefaultBillingCode {
 			t.Errorf("record = %+v", got)
 		}
 		launchtest.Unknown(t, "input_tokens", got.InputTokens)
@@ -139,7 +139,7 @@ func TestBeginRejectedIdentity(t *testing.T) {
 	rec := launchtest.Capture(t)
 	long := strings.Repeat("p", accounting.MaxNameLength+1)
 	ctx := context.Background()
-	gotCtx, l, err := Begin(ctx, accounting.Identity{Origin: " alice ", Agent: " bob ", Name: " Bob ", Project: long}, spec)
+	gotCtx, l, err := Begin(ctx, accounting.Identity{Origin: " alice ", Agent: " bob ", Name: " Bob ", BillingCode: long}, spec)
 	if !errors.Is(err, accounting.ErrNameTooLong) {
 		t.Fatalf("err = %v, want ErrNameTooLong", err)
 	}
@@ -147,8 +147,8 @@ func TestBeginRejectedIdentity(t *testing.T) {
 		t.Error("a refused Begin returned a launch or a new context")
 	}
 	got := rec.One()
-	if got.OriginAgent != " alice " || got.Agent != " bob " || got.AgentName != " Bob " || got.Project != long {
-		t.Errorf("identity = %q/%q/%q/%q, want the names as given", got.OriginAgent, got.Agent, got.AgentName, got.Project)
+	if got.OriginAgent != " alice " || got.Agent != " bob " || got.AgentName != " Bob " || got.BillingCode != long {
+		t.Errorf("identity = %q/%q/%q/%q, want the names as given", got.OriginAgent, got.Agent, got.AgentName, got.BillingCode)
 	}
 	if got.Kind != spec.Kind || got.Provider != spec.Provider || got.Transport != spec.Transport || got.Model != spec.Model {
 		t.Errorf("record = %+v", got)
@@ -292,7 +292,7 @@ func TestRunTask(t *testing.T) {
 
 	t.Run("invalid identity runs nothing", func(t *testing.T) {
 		rec := launchtest.Capture(t)
-		bad := accounting.Identity{Agent: "bob", Project: strings.Repeat("p", accounting.MaxNameLength+1)}
+		bad := accounting.Identity{Agent: "bob", BillingCode: strings.Repeat("p", accounting.MaxNameLength+1)}
 		out, err := RunTask(context.Background(), bad, spec,
 			func(context.Context) (*taskOut, error) {
 				t.Error("call ran for a refused identity")

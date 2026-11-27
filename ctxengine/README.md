@@ -48,12 +48,12 @@ holds four things:
 - `window` — the live history window the model is shown, in the same seq
   space as `messages`;
 - `session_state` — the one-row session record: key, current summary, next
-  seq, created/updated timestamps, the compaction counters, the
-  pending-turn flag and the host's per-session values (model index,
-  reasoning and tool-activity switches, project), which a host reads and
-  writes with `GetCompactionState` / `SetCompactionState`. A column added
-  since a file was made (`project`) is added when the file is opened for
-  writing, and read as empty from one opened read-only.
+  seq, created/updated timestamps, the compaction counters, the pending-turn
+  flag and the host's per-session values (model index, reasoning and
+  tool-activity switches, billing code), which a host reads and writes with
+  `GetCompactionState` / `SetCompactionState`. A column added since a file
+  was made (`billing_code`) is added when the file is opened
+  for writing, and read as empty from one opened read-only.
 
 `session.NewSQLiteStore(dir)` is the `SessionStore` the engine and the host
 use; it opens each session's database lazily and closes it on `ForgetSession`

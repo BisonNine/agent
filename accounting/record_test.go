@@ -95,7 +95,7 @@ func TestRecordJSON(t *testing.T) {
 		Time:            start,
 		OriginAgent:     "bob",
 		Agent:           "alice",
-		Project:         "default",
+		BillingCode:     "default",
 		Kind:            KindText,
 		Provider:        "openai-chat",
 		Transport:       TransportAPI,
@@ -113,7 +113,7 @@ func TestRecordJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"time":"2026-03-04T10:06:07.000000Z","origin_agent":"bob","agent_id":"alice","agent_name":"-","project":"default","kind":"text",` +
+	want := `{"time":"2026-03-04T10:06:07.000000Z","origin_agent":"bob","agent_id":"alice","agent_name":"-","billing_code":"default","kind":"text",` +
 		`"provider":"openai-chat","transport":"api","model":"gpt-test","input_tokens":10,"output_tokens":0,` +
 		`"cache_read_tokens":4,"cache_creation_tokens":"-","cost_usd":"-","cost_source":"-","tool_calls":"-","http_status":200,"duration_ms":42,` +
 		`"success":true,"audio_seconds":"-","characters":"-","images":0}`
@@ -161,7 +161,7 @@ func TestRecordJSONKeepsSubSecondAndError(t *testing.T) {
 }
 
 func TestRecordJSONNotes(t *testing.T) {
-	rec := Record{Time: time.Date(2026, 3, 4, 10, 6, 7, 0, time.UTC), Agent: "alice", Project: "default"}
+	rec := Record{Time: time.Date(2026, 3, 4, 10, 6, 7, 0, time.UTC), Agent: "alice", BillingCode: "default"}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		t.Fatal(err)
@@ -188,7 +188,7 @@ func TestRecordJSONNotes(t *testing.T) {
 }
 
 func TestRecordJSONAgentName(t *testing.T) {
-	rec := Record{Time: time.Date(2026, 3, 4, 10, 6, 7, 0, time.UTC), Agent: "3f2b8c1e-9d4a-4e7b-a1c6-5f0e2d9b7a43", AgentName: "Bob\nthe \"builder\"\x00", Project: "default"}
+	rec := Record{Time: time.Date(2026, 3, 4, 10, 6, 7, 0, time.UTC), Agent: "3f2b8c1e-9d4a-4e7b-a1c6-5f0e2d9b7a43", AgentName: "Bob\nthe \"builder\"\x00", BillingCode: "default"}
 	b, err := json.Marshal(rec)
 	if err != nil {
 		t.Fatal(err)

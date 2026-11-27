@@ -55,8 +55,8 @@ func TestChatAccountsSuccess(t *testing.T) {
 		got.Transport != accounting.TransportAPI || got.Model != "gpt-test-0101" {
 		t.Errorf("record = %+v", got)
 	}
-	if got.Agent != "alice" || got.Project != accounting.DefaultProject {
-		t.Errorf("identity = %q/%q", got.Agent, got.Project)
+	if got.Agent != "alice" || got.BillingCode != accounting.DefaultBillingCode {
+		t.Errorf("identity = %q/%q", got.Agent, got.BillingCode)
 	}
 	if n := launchtest.Known(t, "http_status", got.HTTPStatus); n != http.StatusOK {
 		t.Errorf("http_status = %d", n)

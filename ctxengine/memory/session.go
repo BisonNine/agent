@@ -53,11 +53,11 @@ type CompactionState struct {
 	// ShowToolActivity, when true, posts a one-line breadcrumb for each tool call
 	// to the user for this session (toggled via /tools). Default false.
 	ShowToolActivity bool `json:"show_tool_activity,omitempty"`
-	// Project is the project the host accounts the session's work to (a
-	// billing code), kept for the host; the SDK does not read it. "" when
-	// none was set. Like the fields above it survives a reset of the
-	// counters (TruncateHistory with keepLast <= 0).
-	Project string `json:"project,omitempty"`
+	// BillingCode is the billing code the host accounts the session's work
+	// to, kept for the host; the SDK does not read it. "" when none was set.
+	// Like the fields above it survives a reset of the counters
+	// (TruncateHistory with keepLast <= 0).
+	BillingCode string `json:"billing_code,omitempty"`
 }
 
 // sanitizeKey converts a session key to a safe filename component.
@@ -307,24 +307,24 @@ func readState(q queryRower) (SessionState, error) {
 		createdAt, updatedAt, summaryGeneratedAt                int64
 		cooling, exposeReasoning, showToolActivity, pendingTurn bool
 	)
-	// A file an older version wrote has no project column until a writable
+	// A file an older version wrote has no billing_code column until a writable
 	// open adds it (addMissingColumns); a read-only open reads it as "".
-	project := "project"
-	if ok, err := hasStateColumn(q, "project"); err != nil {
+	billingCode := "billing_code"
+	if ok, err := hasStateColumn(q, "billing_code"); err != nil {
 		return SessionState{}, err
 	} else if !ok {
-		project = "''"
+		billingCode = "''"
 	}
 	err := q.QueryRowContext(context.Background(),
 		`SELECT key, summary, next_seq, created_at, updated_at,
 		        meaningful_count, compressed_at_meaningful_count, cooling, cooling_since_count,
 		        summary_generated_at, summary_model, active_model_index,
-		        expose_reasoning, show_tool_activity, pending_turn, `+project+`
+		        expose_reasoning, show_tool_activity, pending_turn, `+billingCode+`
 		 FROM session_state WHERE id = 1`).Scan(
 		&st.Key, &st.Summary, &st.NextSeq, &createdAt, &updatedAt,
 		&st.Compaction.MeaningfulCount, &st.Compaction.CompressedAtMeaningfulCount, &cooling, &st.Compaction.CoolingSinceCount,
 		&summaryGeneratedAt, &st.Compaction.SummaryModel, &st.Compaction.ActiveModelIndex,
-		&exposeReasoning, &showToolActivity, &pendingTurn, &st.Compaction.Project,
+		&exposeReasoning, &showToolActivity, &pendingTurn, &st.Compaction.BillingCode,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SessionState{}, nil
@@ -376,12 +376,12 @@ func writeState(ex execer, st SessionState) error {
 		    (id, key, summary, next_seq, created_at, updated_at,
 		     meaningful_count, compressed_at_meaningful_count, cooling, cooling_since_count,
 		     summary_generated_at, summary_model, active_model_index,
-		     expose_reasoning, show_tool_activity, pending_turn, project)
+		     expose_reasoning, show_tool_activity, pending_turn, billing_code)
 		 VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		st.Key, st.Summary, st.NextSeq, unixNano(st.CreatedAt), unixNano(st.UpdatedAt),
 		st.Compaction.MeaningfulCount, st.Compaction.CompressedAtMeaningfulCount, st.Compaction.Cooling, st.Compaction.CoolingSinceCount,
 		unixNano(st.Compaction.SummaryGeneratedAt), st.Compaction.SummaryModel, st.Compaction.ActiveModelIndex,
-		st.Compaction.ExposeReasoning, st.Compaction.ShowToolActivity, st.PendingTurn, st.Compaction.Project,
+		st.Compaction.ExposeReasoning, st.Compaction.ShowToolActivity, st.PendingTurn, st.Compaction.BillingCode,
 	)
 	return err
 }

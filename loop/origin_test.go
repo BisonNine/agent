@@ -47,8 +47,8 @@ func TestTurnOrigin_CarriedThroughTheTurn(t *testing.T) {
 	var askedValue any
 	a := f.agent(t, func(s *Spec) {
 		subAgent(s)
-		s.Project = "garden"
-		s.TurnProject = func(context.Context, hook.Scope) string { return "alpha" }
+		s.BillingCode = "garden"
+		s.TurnBillingCode = func(context.Context, hook.Scope) string { return "alpha" }
 		s.TurnOrigin = func(ctx context.Context, sc hook.Scope) string {
 			mu.Lock()
 			defer mu.Unlock()
@@ -70,7 +70,7 @@ func TestTurnOrigin_CarriedThroughTheTurn(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(asked) != 1 || asked[0].Session != "s1" || asked[0].TurnID == "" || asked[0].Project != "alpha" || asked[0].Origin != "" || askedValue != "run" {
+	if len(asked) != 1 || asked[0].Session != "s1" || asked[0].TurnID == "" || asked[0].BillingCode != "alpha" || asked[0].Origin != "" || askedValue != "run" {
 		t.Fatalf("asked %+v with value %v, want once at set-up", asked, askedValue)
 	}
 	pc := f.p.Calls()
@@ -183,7 +183,7 @@ func TestSummaryCaller_TakesOriginFromScope(t *testing.T) {
 }
 
 // The compaction the agent runs after a turn asks TurnOrigin, after
-// TurnProject, with the run's context values and the session's scope (no
+// TurnBillingCode, with the run's context values and the session's scope (no
 // turn), and its summary names that origin. A panic skips the compaction.
 func TestTurnOrigin_DeferredCompaction(t *testing.T) {
 	for _, tt := range []struct {
@@ -204,7 +204,7 @@ func TestTurnOrigin_DeferredCompaction(t *testing.T) {
 			var askedValue any
 			a := f.agent(t, func(s *Spec) {
 				subAgent(s)
-				s.TurnProject = func(context.Context, hook.Scope) string { return "beta" }
+				s.TurnBillingCode = func(context.Context, hook.Scope) string { return "beta" }
 				s.TurnOrigin = func(ctx context.Context, sc hook.Scope) string {
 					asked, askedValue = sc, ctx.Value(valueKey{})
 					if tt.panics {
@@ -216,7 +216,7 @@ func TestTurnOrigin_DeferredCompaction(t *testing.T) {
 			due := &dueContext{fakeContext: &fakeContext{}, caller: summaryCaller{a: a}}
 			st := &sessionState{key: "s1", cm: due}
 			a.compactIfDue(context.WithValue(context.Background(), valueKey{}, "run"), st)
-			if asked.Session != "s1" || asked.TurnID != "" || asked.Project != "beta" || askedValue != "run" {
+			if asked.Session != "s1" || asked.TurnID != "" || asked.BillingCode != "beta" || askedValue != "run" {
 				t.Fatalf("asked with scope %+v, value %v", asked, askedValue)
 			}
 			if tt.skip {
@@ -225,10 +225,10 @@ func TestTurnOrigin_DeferredCompaction(t *testing.T) {
 				}
 				return
 			}
-			if !due.ran || due.scope.Origin != tt.want || due.scope.Project != "beta" {
+			if !due.ran || due.scope.Origin != tt.want || due.scope.BillingCode != "beta" {
 				t.Fatalf("ran %v, scope %+v", due.ran, due.scope)
 			}
-			if c := f.p.Calls(); len(c) != 1 || c[0].Identity.Origin != tt.want || c[0].Identity.Project != "beta" {
+			if c := f.p.Calls(); len(c) != 1 || c[0].Identity.Origin != tt.want || c[0].Identity.BillingCode != "beta" {
 				t.Fatalf("calls = %+v", c)
 			}
 		})

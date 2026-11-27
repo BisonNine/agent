@@ -115,12 +115,12 @@ type engineSpec struct {
 	// agentID names the agent in logs and is the prompt cache key.
 	agentID string
 	// scope is the turn's scope; its Identity is the accounting identity of
-	// every model call. The loop changes its Project when project says so.
+	// every model call. The loop changes its BillingCode as billingCode says.
 	scope hook.Scope
-	// project, when set, is asked before each dispatch for the turn's
-	// project (Spec.TurnProject, resolved): a change is put in scope and on
-	// the turn's context; an error ends the turn.
-	project func(ctx context.Context, s hook.Scope) (string, error)
+	// billingCode, when set, is asked before each dispatch for the turn's
+	// billing code (Spec.TurnBillingCode, resolved): a change is put in scope
+	// and on the turn's context; an error ends the turn.
+	billingCode func(ctx context.Context, s hook.Scope) (string, error)
 	// message is what the turn answers, and options the run's options, as
 	// TurnStarted reports them.
 	message hook.Message
@@ -205,7 +205,7 @@ type engineTurn struct {
 
 	// pending: the pending-turn marker was set.
 	pending bool
-	// rescoped: the model loop changed the scope's project.
+	// rescoped: the model loop changed the scope's billing code.
 	rescoped bool
 	// textDeltas: the turn's model calls ask for partial text, as the
 	// BeforeLoop callbacks left hook.Loop.TextDeltas.
@@ -414,7 +414,7 @@ func (e *engineTurn) run(ctx context.Context) (res engineResult, err error) {
 		}
 		if err == nil {
 			res, err = e.loop(ctx)
-			// What follows the loop sees the project its last dispatch had.
+			// What follows the loop sees the billing code its last dispatch had.
 			ctx = e.scoped(ctx)
 		}
 		e.releaseCompressionManagers()
@@ -515,7 +515,7 @@ func (e *engineTurn) loop(ctx context.Context) (engineResult, error) {
 			return engineResult{iterations: e.iteration}, e.stopped(ctx)
 		}
 		var perr error
-		if ctx, perr = e.refreshProject(ctx); perr != nil {
+		if ctx, perr = e.refreshBillingCode(ctx); perr != nil {
 			return engineResult{iterations: e.iteration}, perr
 		}
 		e.iteration++
@@ -540,19 +540,19 @@ func (e *engineTurn) loop(ctx context.Context) (engineResult, error) {
 	}, nil
 }
 
-// refreshProject asks spec.project for the turn's project before a
-// dispatch. A change is put in the turn's scope, and ctx is returned
+// refreshBillingCode asks spec.billingCode for the turn's billing code before
+// a dispatch. A change is put in the turn's scope, and ctx is returned
 // carrying it; an error ends the turn.
-func (e *engineTurn) refreshProject(ctx context.Context) (context.Context, error) {
-	if e.spec.project == nil {
+func (e *engineTurn) refreshBillingCode(ctx context.Context) (context.Context, error) {
+	if e.spec.billingCode == nil {
 		return ctx, nil
 	}
-	p, err := e.spec.project(ctx, e.spec.scope)
+	p, err := e.spec.billingCode(ctx, e.spec.scope)
 	if err != nil {
 		return ctx, err
 	}
-	if p != e.spec.scope.Project {
-		e.spec.scope.Project = p
+	if p != e.spec.scope.BillingCode {
+		e.spec.scope.BillingCode = p
 		e.rescoped = true
 		ctx = hook.WithScope(ctx, e.spec.scope)
 	}
@@ -560,7 +560,7 @@ func (e *engineTurn) refreshProject(ctx context.Context) (context.Context, error
 }
 
 // scoped is ctx carrying the turn's scope as it is now, when the model loop
-// changed its project.
+// changed its billing code.
 func (e *engineTurn) scoped(ctx context.Context) context.Context {
 	if !e.rescoped {
 		return ctx

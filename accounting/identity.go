@@ -14,46 +14,47 @@ import (
 )
 
 const (
-	// MaxNameLength is the longest agent id, friendly name or project
+	// MaxNameLength is the longest agent id, friendly name or billing code
 	// accepted, in characters (Unicode code points). It holds a UUID.
 	MaxNameLength = 64
-	// DefaultProject is the project recorded when the caller names none.
-	DefaultProject = "default"
+	// DefaultBillingCode is the billing code recorded when the caller names none.
+	DefaultBillingCode = "default"
 )
 
 var (
 	// ErrAgentRequired reports an identity without an agent name.
 	ErrAgentRequired = errors.New("agent name is required")
-	// ErrNameTooLong reports an agent or project longer than MaxNameLength
+	// ErrNameTooLong reports an agent or billing code longer than MaxNameLength
 	// characters.
 	ErrNameTooLong = errors.New("name is too long")
-	// ErrInvalidProject reports a project that CheckProject refuses.
-	ErrInvalidProject = errors.New("invalid project")
+	// ErrInvalidBillingCode reports a billing code that CheckBillingCode refuses.
+	ErrInvalidBillingCode = errors.New("invalid billing code")
 )
 
-// CheckProject reports whether code is a valid project: 1 to MaxNameLength
-// characters, each an ASCII letter, digit, '.', '_' or '-'. Case matters
-// ("Garden" and "garden" are two projects) and nothing is trimmed. It returns
-// nil or an error wrapping ErrInvalidProject. Normalize does not call it: a
-// host that lets someone choose a project checks it here first.
-func CheckProject(code string) error {
+// CheckBillingCode reports whether code is a valid billing code: 1 to
+// MaxNameLength characters, each an ASCII letter, digit, '.', '_' or '-'.
+// Case matters ("Garden" and "garden" are two billing codes) and nothing is
+// trimmed. It returns nil or an error wrapping ErrInvalidBillingCode.
+// Normalize does not call it: a host that lets someone choose a billing code
+// checks it here first.
+func CheckBillingCode(code string) error {
 	if code == "" {
-		return fmt.Errorf("accounting: project is empty: %w", ErrInvalidProject)
+		return fmt.Errorf("accounting: billing code is empty: %w", ErrInvalidBillingCode)
 	}
 	if len(code) > MaxNameLength {
-		return fmt.Errorf("accounting: project has more than %d characters: %w", MaxNameLength, ErrInvalidProject)
+		return fmt.Errorf("accounting: billing code has more than %d characters: %w", MaxNameLength, ErrInvalidBillingCode)
 	}
 	for i := 0; i < len(code); i++ {
-		if !projectByte(code[i]) {
-			return fmt.Errorf("accounting: project %q has a character other than a letter, digit, '.', '_' or '-': %w",
-				code, ErrInvalidProject)
+		if !billingCodeByte(code[i]) {
+			return fmt.Errorf("accounting: billing code %q has a character other than a letter, digit, '.', '_' or '-': %w",
+				code, ErrInvalidBillingCode)
 		}
 	}
 	return nil
 }
 
-// projectByte reports whether b may appear in a project.
-func projectByte(b byte) bool {
+// billingCodeByte reports whether b may appear in a billing code.
+func billingCodeByte(b byte) bool {
 	switch {
 	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
 		return true
@@ -64,31 +65,31 @@ func projectByte(b byte) bool {
 // ellipsis ends a Name shortened to MaxNameLength characters.
 const ellipsis = "…"
 
-// Identity names who a launch is for: the agent's stable id (required), its
-// friendly name (optional), the project (optional) and the origin (optional):
-// the id of the agent whose work caused the launch, when that is another
-// agent than the one making it (a sub-agent's launches name the agent that
-// started the chain). Name is only a label for readers; records are grouped
-// and priced by Agent or Origin, never by Name.
+// Identity names who a launch is for: the working agent's stable id
+// (required), its friendly name (optional), the billing code (optional) and
+// the origin agent (optional), when that is another agent than the working
+// agent (a sub-agent's launches name the agent that started the chain). Name
+// is only a label for readers; records are grouped and priced by Agent or
+// Origin, never by Name.
 type Identity struct {
-	Origin  string
-	Agent   string
-	Name    string
-	Project string
+	Origin      string
+	Agent       string
+	Name        string
+	BillingCode string
 }
 
 // Normalize returns the identity with surrounding whitespace trimmed, an
-// empty Project set to DefaultProject, an empty Origin set to Agent and a
-// Name longer than MaxNameLength characters shortened to that length, ending
-// in "…". It returns an error wrapping ErrAgentRequired when Agent is empty,
-// or ErrNameTooLong when Agent, Origin or Project is longer than
+// empty BillingCode set to DefaultBillingCode, an empty Origin set to Agent
+// and a Name longer than MaxNameLength characters shortened to that length,
+// ending in "…". It returns an error wrapping ErrAgentRequired when Agent is
+// empty, or ErrNameTooLong when Agent, Origin or BillingCode is longer than
 // MaxNameLength characters; those are never shortened.
 func (id Identity) Normalize() (Identity, error) {
 	out := Identity{
-		Origin:  strings.TrimSpace(id.Origin),
-		Agent:   strings.TrimSpace(id.Agent),
-		Name:    truncateName(strings.TrimSpace(id.Name)),
-		Project: strings.TrimSpace(id.Project),
+		Origin:      strings.TrimSpace(id.Origin),
+		Agent:       strings.TrimSpace(id.Agent),
+		Name:        truncateName(strings.TrimSpace(id.Name)),
+		BillingCode: strings.TrimSpace(id.BillingCode),
 	}
 	if out.Agent == "" {
 		return Identity{}, fmt.Errorf("accounting: %w", ErrAgentRequired)
@@ -104,12 +105,12 @@ func (id Identity) Normalize() (Identity, error) {
 	if out.Origin == "" {
 		out.Origin = out.Agent
 	}
-	if n := utf8.RuneCountInString(out.Project); n > MaxNameLength {
-		return Identity{}, fmt.Errorf("accounting: project name has %d characters, at most %d allowed: %w",
+	if n := utf8.RuneCountInString(out.BillingCode); n > MaxNameLength {
+		return Identity{}, fmt.Errorf("accounting: billing code has %d characters, at most %d allowed: %w",
 			n, MaxNameLength, ErrNameTooLong)
 	}
-	if out.Project == "" {
-		out.Project = DefaultProject
+	if out.BillingCode == "" {
+		out.BillingCode = DefaultBillingCode
 	}
 	return out, nil
 }

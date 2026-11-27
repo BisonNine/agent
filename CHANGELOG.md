@@ -6,6 +6,34 @@ project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING** "Project" is now "billing code" throughout, the name for what
+  work is billed to (beside the origin agent and the working agent):
+
+  | Old | New |
+  | --- | --- |
+  | `accounting.Identity.Project` | `accounting.Identity.BillingCode` |
+  | `accounting.Record.Project`, JSON key `project` | `accounting.Record.BillingCode`, JSON key `billing_code` |
+  | `accounting.DefaultProject` | `accounting.DefaultBillingCode` |
+  | `accounting.CheckProject` | `accounting.CheckBillingCode` |
+  | `accounting.ErrInvalidProject` | `accounting.ErrInvalidBillingCode` |
+  | `hook.Scope.Project`, log attribute `project` | `hook.Scope.BillingCode`, log attribute `billing_code` |
+  | `loop.Spec.Project` | `loop.Spec.BillingCode` |
+  | `loop.Spec.TurnProject` | `loop.Spec.TurnBillingCode` |
+  | `agent.WithProject` | `agent.WithBillingCode` |
+  | `agent.WithTurnProject` | `agent.WithTurnBillingCode` |
+  | `memory.CompactionState.Project`, JSON key `project` | `memory.CompactionState.BillingCode`, JSON key `billing_code` |
+
+  A host renames its uses; anything that reads the accounting log reads
+  `billing_code` instead of `project`.
+- **BREAKING** The session store keeps a session's billing code in the
+  column `billing_code` of `session_state` (was `project`). Nothing is
+  migrated: a session file written before this has no billing code until
+  the host sets one again.
+
+## [0.2.4]
+
 ### Added
 
 - Accounting records name the origin agent: the agent at the top of the

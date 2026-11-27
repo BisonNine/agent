@@ -81,22 +81,21 @@ func WithUnqueued() Option { return func(s *loop.Spec) { s.Unqueued = true } }
 // WithLimits sets the loop's limits.
 func WithLimits(l Limits) Option { return func(s *loop.Spec) { s.Limits = l } }
 
-// WithProject sets the project the agent's accounting records go to.
-func WithProject(p string) Option { return func(s *loop.Spec) { s.Project = p } }
+// WithBillingCode sets the billing code the agent's accounting records go to.
+func WithBillingCode(p string) Option { return func(s *loop.Spec) { s.BillingCode = p } }
 
-// WithTurnProject sets how each turn chooses its project, asked as the turn
-// is set up and before each model call: a non-empty result replaces the
-// agent's project from then on, "" keeps it, and one
-// accounting.CheckProject refuses ends the turn with an error (see
-// loop.Spec.TurnProject).
-func WithTurnProject(fn func(ctx context.Context, s Scope) string) Option {
-	return func(s *loop.Spec) { s.TurnProject = fn }
+// WithTurnBillingCode sets how each turn chooses its billing code, asked as
+// the turn is set up and before each model call: a non-empty result replaces
+// the agent's billing code from then on, "" keeps it, and one
+// accounting.CheckBillingCode refuses ends the turn with an error (see
+// loop.Spec.TurnBillingCode).
+func WithTurnBillingCode(fn func(ctx context.Context, s Scope) string) Option {
+	return func(s *loop.Spec) { s.TurnBillingCode = fn }
 }
 
-// WithTurnOrigin sets how each turn names the agent whose work caused it,
-// asked once as the turn is set up: a non-empty result is the origin of
-// every call of the turn, "" keeps the agent's own (see
-// loop.Spec.TurnOrigin).
+// WithTurnOrigin sets how each turn names its origin agent, asked once as the
+// turn is set up: a non-empty result is the origin agent of every call of the
+// turn, "" keeps the agent's own (see loop.Spec.TurnOrigin).
 func WithTurnOrigin(fn func(ctx context.Context, s Scope) string) Option {
 	return func(s *loop.Spec) { s.TurnOrigin = fn }
 }
