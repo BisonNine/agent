@@ -260,9 +260,9 @@ func TaskID(ctx context.Context) string {
 
 // TaskScope is the scope of a task's context, from the scope of the context
 // it was started from (from) and the task's id and depth: the same agent
-// (id, name, project), the session its result goes to, the turn id of the
-// turn that started it (so its log lines correlate), the depth it runs at,
-// and Task set to its id. A registrar puts it on the task's context with
+// (id, name, billing code), the session its result goes to, the turn id of
+// the turn that started it (so its log lines correlate), the depth it runs
+// at, and Task set to its id. A registrar puts it on the task's context with
 // WithScope.
 func TaskScope(from Scope, info TaskInfo, depth int) Scope {
 	s := from

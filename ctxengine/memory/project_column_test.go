@@ -22,7 +22,7 @@ func oldSchemaFile(t *testing.T) string {
 	noErr(t, err)
 	st := SessionState{
 		Key: "alice", Summary: "Bob asked about the garden.", NextSeq: 3, CreatedAt: time.Unix(10, 0).UTC(),
-		Compaction: CompactionState{MeaningfulCount: 4, ActiveModelIndex: 2, ExposeReasoning: true, Project: "dropped"},
+		Compaction: CompactionState{MeaningfulCount: 4, ActiveModelIndex: 2, ExposeReasoning: true, BillingCode: "dropped"},
 	}
 	noErr(t, setState(a, st))
 	noErr(t, a.Close())
@@ -35,9 +35,9 @@ func oldSchemaFile(t *testing.T) string {
 	return path
 }
 
-// An old file opened read-only reads its project as "" and the rest as
+// An old file opened read-only reads its billing code as "" and the rest as
 // written; opened writable, it gains the column, keeps its row, and stores a
-// project from then on. The column is added only once.
+// billing code from then on. The column is added only once.
 func TestProjectColumn_OldSchema(t *testing.T) {
 	path := oldSchemaFile(t)
 
@@ -46,7 +46,7 @@ func TestProjectColumn_OldSchema(t *testing.T) {
 	st, err := ro.State()
 	noErr(t, err)
 	if st.Key != "alice" || st.Compaction.MeaningfulCount != 4 || st.Compaction.ActiveModelIndex != 2 ||
-		!st.Compaction.ExposeReasoning || st.Compaction.Project != "" {
+		!st.Compaction.ExposeReasoning || st.Compaction.BillingCode != "" {
 		t.Fatalf("read-only state = %+v", st)
 	}
 
@@ -54,10 +54,10 @@ func TestProjectColumn_OldSchema(t *testing.T) {
 	noErr(t, err)
 	st, err = a.State()
 	noErr(t, err)
-	if st.Key != "alice" || st.Summary != "Bob asked about the garden." || st.Compaction.Project != "" {
+	if st.Key != "alice" || st.Summary != "Bob asked about the garden." || st.Compaction.BillingCode != "" {
 		t.Fatalf("state after upgrade = %+v", st)
 	}
-	st.Compaction.Project = "pentest-acme"
+	st.Compaction.BillingCode = "pentest-acme"
 	noErr(t, setState(a, st))
 	noErr(t, a.Close())
 
@@ -66,27 +66,27 @@ func TestProjectColumn_OldSchema(t *testing.T) {
 	noErr(t, err)
 	st, err = a.State()
 	noErr(t, err)
-	if st.Compaction.Project != "pentest-acme" {
-		t.Fatalf("project = %q", st.Compaction.Project)
+	if st.Compaction.BillingCode != "pentest-acme" {
+		t.Fatalf("billing code = %q", st.Compaction.BillingCode)
 	}
 	noErr(t, a.Close())
 	ro, err = OpenReadOnly(path, nil)
 	noErr(t, err)
-	if st, err = ro.State(); err != nil || st.Compaction.Project != "pentest-acme" {
+	if st, err = ro.State(); err != nil || st.Compaction.BillingCode != "pentest-acme" {
 		t.Fatalf("read-only state = %+v, %v", st, err)
 	}
 }
 
-// A new file has the column, and a state row round-trips the project.
+// A new file has the column, and a state row round-trips the billing code.
 func TestProjectColumn_NewFile(t *testing.T) {
 	a, err := Open(filepath.Join(t.TempDir(), "bob.archive.db"))
 	noErr(t, err)
 	defer func() { noErr(t, a.Close()) }()
-	noErr(t, setState(a, SessionState{Key: "bob", Compaction: CompactionState{Project: "garden"}}))
+	noErr(t, setState(a, SessionState{Key: "bob", Compaction: CompactionState{BillingCode: "garden"}}))
 	st, err := a.State()
 	noErr(t, err)
-	if st.Compaction.Project != "garden" {
-		t.Fatalf("project = %q", st.Compaction.Project)
+	if st.Compaction.BillingCode != "garden" {
+		t.Fatalf("billing code = %q", st.Compaction.BillingCode)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestProjectColumn_UpgradeFails(t *testing.T) {
 	noErr(t, err)
 	st, err := a.State()
 	noErr(t, err)
-	if st.Key != "alice" || st.Compaction.Project != "" {
+	if st.Key != "alice" || st.Compaction.BillingCode != "" {
 		t.Fatalf("state = %+v", st)
 	}
 	noErr(t, a.Close())

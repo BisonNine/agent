@@ -18,12 +18,12 @@ import (
 )
 
 var alice = hook.Scope{
-	AgentID:   "alice",
-	AgentName: "Alice",
-	Session:   "s-42",
-	TurnID:    "0a1b2c3d",
-	Depth:     1,
-	Project:   "support",
+	AgentID:     "alice",
+	AgentName:   "Alice",
+	Session:     "s-42",
+	TurnID:      "0a1b2c3d",
+	Depth:       1,
+	BillingCode: "support",
 }
 
 func TestScopeRoundTrip(t *testing.T) {
@@ -59,12 +59,12 @@ func TestScopeSetsToolkitValues(t *testing.T) {
 }
 
 func TestScopeIdentity(t *testing.T) {
-	want := accounting.Identity{Agent: "alice", Name: "Alice", Project: "support"}
+	want := accounting.Identity{Agent: "alice", Name: "Alice", BillingCode: "support"}
 	if got := alice.Identity(); got != want {
 		t.Fatalf("Identity = %+v, want %+v", got, want)
 	}
 	n, err := hook.Scope{AgentID: "bob"}.Identity().Normalize()
-	if err != nil || n.Project != accounting.DefaultProject || n.Origin != "bob" {
+	if err != nil || n.BillingCode != accounting.DefaultBillingCode || n.Origin != "bob" {
 		t.Fatalf("Normalize = %+v, %v", n, err)
 	}
 	// A sub-agent's scope names the agent whose work caused it.
@@ -91,7 +91,7 @@ func TestScopeLogValue(t *testing.T) {
 	log.Info("sub", "scope", hook.Scope{Origin: "alice", AgentID: "bob"})
 	got := buf.String()
 	for _, want := range []string{
-		"scope.agent=alice scope.agent_name=Alice scope.session=s-42 scope.turn=0a1b2c3d scope.depth=1 scope.project=support",
+		"scope.agent=alice scope.agent_name=Alice scope.session=s-42 scope.turn=0a1b2c3d scope.depth=1 scope.billing_code=support",
 		"msg=turn scope.agent=bob\n",
 		"msg=empty\n",               // a zero scope logs nothing
 		"msg=own scope.agent=bob\n", // an origin that is the agent itself is not repeated

@@ -19,12 +19,12 @@ offered under one name.
 | Field | What it is | Default |
 | --- | --- | --- |
 | `ID`, `Name`, `Description` | who the agent is; the id is used as given | — |
-| `Identity` | who calls are billed to, the scope's agent, the tasks' owner | `{ID, Name, Project}` |
+| `Identity` | who calls are billed to, the scope's agent, the tasks' owner | `{ID, Name, BillingCode}` |
 | `Instruction`, `InstructionLayers` | the system prompt: the instruction, then the host's layers per dispatch | none |
 | `Models` | the agent's `*models.Set`: `Chat` for turns, `Summarize` for compaction | required without `TurnModels` |
 | `TurnModels` | the turn's chain (and limits), chosen by the host per turn | `Models.Begin(Chat, session scope)` |
-| `TurnProject` | the turn's accounting project, chosen by the host at set-up and again before each model call (see below) | `Identity.Project` |
-| `TurnOrigin` | the agent whose work caused the turn (`Scope.Origin`), chosen by the host once at set-up (see below) | `Identity.Origin` (the agent itself) |
+| `TurnBillingCode` | the turn's billing code, chosen by the host at set-up and again before each model call (see below) | `Identity.BillingCode` |
+| `TurnOrigin` | the turn's origin agent (`Scope.Origin`), chosen by the host once at set-up (see below) | `Identity.Origin` (the working agent itself) |
 | `Session` | the turn's session context from the host (manager, memory, release, request amend, a manager for forced compaction); `Context` nil for a turn a `BeforeTurn` answers | the agent's own per session |
 | `Unqueued` | the host serialises each session's runs; `Run` never queues | queued |
 | `Tasks` | a task registry the host shares between its agents and their instances (`NewTasks`); never shut down by the agent | a registry of its own |
@@ -36,7 +36,7 @@ offered under one name.
 | `ToolContext`, `AsyncResult` | each call's context from the host; background tools' late results, on the context the tool ran on (detached from cancellation) with the call and the resolved `toolkit.Info`, delivered even after the turn and after `Close` | none; synchronous |
 | `Temperature`, `RepeatHint` | sent to non-CLI models; extra steering for a repeated tool batch | none |
 | `Served` | `hook.ServedTools`: a CLI model's tools for its turn (`mcphost.Served`) | none |
-| `Project`, `Clock`, `Logger`, `Redactor`, `Truncator`, `LogContent` (a func, read live) | accounting project, time, logging | default project, real clock, discard |
+| `BillingCode`, `Clock`, `Logger`, `Redactor`, `Truncator`, `LogContent` (a func, read live) | billing code, time, logging | default billing code, real clock, discard |
 | `Plugins` | the callbacks and consumers, each kind in order | none |
 
 ## What a turn does
@@ -71,47 +71,48 @@ budget, the agent's task registrar and its callbacks:
 - after the turn, the compaction the session's adds deferred runs outside
   the turn (`OnCompaction`, `OnEvent` only).
 
-### The turn's project
+### The turn's billing code
 
-`TurnProject(ctx, scope)` lets a host bill each session, or each run, to
-its own project. It is asked once as the turn is set up (before
+`TurnBillingCode(ctx, scope)` lets a host bill each session, or each run,
+to its own billing code. It is asked once as the turn is set up (before
 `TurnLimits`, `TurnModels`, `Session` and `TurnStarted`) and again before
 each dispatch of the model loop. A non-empty answer replaces
-`Scope.Project` and the scope is put on the turn's context again, so a
+`Scope.BillingCode` and the scope is put on the turn's context again, so a
 change made during the turn (by a tool, say) applies from the next model
-call: to that call's accounting identity and `ModelCall`, compaction inside
-the turn (the summary caller reads the project from the scope on its
-context), `InstructionLayers`, tool calls and the tasks they start
+call: to that call's accounting identity and `ModelCall`, compaction
+inside the turn (the summary caller reads the billing code from the scope
+on its context), `InstructionLayers`, tool calls and the tasks they start
 (`hook.TaskScope` copies it), later events, `AfterTurn` and
-`TurnFinished`. An empty answer means `Identity.Project`. An answer
-`accounting.CheckProject` refuses ends the turn with `OutcomeError` and an
-error wrapping `accounting.ErrInvalidProject` (at set-up before
-`TurnStarted`, mid-turn before the next model call): a bad project never
-reaches a record. A panic in it ends the turn with an `*EnginePanicError`.
-The deferred compaction after a turn asks it too, with the session's scope
-(no turn id) and the run's context values; a refused answer or a panic there
-skips that compaction and logs an error. A served-tools credential keeps the
-project of the turn's set-up. The project a session has chosen is a host
-value; ctxengine keeps one for it in the session's state
-(`memory.CompactionState.Project`).
+`TurnFinished`. An empty answer means `Identity.BillingCode`. An answer
+`accounting.CheckBillingCode` refuses ends the turn with `OutcomeError`
+and an error wrapping `accounting.ErrInvalidBillingCode` (at set-up before
+`TurnStarted`, mid-turn before the next model call): a bad billing code
+never reaches a record. A panic in it ends the turn with an
+`*EnginePanicError`. The deferred compaction after a turn asks it too,
+with the session's scope (no turn id) and the run's context values; a
+refused answer or a panic there skips that compaction and logs an error. A
+served-tools credential keeps the billing code of the turn's set-up. The
+billing code a session has chosen is a host value; ctxengine keeps one for
+it in the session's state (`memory.CompactionState.BillingCode`).
 
 ### The turn's origin
 
-`TurnOrigin(ctx, scope)` names the agent at the top of the chain of work
-that caused the turn: a sub-agent Bob started for Alice's work answers
-`Alice`, so Bob's accounting records name Alice as their origin. It is
-asked once, as the turn is set up, right after the first `TurnProject`
-call, with the context given to `Run` and the turn's scope (its project
-chosen); never again in the turn, since an origin does not change. A
-non-empty answer is put in `Scope.Origin`, so model calls, compaction
-inside the turn, tool calls and the tasks they start, events, callbacks and
-a served-tools credential carry it. An empty answer means
-`Identity.Origin`, which is itself empty for the agent itself (a record
-then names the agent as its own origin). The loop does not check it: a
-launch refuses one longer than 64 characters (`accounting.ErrNameTooLong`).
-A panic in it ends the turn with a set-up `*EnginePanicError`. The deferred
-compaction after a turn asks it too, after `TurnProject` and with the same
-context and scope; a panic there skips that compaction and logs an error.
+`TurnOrigin(ctx, scope)` names the turn's origin agent, at the start of
+the chain of work that caused it: a sub-agent Bob started for Alice's work
+answers `Alice`, so Bob's accounting records name Alice as their origin
+agent. It is asked once, as the turn is set up, right after the first
+`TurnBillingCode` call, with the context given to `Run` and the turn's
+scope (its billing code chosen); never again in the turn, since an origin
+does not change. A non-empty answer is put in `Scope.Origin`, so model
+calls, compaction inside the turn, tool calls and the tasks they start,
+events, callbacks and a served-tools credential carry it. An empty answer
+means `Identity.Origin`, which is itself empty for the agent itself (a
+record then names the working agent as its own origin agent). The loop
+does not check it: a launch refuses one longer than 64 characters
+(`accounting.ErrNameTooLong`). A panic in it ends the turn with a set-up
+`*EnginePanicError`. The deferred compaction after a turn asks it too,
+after `TurnBillingCode` and with the same context and scope; a panic there
+skips that compaction and logs an error.
 
 The engine's own behaviour is unchanged from the host it came from (sticky
 model per turn, fallback per call with cooldown skips, timeout and overflow
@@ -193,7 +194,7 @@ agent's instances (a config reload, temporary clones):
 A host with its own session cache, model selection, identity and timing
 supplies them through the optional `Spec` fields above; `hook/DESIGN.md`
 section 10 is the checklist. A panic in the engine (or in the host's
-`TurnProject`/`TurnOrigin`/`TurnLimits`/`TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
+`TurnBillingCode`/`TurnOrigin`/`TurnLimits`/`TurnModels`/`Session`) ends the run with an `*EnginePanicError` in its one
 `TurnFinished`: a host that wants its own recovery re-panics with its
 `Value` on its own goroutine. The agent logs neither a panic nor a turn
 error it delivers in `TurnFinished`. `ForgetSession(key)` (the root

@@ -59,12 +59,12 @@ const timeLayout = "2006-01-02T15:04:05.000000Z07:00"
 type Record struct {
 	// Time is when the launch started. MarshalJSON writes it first, in UTC.
 	Time time.Time `json:"-"`
-	// OriginAgent is Identity.Origin: the agent whose work caused the
-	// launch, the same as Agent when no other agent did.
+	// OriginAgent is Identity.Origin, the origin agent: the same as Agent
+	// (the working agent) when no other agent caused the launch.
 	OriginAgent string    `json:"origin_agent"`
 	Agent       string    `json:"agent_id"`
 	AgentName   string    `json:"agent_name"` // Identity.Name, a label only; "-" when empty
-	Project     string    `json:"project"`
+	BillingCode string    `json:"billing_code"`
 	Kind        Kind      `json:"kind"`
 	Provider    string    `json:"provider"`
 	Transport   Transport `json:"transport"`

@@ -19,18 +19,18 @@ import (
 // knows (the chat a reply goes to, who is waiting on the turn) stay in the
 // host's own context keys.
 type Scope struct {
-	// AgentID names the agent the calls are accounted to: the agent's
-	// accounting identity (loop.Spec.Identity, by default its id as given). A
+	// AgentID names the working agent, the one the calls are accounted to:
+	// its accounting identity (loop.Spec.Identity, by default its id as given). A
 	// temporary clone of an agent (a sub-agent worker) runs under its
 	// source's id: its calls are accounted to, and its tasks owned by, the
 	// source.
 	AgentID string
-	// AgentName is the agent's friendly name, for logs and records; it may
-	// be empty.
+	// AgentName is the working agent's friendly name, for logs and records;
+	// it may be empty.
 	AgentName string
-	// Origin is the id of the agent whose work caused the turn, at the top
-	// of the chain (loop.Spec.TurnOrigin): a sub-agent Bob started for
-	// Alice's work names Alice. Empty means the agent itself (AgentID).
+	// Origin is the id of the origin agent, at the top of the chain
+	// (loop.Spec.TurnOrigin): a sub-agent Bob started for Alice's work names
+	// Alice. Empty means the working agent itself (AgentID).
 	Origin string
 	// Session is the session the turn belongs to.
 	Session string
@@ -41,8 +41,8 @@ type Scope struct {
 	// Depth is the sub-agent depth: 0 for an agent talked to directly, one
 	// more for each agent that started another.
 	Depth int
-	// Project groups accounting records; empty is the default project.
-	Project string
+	// BillingCode groups accounting records; empty is the default.
+	BillingCode string
 	// Task is the id of the task the context runs in (TaskScope); empty in
 	// a turn no task runs. A turn started on a task's context (a sub-agent's
 	// turn) keeps it: the engine copies Task into the turn's scope, so the
@@ -52,12 +52,12 @@ type Scope struct {
 
 // Identity is the accounting identity of calls made in the scope.
 func (s Scope) Identity() accounting.Identity {
-	return accounting.Identity{Origin: s.Origin, Agent: s.AgentID, Name: s.AgentName, Project: s.Project}
+	return accounting.Identity{Origin: s.Origin, Agent: s.AgentID, Name: s.AgentName, BillingCode: s.BillingCode}
 }
 
 // LogValue renders the scope as a group of the fields that are set: agent,
 // agent_name, origin (when another agent than AgentID), session, turn, depth
-// (when not 0), project and task. The engine
+// (when not 0), billing_code and task. The engine
 // derives each turn's logger with it once, so call sites do not repeat them.
 func (s Scope) LogValue() slog.Value {
 	attrs := make([]slog.Attr, 0, 8)
@@ -76,7 +76,7 @@ func (s Scope) LogValue() slog.Value {
 	if s.Depth != 0 {
 		attrs = append(attrs, slog.Int("depth", s.Depth))
 	}
-	add("project", s.Project)
+	add("billing_code", s.BillingCode)
 	add("task", s.Task)
 	return slog.GroupValue(attrs...)
 }

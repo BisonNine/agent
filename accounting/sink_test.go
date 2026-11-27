@@ -117,7 +117,7 @@ func testRecord(agent string, n int) Record {
 	return Record{
 		Time:         time.Now(),
 		Agent:        agent,
-		Project:      DefaultProject,
+		BillingCode:  DefaultBillingCode,
 		Kind:         KindText,
 		Provider:     "test",
 		Transport:    TransportAPI,

@@ -183,7 +183,7 @@ func TestTaskContextHelpers(t *testing.T) {
 	}
 }
 
-// TaskScope keeps the agent, project and turn id, takes the task's id,
+// TaskScope keeps the agent, billing code and turn id, takes the task's id,
 // depth and session, and a task started inside it records it as the parent.
 func TestTaskScope(t *testing.T) {
 	s := hook.TaskScope(alice, hook.TaskInfo{ID: "t-1"}, 2)

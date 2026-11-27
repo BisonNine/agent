@@ -122,7 +122,7 @@ func New(spec Spec) (*Agent, error) {
 	}
 	a.identity = spec.Identity
 	if a.identity == (accounting.Identity{}) {
-		a.identity = accounting.Identity{Agent: spec.ID, Name: spec.Name, Project: spec.Project}
+		a.identity = accounting.Identity{Agent: spec.ID, Name: spec.Name, BillingCode: spec.BillingCode}
 	}
 	a.registry, a.sharedTasks = spec.Tasks, spec.Tasks != nil
 	if !a.sharedTasks {
@@ -293,7 +293,7 @@ func (a *Agent) forRun(r *run, env *agentEnv) *turnHooks {
 
 // scopeOf is the agent's scope for session: who it is accounted as.
 func (a *Agent) scopeOf(session string) hook.Scope {
-	return hook.Scope{AgentID: a.identity.Agent, AgentName: a.identity.Name, Origin: a.identity.Origin, Session: session, Project: a.identity.Project}
+	return hook.Scope{AgentID: a.identity.Agent, AgentName: a.identity.Name, Origin: a.identity.Origin, Session: session, BillingCode: a.identity.BillingCode}
 }
 
 // finishUnstarted ends a run that never started: TurnFinished alone, to the
@@ -326,13 +326,13 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 			}
 		}
 	}()
-	project, err := a.turnProject(ctx, scope)
+	billingCode, err := a.turnBillingCode(ctx, scope)
 	if err != nil {
 		engineRan = true
 		a.finishUnstarted(ctx, r, hook.TurnResult{Outcome: hook.OutcomeError, Err: err})
 		return
 	}
-	scope.Project = project
+	scope.BillingCode = billingCode
 	scope.Origin = a.turnOrigin(ctx, scope)
 	limits := a.limits(ctx, scope)
 	budget := limits.TurnBudget
@@ -386,11 +386,11 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	defer a.endServed(r)
 
 	spec := engineSpec{
-		agentID: a.id,
-		scope:   scope,
-		project: a.turnProject,
-		message: r.msg,
-		options: r.opts,
+		agentID:     a.id,
+		scope:       scope,
+		billingCode: a.turnBillingCode,
+		message:     r.msg,
+		options:     r.opts,
 
 		maxIterations: limits.MaxIterations,
 		cancelGrace:   limits.CancelGrace,
@@ -424,25 +424,25 @@ func (a *Agent) runTurn(ctx context.Context, s *sessionState, r *run) {
 	_, _ = newEngineTurn(spec, nil).run(ctx) //nolint:errcheck // delivered in TurnFinished
 }
 
-// turnProject is the project of a turn in scope: the host's choice
-// (Spec.TurnProject) when it names one, else the agent's identity's. A
-// project accounting.CheckProject refuses is an error wrapping
-// accounting.ErrInvalidProject.
-func (a *Agent) turnProject(ctx context.Context, scope hook.Scope) (string, error) {
-	if a.spec.TurnProject == nil {
-		return a.identity.Project, nil
+// turnBillingCode is the billing code of a turn in scope: the host's choice
+// (Spec.TurnBillingCode) when it names one, else the agent's identity's. A
+// billing code accounting.CheckBillingCode refuses is an error wrapping
+// accounting.ErrInvalidBillingCode.
+func (a *Agent) turnBillingCode(ctx context.Context, scope hook.Scope) (string, error) {
+	if a.spec.TurnBillingCode == nil {
+		return a.identity.BillingCode, nil
 	}
-	p := a.spec.TurnProject(ctx, scope)
+	p := a.spec.TurnBillingCode(ctx, scope)
 	if p == "" {
-		return a.identity.Project, nil
+		return a.identity.BillingCode, nil
 	}
-	if err := accounting.CheckProject(p); err != nil {
-		return "", fmt.Errorf("agent %q, session %q: turn project: %w", a.id, scope.Session, err)
+	if err := accounting.CheckBillingCode(p); err != nil {
+		return "", fmt.Errorf("agent %q, session %q: turn billing code: %w", a.id, scope.Session, err)
 	}
 	return p, nil
 }
 
-// turnOrigin is the origin of a turn in scope: the host's choice
+// turnOrigin is the origin agent of a turn in scope: the host's choice
 // (Spec.TurnOrigin) when it names one, else the agent's identity's.
 func (a *Agent) turnOrigin(ctx context.Context, scope hook.Scope) string {
 	if a.spec.TurnOrigin == nil {
@@ -633,16 +633,16 @@ func (a *Agent) endServed(r *run) {
 }
 
 // summaryCaller is the agent's summary model (purpose models.Summarize),
-// accounted to the project and origin of the scope on the call's context:
-// the turn's for a compaction inside a turn, the ones compactIfDue chose
-// after it. Without a scope, or with none on it, the identity's.
+// accounted to the billing code and origin of the scope on the call's
+// context: the turn's for a compaction inside a turn, the ones compactIfDue
+// chose after it. Without a scope, or with none on it, the identity's.
 type summaryCaller struct{ a *Agent }
 
 func (c summaryCaller) Complete(ctx context.Context, req hook.CompleteRequest) (hook.CompleteReply, error) {
 	id := c.a.identity
 	if s, ok := hook.ScopeOf(ctx); ok {
-		if s.Project != "" {
-			id.Project = s.Project
+		if s.BillingCode != "" {
+			id.BillingCode = s.BillingCode
 		}
 		if s.Origin != "" {
 			id.Origin = s.Origin
@@ -651,10 +651,10 @@ func (c summaryCaller) Complete(ctx context.Context, req hook.CompleteRequest) (
 	return c.a.spec.Models.Caller(models.Summarize, id, "").Complete(ctx, req)
 }
 
-// compactIfDue runs the compaction the session's adds deferred, after a
-// turn, outside any turn: its report reaches OnCompaction and OnEvent only.
-// Its context has the values of runCtx, the context the run was given, and
-// ends with the agent's life; its project is Spec.TurnProject's and its
+// compactIfDue runs the compaction the session's adds deferred, after a turn,
+// outside any turn: its report reaches OnCompaction and OnEvent only. Its
+// context has the values of runCtx, the context the run was given, and ends
+// with the agent's life; its billing code is Spec.TurnBillingCode's and its
 // origin Spec.TurnOrigin's.
 func (a *Agent) compactIfDue(runCtx context.Context, s *sessionState) {
 	a.mu.Lock()
@@ -681,17 +681,18 @@ func (a *Agent) compactIfDue(runCtx context.Context, s *sessionState) {
 	}
 }
 
-// compactionScope is scope with the project (turnProject) and origin
-// (turnOrigin) of a compaction outside a turn: a panic in Spec.TurnProject
-// or Spec.TurnOrigin is an error, since no turn is there to end.
+// compactionScope is scope with the billing code (turnBillingCode) and origin
+// (turnOrigin) of a compaction outside a turn: a panic in
+// Spec.TurnBillingCode or Spec.TurnOrigin is an error, since no turn is there
+// to end.
 func (a *Agent) compactionScope(ctx context.Context, scope hook.Scope) (_ hook.Scope, err error) {
-	what := "turn project"
+	what := "turn billing code"
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("%s: panic: %v", what, p)
 		}
 	}()
-	if scope.Project, err = a.turnProject(ctx, scope); err != nil {
+	if scope.BillingCode, err = a.turnBillingCode(ctx, scope); err != nil {
 		return scope, err
 	}
 	what = "turn origin"

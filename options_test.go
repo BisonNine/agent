@@ -75,8 +75,8 @@ func TestOptions_SetTheirField(t *testing.T) {
 		agent.WithServedTools(st),
 		agent.WithUnqueued(),
 		agent.WithLimits(limits),
-		agent.WithProject("support"),
-		agent.WithTurnProject(func(_ context.Context, sc agent.Scope) string { return "billing-" + sc.Session }),
+		agent.WithBillingCode("support"),
+		agent.WithTurnBillingCode(func(_ context.Context, sc agent.Scope) string { return "billing-" + sc.Session }),
 		agent.WithTurnOrigin(func(_ context.Context, sc agent.Scope) string { return "origin-" + sc.Session }),
 		agent.WithClock(clk),
 		agent.WithLogger(logger),
@@ -101,11 +101,11 @@ func TestOptions_SetTheirField(t *testing.T) {
 	if s.Memory != hook.Memory(mem) || s.Served != hook.ServedTools(st) {
 		t.Fatal("WithMemory or WithServedTools did not set its value")
 	}
-	if !s.Unqueued || s.Limits != limits || s.Project != "support" {
-		t.Fatalf("Unqueued, Limits, Project = %v, %+v, %q", s.Unqueued, s.Limits, s.Project)
+	if !s.Unqueued || s.Limits != limits || s.BillingCode != "support" {
+		t.Fatalf("Unqueued, Limits, BillingCode = %v, %+v, %q", s.Unqueued, s.Limits, s.BillingCode)
 	}
-	if s.TurnProject == nil || s.TurnProject(context.Background(), hook.Scope{Session: "s1"}) != "billing-s1" {
-		t.Fatal("WithTurnProject did not set the callback")
+	if s.TurnBillingCode == nil || s.TurnBillingCode(context.Background(), hook.Scope{Session: "s1"}) != "billing-s1" {
+		t.Fatal("WithTurnBillingCode did not set the callback")
 	}
 	if s.TurnOrigin == nil || s.TurnOrigin(context.Background(), hook.Scope{Session: "s1"}) != "origin-s1" {
 		t.Fatal("WithTurnOrigin did not set the callback")

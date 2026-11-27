@@ -53,7 +53,7 @@ func TestChatAccountsSuccess(t *testing.T) {
 	}
 	got := rec.One()
 	if !got.Success || got.Kind != accounting.KindText || got.Provider != "anthropic" ||
-		got.Transport != accounting.TransportAPI || got.Model != "claude-test-1" || got.Project != accounting.DefaultProject {
+		got.Transport != accounting.TransportAPI || got.Model != "claude-test-1" || got.BillingCode != accounting.DefaultBillingCode {
 		t.Errorf("record = %+v", got)
 	}
 	if n := launchtest.Known(t, "http_status", got.HTTPStatus); n != http.StatusOK {

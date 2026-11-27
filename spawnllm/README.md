@@ -29,10 +29,11 @@ Every call that can launch a model takes an `accounting.Identity` right
 after the context: `LLMProvider.Chat`, `speech` `Transcribe` and
 `Synthesize`, and `imagegen` `Generate` and `Edit`.
 
-- The agent name is required. A missing agent, or an agent or project name
-  longer than 64 characters, is refused before anything is launched; the
-  error wraps `accounting.ErrAgentRequired` or `accounting.ErrNameTooLong`.
-- An empty project is recorded as `default`.
+- The working agent is required. A missing working agent, or an agent id,
+  origin agent or billing code longer than 64 characters, is refused before
+  anything is launched; the error wraps `accounting.ErrAgentRequired` or
+  `accounting.ErrNameTooLong`.
+- An empty billing code is recorded as `default`.
 - Every call, refused or not, reports exactly one `accounting.Record`: kind,
   provider, transport, model, the tokens and cost the provider reported (or
   a cost estimated from accounting's pricing table), the number of tool calls

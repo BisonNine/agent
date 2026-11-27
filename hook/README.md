@@ -63,9 +63,9 @@ text alone) and `RunOption`s: `AlreadyStored`, `ResetSession`,
 
 ## Scope
 
-`Scope` (agent id and name, session, turn id, depth, project) is put on a
-turn's context once with `WithScope` and read anywhere with `ScopeOf`.
-`Identity()` is its `accounting.Identity`; it logs as a group
+`Scope` (agent id and name, session, turn id, depth, billing code) is put
+on a turn's context once with `WithScope` and read anywhere with
+`ScopeOf`. `Identity()` is its `accounting.Identity`; it logs as a group
 (`slog.LogValuer`). `WithScope` also sets toolkit's agent id and session
 key, so tools keep reading those through `toolkit`. Values only a host
 knows stay in the host's own context keys.

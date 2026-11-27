@@ -148,8 +148,8 @@ func checkSuccess(t *testing.T, got accounting.Record, provider string, kind acc
 	if got.Provider != provider || got.Kind != kind || got.Transport != accounting.TransportAPI || got.Model != model {
 		t.Errorf("record = %s/%s/%s/%s", got.Provider, got.Kind, got.Transport, got.Model)
 	}
-	if got.Agent != "alice" || got.Project != accounting.DefaultProject {
-		t.Errorf("identity = %q/%q", got.Agent, got.Project)
+	if got.Agent != "alice" || got.BillingCode != accounting.DefaultBillingCode {
+		t.Errorf("identity = %q/%q", got.Agent, got.BillingCode)
 	}
 	if n := launchtest.Known(t, "http_status", got.HTTPStatus); n != http.StatusOK {
 		t.Errorf("http_status = %d", n)
