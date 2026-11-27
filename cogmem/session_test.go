@@ -285,7 +285,7 @@ func TestSession_RecentTextsRing(t *testing.T) {
 	s.recordRouteText("")
 	s.recordRouteText("  \n")
 	ring := func() []string {
-		var out []string
+		out := make([]string, 0, len(s.recentTexts))
 		for _, e := range s.recentTexts {
 			out = append(out, e.value)
 		}
@@ -344,7 +344,7 @@ func TestSession_RecallRepeatedTextIsNotEarlier(t *testing.T) {
 	}
 	s.Recall(ctx, "A")
 	s.recentMu.Lock()
-	var ring []string
+	ring := make([]string, 0, len(s.recentTexts))
 	for _, e := range s.recentTexts {
 		ring = append(ring, e.value)
 	}
