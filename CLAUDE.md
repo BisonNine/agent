@@ -9,10 +9,16 @@ holding `toolspec`, `toolkit`, `discovery`, `spawnllm`, `ctxengine`,
 
 ## Status
 
-- **Unreleased.** No tags exist; do not preserve legacy behaviour unless asked.
-- **Version in development: 0.2.0**, on the branch `dev/0.0.1` (named before
-  the version was chosen). It will be merged and tagged `v0.2.0` by the
-  maintainer. Do not create tags.
+- **Released and in use.** The module is tagged (`v0.2.0` onwards) and our
+  host software imports it at those tags. A change to an exported name, a
+  default or the text a model is shown reaches those hosts on their next
+  upgrade: keep existing behaviour unless the change is asked for, and say
+  in the change what a host has to do.
+- `main` is the released line. Work goes on a branch and is merged to
+  `main` by pull request.
+- The maintainer chooses version numbers and creates tags. Do not create
+  tags. Record a change in `CHANGELOG.md` under `## [Unreleased]`; the
+  maintainer names the version when tagging.
 - A library: there is no `make install` target.
 
 ## Layering
